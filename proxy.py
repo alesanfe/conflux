@@ -1,11 +1,33 @@
 #!/usr/bin/env python3
 """Proxy local para Stremio: unifica el formato de los streams de todos los
 addons y pasa sus catálogos/metadatos. Escucha en 127.0.0.1:9700."""
-import json, os, re, urllib.request, urllib.parse, threading, time, gzip, logging, sys
-import requests
-from collections import namedtuple, deque
+import gzip
+import json
+import logging
+import os
+import re
+import threading
+import time
+import urllib.parse
+import urllib.request
+from collections import deque, namedtuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FutureTimeout
+
+
+def _open(*a, **kw):
+    """open() auto-cerrado al primer read()/write() — para one-liners tipo
+    json.load(...) / .write(...) sin `with`."""
+    f = open(*a, **kw)  # noqa: SIM115 — es el helper que cierra solo
+    class _W:
+        def read(self):
+            with f: return f.read()
+        def write(self, s):
+            with f: return f.write(s)
+    return _W()
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeout
+
+import requests
 
 STREAM_TIMEOUT = 4      # por fuente
 STREAM_BUDGET  = 3.2    # respuesta máx al cliente (Stremio corta ~5s)
@@ -54,7 +76,7 @@ SOURCES = [
 # [ {"name": ..., "base": ...}, ... ]. Config fuera del código (12-factor).
 _SRC_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sources.json')
 try:
-    _raw = json.load(open(_SRC_FILE))
+    _raw = json.load(_open(_SRC_FILE))
     if isinstance(_raw, list) and all(isinstance(s, dict) and s.get('name') and s.get('base') for s in _raw):
         SOURCES = [Source(s['name'], s['base']) for s in _raw]
 except Exception:
@@ -75,16 +97,16 @@ _DISABLED = set()
 def load_config():
     CFG.clear(); CFG.update(_CFG_DEFAULTS)                  # reset: borrar el archivo = defaults
     try:
-        CFG.update({k: v for k, v in json.load(open(_CFG_FILE)).items() if k in CFG})
+        CFG.update({k: v for k, v in json.load(_open(_CFG_FILE)).items() if k in CFG})
     except Exception:
         pass
     global _DISABLED, RE_ES
     _DISABLED = set(CFG.get('sources_disabled') or [])
     langs = '|'.join(re.escape(x) for x in CFG.get('stream_langs') or ['es'])
-    RE_ES = re.compile(rf'\b({langs})\b', re.I)              # langs configurables en vivo
+    RE_ES = re.compile(rf'\b({langs})\b', re.IGNORECASE)              # langs configurables en vivo
 def _save_cfg():
     try:
-        open(_CFG_FILE, 'w').write(json.dumps(
+        _open(_CFG_FILE, 'w').write(json.dumps(
             {k: v for k, v in CFG.items() if v or isinstance(v, list)}, indent=1))
     except OSError:
         pass
@@ -127,7 +149,7 @@ def _load_manifests_cache():
     """Manifests persistidos del arranque anterior: el proxy responde al instante
     y refresh_manifests() en background trae la versión fresca (ventana fría ~0)."""
     try:
-        cached = json.load(open(_MF_CACHE))
+        cached = json.load(_open(_MF_CACHE))
         if len(cached) == len(SOURCES) and sum(1 for m in cached if m) >= len(SOURCES) // 2:
             return cached
     except Exception:
@@ -169,15 +191,15 @@ def res_prefixes(m, res):
     return None
 
 # ---- normalizacion de streams ----
-RE_RES   = re.compile(r'\b(4320p|2160p|1440p|1080p|720p|576p|480p|360p|240p|8K|4K|HD|SD)\b', re.I)
-RE_TAGS  = re.compile(r'\b(HDR10\+?|HDR|Dolby\s?Vision|DV|WEB-?DL|WEBRip|BluRay|BDRip|Remux|HEVC|x265|x264|10bit|Hi10P|CAM|HDCAM|TS|SCR|DVD|IMAX|Open\s?Matte|REPACK|PROPER)\b', re.I)
-RE_SIZE  = re.compile(r'(\d+(?:[.,]\d+)?)\s?(GB|GiB|MB|MiB|TB)\b', re.I)
-RE_SEEDS = re.compile(r'(?:👤|seed(?:er)?s?|peers?)\s*[:=]?\s*(\d{1,6})|(\d{1,6})\s*(?:seed(?:er)?s?|peers?)\b', re.I)
+RE_RES   = re.compile(r'\b(4320p|2160p|1440p|1080p|720p|576p|480p|360p|240p|8K|4K|HD|SD)\b', re.IGNORECASE)
+RE_TAGS  = re.compile(r'\b(HDR10\+?|HDR|Dolby\s?Vision|DV|WEB-?DL|WEBRip|BluRay|BDRip|Remux|HEVC|x265|x264|10bit|Hi10P|CAM|HDCAM|TS|SCR|DVD|IMAX|Open\s?Matte|REPACK|PROPER)\b', re.IGNORECASE)
+RE_SIZE  = re.compile(r'(\d+(?:[.,]\d+)?)\s?(GB|GiB|MB|MiB|TB)\b', re.IGNORECASE)
+RE_SEEDS = re.compile(r'(?:👤|seed(?:er)?s?|peers?)\s*[:=]?\s*(\d{1,6})|(\d{1,6})\s*(?:seed(?:er)?s?|peers?)\b', re.IGNORECASE)
 RE_SRC   = re.compile(r'[⚙️🔎☁️]\s*([\w.\-]+)')
-RE_LANG  = re.compile(r'\b(Multi\s?Audio|Multi|Dual\s?Audio|Dual|LATINO|Latino|CASTELLANO|Castellano|ESPAÑOL|Español|Spanish|SPANISH|ESP|ES|ENGLISH|English|ENG|EN|VOSE|FRENCH|French|GERMAN|ITALIAN|PORTUGUESE|JAPANESE|KOREAN|HINDI|RUS|Rutor)\b', re.I)
-RE_CODEC = re.compile(r'\b(HEVC|x265|h265|x264|h264|AV1|VP9|AVC|XviD)\b', re.I)
-RE_AUDIO = re.compile(r'\b(Dolby\s?Atmos|Atmos|DDP?5\.1|DD\+|TrueHD|DTS(?:-HD|-X)?|FLAC|AAC2?\.0|AAC|[257]\.1|Stereo|Mono)\b', re.I)
-RE_DUR   = re.compile(r'(\d+)\s?h\s?(\d+)\s?m|(\d{1,2}):(\d{2}):\d{2}|(\d+)\s?min', re.I)
+RE_LANG  = re.compile(r'\b(Multi\s?Audio|Multi|Dual\s?Audio|Dual|LATINO|Latino|CASTELLANO|Castellano|ESPAÑOL|Español|Spanish|SPANISH|ESP|ES|ENGLISH|English|ENG|EN|VOSE|FRENCH|French|GERMAN|ITALIAN|PORTUGUESE|JAPANESE|KOREAN|HINDI|RUS|Rutor)\b', re.IGNORECASE)
+RE_CODEC = re.compile(r'\b(HEVC|x265|h265|x264|h264|AV1|VP9|AVC|XviD)\b', re.IGNORECASE)
+RE_AUDIO = re.compile(r'\b(Dolby\s?Atmos|Atmos|DDP?5\.1|DD\+|TrueHD|DTS(?:-HD|-X)?|FLAC|AAC2?\.0|AAC|[257]\.1|Stereo|Mono)\b', re.IGNORECASE)
+RE_DUR   = re.compile(r'(\d+)\s?h\s?(\d+)\s?m|(\d{1,2}):(\d{2}):\d{2}|(\d+)\s?min', re.IGNORECASE)
 FLAGS    = re.compile(r'[\U0001F1E6-\U0001F1FF]{2}')
 # RE_ES lo asigna load_config() desde stream_langs (no estático aquí: el orden
 # de módulo es CFG->load_config->regexes; un compile fijo aquí lo pisaría)
@@ -188,7 +210,7 @@ _PROFILES = {}
 def _profile_load(name):
     if name not in _PROFILES:
         try:
-            _PROFILES[name] = json.load(open(os.path.join(
+            _PROFILES[name] = json.load(_open(os.path.join(
                 os.path.dirname(os.path.abspath(__file__)), f'config.{name}.json')))
         except Exception:
             _PROFILES[name] = {}
@@ -205,8 +227,8 @@ def _es_pat():
     langs = (pc or {}).get('stream_langs') if pc else None
     if not langs: return RE_ES.pattern
     return r'\b(' + '|'.join(re.escape(x) for x in langs) + r')\b'
-RE_SRCT  = re.compile(r'\b(BDREMUX|REMUX|BluRay|BDRip|WEB-?DL|WEBRip|HDTV|DVDRip|DVD|CAM|HDCAM|TS|SCR)\b', re.I)
-RE_HDR   = re.compile(r'\b(HDR10\+|Dolby\s?Vision|HDR10|HDR|DV)\b', re.I)
+RE_SRCT  = re.compile(r'\b(BDREMUX|REMUX|BluRay|BDRip|WEB-?DL|WEBRip|HDTV|DVDRip|DVD|CAM|HDCAM|TS|SCR)\b', re.IGNORECASE)
+RE_HDR   = re.compile(r'\b(HDR10\+|Dolby\s?Vision|HDR10|HDR|DV)\b', re.IGNORECASE)
 
 LANG_MAP = {'EN':'Inglés','ENG':'Inglés','ENGLISH':'Inglés','ES':'Español','ESP':'Español',
             'SPANISH':'Español','ESPAÑOL':'Español','CASTELLANO':'Castellano','LATINO':'Latino',
@@ -280,7 +302,7 @@ def extract_fields(s):
         'cached': bool(bh.get('cached') or '☁️' in text or 'debrid' in text.lower()),
         'srctype': _prio(RE_SRCT.findall(text), SRCT_ORD),
         'hdr': _prio(RE_HDR.findall(text), HDR_ORD),
-        'es': bool(re.search(_es_pat(), text, re.I)),
+        'es': bool(re.search(_es_pat(), text, re.IGNORECASE)),
     }
 
 _CODEC_TOKENS = {'X265','X264','H265','H264','HEVC','AV1','VP9','AVC','10BIT','AAC','DTS'}
@@ -363,8 +385,8 @@ COOLDOWN  = {}            # fuente -> (ts, motivo) hasta el que se salta
 COOLDOWN_T = 12*3600      # cuota agotada: 12h
 FAIL_CD_T  = 15*60        # racha de fallos: 15 min y reintenta
 FAIL_STREAK= 3
-_RE_LIMIT  = re.compile(r'daily limit|limit reached|link limit|quota', re.I)
-_RE_SPAM   = re.compile(r'daily limit|limit reached|link limit|upgrade (your|to|premium|account)|premium streams|free trial|join our discord|discord\.gg', re.I)
+_RE_LIMIT  = re.compile(r'daily limit|limit reached|link limit|quota', re.IGNORECASE)
+_RE_SPAM   = re.compile(r'daily limit|limit reached|link limit|upgrade (your|to|premium|account)|premium streams|free trial|join our discord|discord\.gg', re.IGNORECASE)
 _SOFT      = ('cuota', 'espera', 'manifest sin stream', 'tipo no soportado', 'prefijo')
 
 def _health(name, ok, err='', n=0):
@@ -522,7 +544,8 @@ def _torznab(stype, sid):
     if not url or not key or not imdb.startswith('tt'): return []
     try:
         r = _session(urllib.parse.urlsplit(url).netloc).get(url,
-            params={'t': 'search', 'imdbid': imdb, 'apikey': key, 'extended': '1'},
+            params={'t': 'movie' if stype == 'movie' else 'tvsearch',
+                    'imdbid': imdb, 'apikey': key, 'extended': '1'},
             timeout=10)
         import xml.etree.ElementTree as ET
         root = ET.fromstring(r.content)
@@ -640,7 +663,7 @@ def _db_avail(hashes):
                     f'https://www.premiumize.me/api/cache/check?apikey={k}',
                     data=[('items[]', f'magnet:?xt=urn:btih:{h}') for h in miss[:40]], timeout=6)
                 flags = r.json().get('response') or []
-                for h, ok in zip(miss[:40], flags): _DB_OK[h] = bool(ok)
+                for h, ok in zip(miss[:40], flags, strict=False): _DB_OK[h] = bool(ok)
             elif p == 'easydebrid':
                 r = _session('easydebrid.com').post(
                     'https://easydebrid.com/api/v1/link/lookup',
@@ -665,7 +688,7 @@ def _db_avail(hashes):
     return {h for h in hashes if _DB_OK.get(h)}
 
 def _debrid_mark(streams):
-    p, k = _db_cfg()
+    p, _ = _db_cfg()
     if not p: return
     hashes = [s.get('infoHash') for s in streams if s.get('infoHash')]
     if not hashes: return
@@ -700,7 +723,7 @@ def _db_resolve(p, h, fi):
             d = s.post('https://api.real-debrid.com/rest/1.0/unrestrict/link',
                        data={'link': link}, headers=h_, timeout=8).json()
             return d.get('download')
-        elif p == 'torbox':
+        if p == 'torbox':
             s = _session('api.torbox.app')
             h_ = {'Authorization': f'Bearer {k}'}
             t = s.post('https://api.torbox.app/v1/api/torrents/createtorrent',
@@ -710,7 +733,7 @@ def _db_resolve(p, h, fi):
                         params={'token': k, 'torrent_id': tid, 'file_id': fi},
                         headers=h_, timeout=10).json()
             return (lnk.get('data') or {}).get('link') or (lnk.get('data'))
-        elif p == 'alldebrid':
+        if p == 'alldebrid':
             s = _session('api.alldebrid.com')
             q = {'agent': 'conflux', 'apikey': k}
             up = s.post('https://api.alldebrid.com/v4/magnet/upload',
@@ -726,7 +749,7 @@ def _db_resolve(p, h, fi):
             d = s.get('https://api.alldebrid.com/v4/link/unlock',
                       params={**q, 'link': fsel['link']}, timeout=10).json()
             return ((d.get('data') or {}).get('link'))
-        elif p == 'premiumize':
+        if p == 'premiumize':
             s = _session('www.premiumize.me')
             d = s.post(f'https://www.premiumize.me/api/transfer/directdl?apikey={k}',
                        data={'src': f'magnet:?xt=urn:btih:{h}'}, timeout=15).json()
@@ -735,7 +758,7 @@ def _db_resolve(p, h, fi):
             if not fs: return None
             fsel = fs[int(fi)] if int(fi) < len(fs) else max(fs, key=lambda f: f.get('size', 0))
             return fsel.get('link')
-        elif p == 'easydebrid':
+        if p == 'easydebrid':
             s = _session('easydebrid.com'); h_ = {'Authorization': f'Bearer {k}'}
             d = s.post('https://easydebrid.com/api/v1/link/generate',
                        json={'url': f'magnet:?xt=urn:btih:{h}'}, headers=h_, timeout=10).json()
@@ -746,7 +769,7 @@ def _db_resolve(p, h, fi):
                 fsel = files[int(fi)] if int(fi) < len(files) else files[0]
                 return fsel.get('url') or fsel.get('link')
             return d.get('url') or d.get('link')
-        elif p == 'debrid-link':
+        if p == 'debrid-link':
             s = _session('debrid-link.com'); h_ = {'Authorization': f'Bearer {k}'}
             add = s.post('https://debrid-link.com/api/v2/seedbox/add',
                          json={'url': f'magnet:?xt=urn:btih:{h}', 'async': True},
@@ -771,13 +794,13 @@ _CAT_KEEP = {
         r'^cat_(all|animation\w*|auto|business|classic|comedy|cooking|culture|documentary|'
         r'education|entertainment|family|general|interactive|kids|legislative|lifestyle|'
         r'movies|music|news|outdoor|public|relax|religious|science|series|shop|sports|'
-        r'travel|weather|xxx|undefined|spanish|english|portuguese)$', re.I),
+        r'travel|weather|xxx|undefined|spanish|english|portuguese)$', re.IGNORECASE),
 }
 
 _PT_ES = (('Filmes', 'Películas'), ('Séries', 'Series'), ('Recentes', 'Recientes'),
           ('Em Alta', 'En Tendencia'), ('Lançamentos', 'Estrenos'), ('Novos', 'Nuevas'))
 
-_ANIME_CAT = re.compile(r'\banim', re.I)      # catálogo declarado movie/series pero es anime
+_ANIME_CAT = re.compile(r'\banim', re.IGNORECASE)      # catálogo declarado movie/series pero es anime
 _UTYPE     = {}                                # catalog_id -> tipo real en upstream
 
 _GRP_MIN = 2                                   # >=N catálogos de un tipo -> 1 catálogo + selector género
@@ -793,7 +816,7 @@ _YEARS  = [str(y) for y in range(time.gmtime().tm_year, time.gmtime().tm_year - 
 _EMOJI = re.compile('[\U0001F000-\U0001FAFF☀-➿⬀-⯿️\u200d]+')
 def _noemoji(s):
     s2 = _EMOJI.sub('', s)
-    s2 = re.sub(r'\s{2,}', ' ', s2).strip(' ··-—|:')
+    s2 = re.sub(r'\s{2,}', ' ', s2).strip(' ·-—|:')
     return s2 or s.strip()
 
 def _eff_rank(n):
@@ -813,8 +836,8 @@ def _cat_name(src, c):
     """'Kitsu·Kitsu' -> 'Kitsu·List' · 'MAL: X' -> 'MAL·X' · 'AllIPTV·All IPTV X' -> 'AllIPTV·X' · PT->ES."""
     n = (c.get('name') or c['id']).strip()
     flex = r'\s*'.join(map(re.escape, src))                                 # 'AllIPTV' casa 'All IPTV'
-    n = re.sub(rf'^{flex}[:·\s\-.]+', '', n, flags=re.I).strip()             # prefijo redundante
-    n = re.sub(r'^tmdb\.', '', n, flags=re.I).strip()                         # tmdb.top -> top
+    n = re.sub(rf'^{flex}[:·\s\-.]+', '', n, flags=re.IGNORECASE).strip()             # prefijo redundante
+    n = re.sub(r'^tmdb\.', '', n, flags=re.IGNORECASE).strip()                         # tmdb.top -> top
     if not n or n.lower() == src.lower():
         n = c['id'].rsplit('-', 1)[-1].replace('.', ' ').title()
         if n.lower() == src.lower(): return src
@@ -871,7 +894,7 @@ def build_manifest():
             cats.extend(members)
             continue
         opts = collections.OrderedDict()
-        for r, nc, wants in members_in:
+        for _r, nc, wants in members_in:
             label = _noemoji(nc['name'].split(' · ', 1)[-1] or nc['id'])
             ut, _, real = nc['id'].split('_', 1)[1].partition('_')
             if label in opts: label = f"{label} ({ut.title()})"
@@ -1076,7 +1099,7 @@ def _anilist_airing(days):
     for page in (1, 2, 3):
         q = {'query': '{Page(page:%d,perPage:50){airingSchedules(notYetAired:true,'
                      'airingAt_lesser:%d,sort:TIME){airingAt episode media{idMal '
-                     'title{romaji english} coverImage{large}}}}}' % (page, t_end)}
+                     'title{romaji english} coverImage{large}}}}}' % (page, t_end)}  # %-fmt: las llaves GraphQL chocan con f-string
         try:
             r = _session('graphql.anilist.co').post('https://graphql.anilist.co',
                 json=q, timeout=8).json()
@@ -1346,14 +1369,14 @@ def _m3u_metas():
     """Parsea config.m3u_path -> metas tv + streams indexados (m3u:N)."""
     global _M3U
     try:
-        txt = open(CFG['m3u_path'], encoding='utf-8', errors='replace').read()
+        txt = _open(CFG['m3u_path'], encoding='utf-8', errors='replace').read()
     except Exception:
         return []
     metas, _M3U = [], {}
     name = logo = group = ''
     n = 0
-    for ln in txt.splitlines():
-        ln = ln.strip()
+    for raw in txt.splitlines():
+        ln = raw.strip()
         if ln.startswith('#EXTINF'):
             name = ln.rsplit(',', 1)[-1].strip() or 'Canal'
             lm = re.search(r'tvg-logo="([^"]*)"', ln); logo = lm.group(1) if lm else ''
@@ -1369,7 +1392,9 @@ def _m3u_metas():
             name = logo = group = ''
     return metas
 
-def _estrenos_cal(extra=None):
+def _estrenos_cal(_extra=None):
+    """extra se ignora a propósito: el cliente pide sus ids de biblioteca y el
+    calendario inyecta el feed completo — filtrar rompería el auto-poblado."""
     """Calendario completo = series populares en emisión (episodios reales vía
     cinemeta calendar-videos con ids sembrados del top) + pelis del año no
     estrenadas (vídeo sintético = fecha de estreno)."""
@@ -1437,12 +1462,12 @@ def _estrenos_cal(extra=None):
     an_ids = [a['idMal'] for a in al if a.get('idMal')]
     tts = list(_POOL_BG.map(lambda i: _resolve_sid('series', f'mal:{i}'), an_ids))
     eps_by_tt = {}
-    for a, tt in zip(al, tts):
+    for a, tt in zip(al, tts, strict=True):
         if str(tt).startswith('tt'):
             eps_by_tt.setdefault(tt, []).append(a)
     metas_tt = {m['id']: m for m in out}
     fmeta = [_POOL_BG.submit(fetch, f"{cine}/meta/series/{i}.json", 10) for i in eps_by_tt]
-    for (tt, eps), f in zip(eps_by_tt.items(), fmeta):
+    for (tt, eps), f in zip(eps_by_tt.items(), fmeta, strict=True):
         m = metas_tt.get(tt) or (f.result() or {}).get('meta')
         if not m: continue
         if m['id'] not in seen:
@@ -1470,7 +1495,7 @@ def _estrenos_cal(extra=None):
     new_tt = sorted({tt for tt, *_ in my_eps if tt not in metas_tt})
     fmy = [_POOL_BG.submit(fetch, f"{cine}/meta/series/{i}.json", 10) for i in new_tt]
     fallback = {tt: sm for tt, _, _, _, sm in my_eps}
-    for tt, f in zip(new_tt, fmy):
+    for tt, f in zip(new_tt, fmy, strict=True):
         m = (f.result() or {}).get('meta') or fallback.get(tt)
         if not m or not m.get('id'): continue
         m = dict(m); m.setdefault('videos', []); m['id'] = tt
@@ -1556,7 +1581,7 @@ def handle_meta(stype, mid):
         _ensure_collect(key)
     # estrenos del calendario llegan como 'series' aunque sean pelis: fallback
     for want in ({stype, 'movie'} if stype == 'series' else {stype}):
-        def one(i):
+        def one(i, want=want):                       # B023: bind por valor — futs tardíos no leen el siguiente
             m = manifests[i] if i < len(manifests) else None
             if m is not None and m.get('resources') and 'meta' not in res_of(m): return None
             ts = res_types(m, 'meta')
@@ -1647,13 +1672,13 @@ class H(BaseHTTPRequestHandler):
             self.send_response(302 if u else 404)
             if u: self.send_header('Location', u)
             self.send_header('Content-Length', '0'); self.end_headers()
-            return
+            return None
         if p.startswith('/s/'):                                        # subtitle redirect
             u = _sub_download(p.rsplit('/', 1)[-1])
             self.send_response(302 if u else 404)
             if u: self.send_header('Location', u)
             self.send_header('Content-Length', '0'); self.end_headers()
-            return
+            return None
         t0 = time.time(); seg = p.split('/')[1] if '/' in p else 'root'
         try:
             for rx, h in ROUTES:
@@ -1706,7 +1731,7 @@ class H(BaseHTTPRequestHandler):
             self.send_response(303)
             self.send_header('Location', '/configure')
             self.send_header('Content-Length', '0'); self.end_headers()
-            return
+            return None
         self.reply({'err': 'not found'}, 404)
 
 _PAGE_CSS = ('<style>body{font:15px/1.5 system-ui;background:#0f0f14;color:#e8e8f0;max-width:880px;margin:24px auto;padding:0 16px}'
