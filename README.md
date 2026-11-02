@@ -1,4 +1,6 @@
-# stremio-proxy
+# conflux
+
+*A confluence of streams for Stremio.*
 
 Addon agregador para Stremio en `http://127.0.0.1:9700`. Unifica ~24 addons upstream
 (streams, metadatos, catálogos) detrás de un solo manifest con streams deduplicados,
