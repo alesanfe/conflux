@@ -62,7 +62,7 @@ def _trakt_movies(days):
 
 
 # ---- Trakt OAuth (device flow) — token personal para /calendars/my/* ----
-_TRAKT_DEV = {}                    # device_code/interval/expires mientras autoriza
+_TRAKT_DEV: dict = {}                    # device_code/interval/expires mientras autoriza
 
 
 def _trakt_h(auth=False):

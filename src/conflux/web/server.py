@@ -77,6 +77,14 @@ class H(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Private-Network', 'true')
         self.send_header('Content-Length', '0')
         self.end_headers()
+    def _authd(self):
+        """config.admin_token vacío -> abierto (loopback); si no, exige
+        ?token=... o header X-Admin-Token en las rutas administrativas."""
+        tok = CFG.get('admin_token')
+        if not tok:
+            return True
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        return tok in q.get('token', []) or self.headers.get('X-Admin-Token') == tok
     def _profile(self, p):
         """/p/<nombre>/... -> carga su config y devuelve el path real."""
         pm = re.match(r'^/p/([a-zA-Z0-9_-]{1,24})(/.*)$', p)           # perfil: /p/<nombre>/…
@@ -99,23 +107,39 @@ class H(BaseHTTPRequestHandler):
             n, tot, mx = _rtime.get(seg, (0, 0, 0))
             _rtime[seg] = (n + 1, tot + ms, max(mx, ms))   # latencia por ruta en /health
             _rts.setdefault(seg, deque(maxlen=512)).append(ms)
+    # dispatcher de rutas fijas: los returns tempranos son su forma natural
+    # pylint: disable=too-many-return-statements
+    def _pages(self, p):
+        """Rutas fijas GET (manifest/health/páginas). True si las sirvió."""
+        if p in ('/admin', '/configure') and not self._authd():
+            self.reply({'err': 'forbidden'}, 403)
+            return True
+        if p == '/manifest.json':
+            self.reply(_manifest_reply())
+            return True
+        if p == '/health':
+            self.reply(_health_page())
+            return True
+        if p == '/admin':
+            self._html(_admin_page())
+            return True
+        if p == '/configure':
+            self._html(_configure_page())
+            return True
+        if p == '/auth/trakt':
+            self._html(_trakt_auth_page())
+            return True
+        if p == '/auth/trakt/status':
+            self.reply(_trakt_status())
+            return True
+        return False
     # dispatcher HTTP: los muchos returns son la forma natural del router
     # pylint: disable=too-many-return-statements
     def do_GET(self):
         """Router GET: stream/catalog/meta/subtitles + páginas y redirects."""
         p = self._profile(urllib.parse.unquote(self.path.split('?', 1)[0]))  # sin query string
-        if p == '/manifest.json':
-            return self.reply(_manifest_reply())
-        if p == '/health':
-            return self.reply(_health_page())
-        if p == '/admin':
-            return self._html(_admin_page())
-        if p == '/configure':
-            return self._html(_configure_page())
-        if p == '/auth/trakt':
-            return self._html(_trakt_auth_page())
-        if p == '/auth/trakt/status':
-            return self.reply(_trakt_status())
+        if self._pages(p):
+            return None
         if p.startswith('/r/'):                                        # debrid redirect
             _, _, pvd, h = p.split('/')
             fi = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('fi', ['0'])[0]
@@ -140,6 +164,8 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         """Router POST: /configure, /reload, /auth."""
         p = self.path.split('?', 1)[0]
+        if p in ('/reload', '/configure') and not self._authd():
+            return self.reply({'err': 'forbidden'}, 403)
         if p == '/reload':
             load_config()
             _cache.clear()

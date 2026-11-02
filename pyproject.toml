@@ -38,3 +38,9 @@ source-roots = "src"
 [tool.pytest.ini_options]
 pythonpath = "src"
 testpaths = "tests"
+
+[tool.mypy]
+files = ["src/conflux"]
+ignore_missing_imports = true
+follow_imports = "skip"
+warn_unused_ignores = true

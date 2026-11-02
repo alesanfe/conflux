@@ -41,7 +41,7 @@ RE_ES = re.compile(r'\b(es)\b', re.IGNORECASE)
 # ---- perfiles (2.4): /p/<nombre>/... usa config.<nombre>.json sobre CFG ----
 _PROF = threading.local()
 
-_PROFILES = {}
+_PROFILES: dict = {}
 
 def _profile_load(name):
     if name not in _PROFILES:

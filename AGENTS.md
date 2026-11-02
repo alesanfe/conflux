@@ -7,7 +7,13 @@ Proxy unificador de addons Stremio en `http://127.0.0.1:9700` (systemd user `str
 ```bash
 python3 -m unittest discover -s tests -t .  # 289 tests (~35s): unit+integration+security+contract+property+resilience+regression+performance+e2e
 python3 -m unittest discover -s tests/unit -t .       # solo unit (~1s)
-scripts/check.sh                            # suite + smoke endpoints + fuentes
+scripts/check.sh                            # linters + suite + smoke endpoints + fuentes
+python3 -m mypy                             # type-check (config en pyproject)
+# CI: .github/workflows/ci.yml — lint + suites herméticas + coverage>=80
+# (e2e se salta en CI: CI=true; verifica upstreams reales, o CONFLUX_E2E_LIVE=1)
+# config.admin_token != '' -> /admin,/configure,POST /reload,/configure exigen
+# ?token= o header X-Admin-Token (vacío = abierto, solo loopback)
+# requirements.txt = lock con hashes (pip-compile desde requirements.in)
 systemctl --user restart stremio-proxy      # tras editar src/conflux/
 
 ## Estructura (src-layout estándar PyPA)

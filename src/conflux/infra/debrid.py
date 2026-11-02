@@ -10,7 +10,7 @@ from conflux.core.state import CFG, PORT
 from conflux.infra.net import _session
 
 # ---- debrid (Real-Debrid / TorBox) — activo solo con key en config.json/env ----
-_DB_OK = {}
+_DB_OK: dict = {}
 
 def _db_cfg():
     p, k = CFG.get('debrid_provider'), CFG.get('debrid_key') or os.environ.get('DEBRID_KEY', '')

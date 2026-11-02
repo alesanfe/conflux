@@ -61,6 +61,8 @@ def _get_retry(port, path, tries=3, timeout=60):
     return code, d
 
 
+@unittest.skipIf(os.environ.get('CI') == 'true' and not os.environ.get('CONFLUX_E2E_LIVE'),
+                 'suite live: verifica contra upstreams reales — en CI: CONFLUX_E2E_LIVE=1')
 class ServerE2E(unittest.TestCase):
     """Boot real: manifests cacheados si hay -> refresh bg; si no, fetch vivo."""
 

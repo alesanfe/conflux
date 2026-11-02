@@ -62,7 +62,7 @@ def res_prefixes(m, res):
     return None
 
 
-_idmap     = {}            # (pref, base_id) -> imdb cacheado
+_idmap: dict = {}            # (pref, base_id) -> imdb cacheado
 
 _PREFIX_SRC = {'kitsu': 'Kitsu', 'mal': 'Kitsu', 'anilist': 'Kitsu', 'anidb': 'Kitsu',
                'tmdb': 'TMDB'}   # fuente que resuelve la meta (lleva imdb_id) por prefijo

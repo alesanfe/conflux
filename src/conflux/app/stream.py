@@ -35,7 +35,7 @@ from conflux.infra.debrid import _debrid_mark
 from conflux.infra.net import _session, fetch
 from conflux.infra.torznab import _torznab
 
-_inflight = {}            # (stype,sid) -> estado compartido
+_inflight: dict = {}            # (stype,sid) -> estado compartido
 
 _slock    = threading.Lock()
 
@@ -196,9 +196,9 @@ def handle_stream(stype, sid):
 
 
 # ---- health-check de streams HTTP (3.4): HEAD async, muertos filtrados ----
-_URL_BAD = {}        # url -> ts marcado muerto (reintento a los 30min)
+_URL_BAD: dict = {}        # url -> ts marcado muerto (reintento a los 30min)
 
-_URL_OK  = {}        # url -> ts verificado vivo
+_URL_OK: dict = {}        # url -> ts verificado vivo
 
 def _url_todo(streams, now):
     """urls externas http sin veredicto reciente -> candidatas a HEAD (máx 15)."""

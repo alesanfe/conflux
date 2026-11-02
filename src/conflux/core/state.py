@@ -107,45 +107,45 @@ _CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '',
                  'sources_disabled': [], 'trakt_client_secret': '',
                  'torznab_url': '', 'torznab_key': '', 'mdblist_key': '',
                  'catalog_lists': '', 'source_order': [], 'catalogs_disabled': [],
-                 'opensubtitles_key': '',
+                 'opensubtitles_key': '', 'admin_token': '',
                  'trakt_access_token': '', 'trakt_refresh_token': '', 'trakt_expires': 0}
 
 CFG = dict(_CFG_DEFAULTS)
 
-_DISABLED = set()
+_DISABLED: set = set()
 
 
-_SESS      = {}      # host -> Session (keep-alive: reusa TCP+TLS entre peticiones)
+_SESS: dict = {}      # host -> Session (keep-alive: reusa TCP+TLS entre peticiones)
 
 _sess_lock = threading.Lock()
 
 
 # ---- estado: manifests de las fuentes (se refresca al arrancar) ----
-manifests = []          # [dict manifest | None]
+manifests: list = []          # [dict manifest | None]
 
 
 _MF_CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), '.manifests-cache.json')
 
 
-_cache    = {}            # (stype,sid) -> (ts, [streams])
+_cache: dict = {}            # (stype,sid) -> (ts, [streams])
 
-_meta_c   = {}            # meta cacheada
+_meta_c: dict = {}            # meta cacheada
 
-_cat_c    = {}            # catálogo cacheado
+_cat_c: dict = {}            # catálogo cacheado
 
-HEALTH    = {}            # fuente -> {'ok':n,'fail':n,'last':ts,'err':str,'n':usable,'streak':n}
+HEALTH: dict = {}            # fuente -> {'ok':n,'fail':n,'last':ts,'err':str,'n':usable,'streak':n}
 
-_fails    = {}            # host -> (strikes consecutivos, último ts) — disyuntor por host
+_fails: dict = {}            # host -> (strikes consecutivos, último ts) — disyuntor por host
 
 HOST_OPEN  = 4            # strikes seguidos que abren el disyuntor
 
 HOST_CD    = 60           # s de fail-fast con disyuntor abierto
 
-_rtime    = {}            # ruta -> (n, total_ms, max_ms) — latencia del servidor
+_rtime: dict = {}            # ruta -> (n, total_ms, max_ms) — latencia del servidor
 
-_rts      = {}            # ruta -> deque(ultimas 512 latencias) — histograma p50/p95/p99
+_rts: dict = {}            # ruta -> deque(ultimas 512 latencias) — histograma p50/p95/p99
 
-_SERVED   = {}            # fuente -> {'n': streams aportados, 'res': {res: n}} — quién aporta de verdad
+_SERVED: dict = {}            # fuente -> {'n': streams aportados, 'res': {res: n}} — quién aporta de verdad
 
 def log_ev(ev, **kv):
     """Un evento = una línea JSON — grep/journalctl -o json-pretty friendly."""
@@ -158,7 +158,7 @@ def _pct(vals, q):
     s = sorted(vals)
     return round(s[min(len(s) - 1, int(len(s) * q))], 1)
 
-COOLDOWN  = {}            # fuente -> (ts, motivo) hasta el que se salta
+COOLDOWN: dict = {}            # fuente -> (ts, motivo) hasta el que se salta
 
 COOLDOWN_T = 12*3600      # cuota agotada: 12h
 

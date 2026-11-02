@@ -18,7 +18,7 @@ def _pv(claims, prop):
 
 
 
-_wd_c = {}                                    # yt -> (ts, dict) — TTL 24h: no cambia a diario
+_wd_c: dict = {}                                    # yt -> (ts, dict) — TTL 24h: no cambia a diario
 
 
 

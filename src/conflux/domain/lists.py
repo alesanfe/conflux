@@ -21,7 +21,7 @@ from conflux.core.state import (
 from conflux.infra.net import _session, fetch
 from conflux.infra.trakt import _trakt_h
 
-_LLIST = {}
+_LLIST: dict = {}
 
 def _list_defs():
     """config.catalog_lists: URLs (Trakt/IMDb/MDBList) separadas por coma."""
@@ -108,9 +108,9 @@ def _list_metas(url, utype):
 
 
 
-_M3U = {}
+_M3U: dict = {}
 
-_M3U_METAS = []
+_M3U_METAS: list = []
 _M3U_TXT = [None]        # contenido ya parseado — no re-parsear por request
 
 

@@ -30,16 +30,16 @@ _PT_ES = (('Filmes', 'Películas'), ('Séries', 'Series'), ('Recentes', 'Recient
 
 _ANIME_CAT = re.compile(r'\banim', re.IGNORECASE)      # catálogo declarado movie/series pero es anime
 
-_UTYPE     = {}                                # catalog_id -> tipo real en upstream
+_UTYPE: dict = {}                                # catalog_id -> tipo real en upstream
 
 
 _GRP_MIN = 2                                   # >=N catálogos de un tipo -> 1 catálogo + selector género
 
-_GRP     = {}                                  # cid agrupado -> OrderedDict etiqueta -> (utype, upstream_id, quiere_año)
+_GRP: dict = {}                                  # cid agrupado -> OrderedDict etiqueta -> (utype, upstream_id, quiere_año)
 
-_YR_OPTS = {}                                  # cid agrupado -> [años] del 2º picker 'year'
+_YR_OPTS: dict = {}                                  # cid agrupado -> [años] del 2º picker 'year'
 
-_REQ     = set()                               # cids con extras requeridos upstream: quedan planos
+_REQ: set = set()                               # cids con extras requeridos upstream: quedan planos
 
 _FEED_EXTRA = frozenset({'lastVideosIds', 'calendarVideosIds'})   # endpoints de app-feed: solo vía sintéticos
 
@@ -47,7 +47,7 @@ _TYPE_ES = {'movie': 'Películas', 'series': 'Series', 'anime': 'Anime',
             'tv': 'TV', 'channel': 'Canales'}
 
 
-_SYNTH = {}                                       # cid sintético -> (utype, real, extra por defecto)
+_SYNTH: dict = {}                                       # cid sintético -> (utype, real, extra por defecto)
 
 
 

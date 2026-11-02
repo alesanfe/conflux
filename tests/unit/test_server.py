@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock
 
 import conflux.web.server as srv
+from tests import cfg_swap
 
 
 class TestProfile(unittest.TestCase):
@@ -68,3 +69,36 @@ class TestRedir(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAdminTokenGate(unittest.TestCase):
+    """config.admin_token: vacío = abierto; set = exige ?token= o X-Admin-Token."""
+
+    def _h(self, path='/admin', tok=None):
+        h = unittest.mock.Mock(spec=srv.H)
+        h.path = path
+        h.headers = {'X-Admin-Token': tok} if tok else {}
+        return h
+
+    def test_vacio_abierto(self):
+        _, undo = cfg_swap(admin_token='')
+        try:
+            self.assertTrue(srv.H._authd(self._h()))
+        finally:
+            undo()
+
+    def test_sin_token_403(self):
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            self.assertFalse(srv.H._authd(self._h()))
+            self.assertFalse(srv.H._authd(self._h('/admin?token=malo')))
+        finally:
+            undo()
+
+    def test_token_valido(self):
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            self.assertTrue(srv.H._authd(self._h('/admin?token=secreto')))
+            self.assertTrue(srv.H._authd(self._h(tok='secreto')))
+        finally:
+            undo()
