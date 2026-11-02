@@ -6,22 +6,27 @@ Proxy unificador de addons Stremio en `http://127.0.0.1:9700` (systemd user `str
 
 ```bash
 python3 test_proxy.py                    # 28 tests, ~11s
-systemctl --user restart stremio-proxy   # tras editar conflux/*.py
+systemctl --user restart stremio-proxy   # tras editar conflux/
 
-## Estructura (paquete conflux/, proxy.py = entry+fachada)
+## Estructura (paquete conflux/ por capas, proxy.py = entry+fachada)
 
-- `state.py`  estado compartido: CFG/cachés/HEALTH/COOLDOWN/pools/log — nunca re-asignar
-  nombres compartidos (mutar in situ: `manifests[:] =`, `_M3U.clear()`); solo `cfg.RE_ES` se rebindea
-- `net.py`    sesiones por host + fetch reintentado   `cfg.py` config.json + perfiles
-- `text.py`   parseo/normalización streams (campos, spam, RANK)
-- `sources.py` manifests upstream + res_* + impedancia ids (R1)
-- `manifest.py` contrato manifest: agrupación catálogos, `_UTYPE`/`_SYNTH`/`_YR_OPTS`
-- `debrid.py` cache-check + marcado + resolve   `torznab.py` Prowlarr/Jackett
-- `feeds.py`  Trakt/AniList/Wikidata/_fix_meta*/_recom*   `lists.py` listas ext + M3U
-- `calendar.py` estrenos sintéticos   `catalog.py` routing /catalog
-- `stream.py` /stream: _collect* + url-health   `meta.py` /meta + race/fallback
-- `pages.py`  HTML /configure /admin /health   `subs.py` OpenSubtitles
-- `bg.py`     prefetch + refresher   `server.py` handler H + ROUTES + main()
+Repo en `~/apps/conflux`. Sub-paquetes por capa — cada uno solo depende "hacia abajo":
+
+- `conflux/core/`   `state.py` (CFG/cachés/HEALTH/COOLDOWN/pools/log — nunca re-asignar
+  nombres compartidos; mutar in situ: `manifests[:] =`, `_M3U.clear()`; solo `cfg.RE_ES`
+  se rebindea) + `cfg.py` (config.json + perfiles)
+- `conflux/infra/`  adaptadores externos: `net.py` (sesiones+fetch), `trakt.py`,
+  `anilist.py`, `wikidata.py`, `debrid.py`, `torznab.py` (Prowlarr/Jackett, defusedxml)
+- `conflux/domain/` lógica Stremio: `text.py` (parseo streams, RANK), `sources.py`
+  (manifests upstream, res_*, impedancia ids R1), `manifest.py` (contrato: `_UTYPE`/
+  `_SYNTH`/`_YR_OPTS`/agrupación), `lists.py` (listas ext + M3U), `calendar.py`
+  (estrenos sintéticos), `catalog.py` (routing /catalog), `metafix.py` (_fix_meta*)
+- `conflux/app/`    casos de uso: `stream.py` (/stream: _collect* + url-health),
+  `meta.py` (/meta race/fallback), `subs.py` (OpenSubtitles), `bg.py` (prefetch+refresher)
+- `conflux/web/`    `pages.py` (HTML /configure /admin /health) + `server.py`
+  (handler H + ROUTES + main())
+
+Imports internos absolutos (`from conflux.infra.net import fetch`).
 journalctl --user -u stremio-proxy -f    # [done] muestra contrib por fuente + fallos
 curl -s 127.0.0.1:9700/health            # err/usable/streak por fuente
 ```

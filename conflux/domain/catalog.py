@@ -4,15 +4,24 @@
 import urllib.parse
 import urllib.request
 
-from .calendar import _estrenos_cal
-from .cfg import _eff_disabled
-from .lists import _list_metas, _m3u_metas
-from .manifest import _GRP, _LEGACY, _SYNTH, _UTYPE, _YR_OPTS
-from .metafix import _fix_metas
-from .net import fetch
-from .sources import _resolve_sid
-from .state import _POOL, _POOL_BG, SOURCES, _cat_c, _cget, _cset, _cstale, manifests
-from .trakt import _recom
+from conflux.core.cfg import _eff_disabled
+from conflux.core.state import (
+    _POOL,
+    _POOL_BG,
+    SOURCES,
+    _cat_c,
+    _cget,
+    _cset,
+    _cstale,
+    manifests,
+)
+from conflux.domain.calendar import _estrenos_cal
+from conflux.domain.lists import _list_metas, _m3u_metas
+from conflux.domain.manifest import _GRP, _LEGACY, _SYNTH, _UTYPE, _YR_OPTS
+from conflux.domain.metafix import _fix_metas
+from conflux.domain.sources import _resolve_sid
+from conflux.infra.net import fetch
+from conflux.infra.trakt import _recom
 
 
 def _cat_searchable(src, c, t):

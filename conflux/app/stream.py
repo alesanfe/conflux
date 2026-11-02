@@ -8,12 +8,8 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import as_completed
 
-from .cfg import _eff_disabled
-from .debrid import _debrid_mark
-from .lists import _M3U, _m3u_metas
-from .net import _session, fetch
-from .sources import _resolve_sid
-from .state import (
+from conflux.core.cfg import _eff_disabled
+from conflux.core.state import (
     _POOL,
     _POOL_BG,
     _SERVED,
@@ -32,8 +28,12 @@ from .state import (
     log_ev,
     manifests,
 )
-from .text import RANK, _skip_manifest, _spam, norm_stream
-from .torznab import _torznab
+from conflux.domain.lists import _M3U, _m3u_metas
+from conflux.domain.sources import _resolve_sid
+from conflux.domain.text import RANK, _skip_manifest, _spam, norm_stream
+from conflux.infra.debrid import _debrid_mark
+from conflux.infra.net import _session, fetch
+from conflux.infra.torznab import _torznab
 
 _inflight = {}            # (stype,sid) -> estado compartido
 

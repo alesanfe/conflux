@@ -3,8 +3,8 @@
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import re
 
-from .cfg import _es_pat
-from .sources import res_of, res_prefixes, res_types
+from conflux.core.cfg import _es_pat
+from conflux.domain.sources import res_of, res_prefixes, res_types
 
 # ---- normalizacion de streams ----
 RE_RES   = re.compile(r'\b(4320p|2160p|1440p|1080p|720p|576p|480p|360p|240p|8K|4K|HD|SD)\b', re.IGNORECASE)

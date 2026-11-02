@@ -5,9 +5,9 @@ import collections
 import os
 import re
 
-from .cfg import _cfgget, _eff_disabled
-from .lists import _list_defs, _list_fetch
-from .state import _YEARS, CFG, SOURCES, manifests
+from conflux.core.cfg import _cfgget, _eff_disabled
+from conflux.core.state import _YEARS, CFG, SOURCES, manifests
+from conflux.domain.lists import _list_defs, _list_fetch
 
 # ---- manifest/catalgos/meta ----
 _NO_CATALOG = {'Orion',    # catálogos muertos sin config (metas:[] en Discover)

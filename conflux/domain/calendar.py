@@ -5,12 +5,12 @@ import time
 import urllib.parse
 import urllib.request
 
-from .anilist import _anilist_airing
-from .lists import tmdb_year
-from .net import fetch
-from .sources import _resolve_sid
-from .state import _POOL_BG, _YEARS, CFG, SOURCES
-from .trakt import _trakt_movies, _trakt_my
+from conflux.core.state import _POOL_BG, _YEARS, CFG, SOURCES
+from conflux.domain.lists import tmdb_year
+from conflux.domain.sources import _resolve_sid
+from conflux.infra.anilist import _anilist_airing
+from conflux.infra.net import fetch
+from conflux.infra.trakt import _trakt_movies, _trakt_my
 
 
 def _cal_add_film(m, hoy, seen, out):

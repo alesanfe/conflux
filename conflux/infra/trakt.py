@@ -6,9 +6,9 @@ from contextlib import suppress
 
 import requests
 
-from .cfg import _save_cfg
-from .net import _session
-from .state import _POOL_BG, CFG, log_ev
+from conflux.core.cfg import _save_cfg
+from conflux.core.state import _POOL_BG, CFG, log_ev
+from conflux.infra.net import _session
 
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 

@@ -8,7 +8,7 @@ import urllib.request
 
 import requests
 
-from .state import _SESS, UA, _fails, _sess_lock
+from conflux.core.state import _SESS, UA, _fails, _sess_lock
 
 
 def _session(host):

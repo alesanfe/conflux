@@ -3,7 +3,7 @@ Description=Stremio uniform streams proxy
 After=default.target
 
 [Service]
-ExecStart=/usr/bin/python3 /home/alesanfe/stremio-proxy/proxy.py
+ExecStart=/usr/bin/python3 /home/alesanfe/apps/conflux/proxy.py
 Restart=on-failure
 RestartSec=3
 

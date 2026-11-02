@@ -3,10 +3,10 @@
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import requests
 
-from .cfg import _cfgget
-from .net import _session
-from .sources import _resolve_sid
-from .state import PORT
+from conflux.core.cfg import _cfgget
+from conflux.core.state import PORT
+from conflux.domain.sources import _resolve_sid
+from conflux.infra.net import _session
 
 
 def _subs_query(stype, sid):

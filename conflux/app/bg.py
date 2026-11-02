@@ -5,10 +5,10 @@ import threading
 import time
 from contextlib import suppress
 
-from .catalog import handle_catalog
-from .manifest import build_manifest
-from .sources import refresh_manifests
-from .state import _POOL_BG, log_ev
+from conflux.core.state import _POOL_BG, log_ev
+from conflux.domain.catalog import handle_catalog
+from conflux.domain.manifest import build_manifest
+from conflux.domain.sources import refresh_manifests
 
 _prefetching = threading.Event()
 

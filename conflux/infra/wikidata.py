@@ -2,7 +2,7 @@
 # pylint: disable=broad-exception-caught,line-too-long
 import time
 
-from .net import fetch
+from conflux.infra.net import fetch
 
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 

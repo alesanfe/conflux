@@ -4,10 +4,9 @@
 import threading
 import time
 
-from .bg import _prefetch_catalogs
-from .cfg import _PROF, _save_cfg, load_config
-from .manifest import build_manifest
-from .state import (
+from conflux.app.bg import _prefetch_catalogs
+from conflux.core.cfg import _PROF, _save_cfg, load_config
+from conflux.core.state import (
     _DISABLED,
     _SERVED,
     CFG,
@@ -23,7 +22,8 @@ from .state import (
     _rts,
     manifests,
 )
-from .trakt import _TRAKT_DEV, _trakt_device_start
+from conflux.domain.manifest import build_manifest
+from conflux.infra.trakt import _TRAKT_DEV, _trakt_device_start
 
 
 # ---- servidor ----

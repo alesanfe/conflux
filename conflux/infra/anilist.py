@@ -5,7 +5,7 @@ from string import Template
 
 import requests
 
-from .net import _session
+from conflux.infra.net import _session
 
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 

@@ -4,14 +4,20 @@ addons y pasa sus catálogos/metadatos. Escucha en 127.0.0.1:9700.
 
 La implementación vive en el paquete conflux/ — este archivo es el punto de
 entrada (`python3 proxy.py`) y la fachada de compatibilidad (tests, scripts)."""
-from conflux.debrid import _db_resolve
-from conflux.manifest import _UTYPE, build_manifest
-from conflux.net import fetch
-from conflux.server import H, main
-from conflux.sources import _idmap, _resolve_sid, refresh_manifests, res_of, res_types
-from conflux.state import CFG, SOURCES, manifests
-from conflux.stream import handle_stream
-from conflux.text import RANK, _id_prefix, _spam, norm_stream, parse_seeds
+from conflux.app.stream import handle_stream
+from conflux.core.state import CFG, SOURCES, manifests
+from conflux.domain.manifest import _UTYPE, build_manifest
+from conflux.domain.sources import (
+    _idmap,
+    _resolve_sid,
+    refresh_manifests,
+    res_of,
+    res_types,
+)
+from conflux.domain.text import RANK, _id_prefix, _spam, norm_stream, parse_seeds
+from conflux.infra.debrid import _db_resolve
+from conflux.infra.net import fetch
+from conflux.web.server import H, main
 
 __all__ = [
     'CFG',

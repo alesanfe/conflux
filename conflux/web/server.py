@@ -11,22 +11,12 @@ import urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .bg import _prefetch_catalogs, _refresher
-from .catalog import handle_catalog
-from .cfg import _PROF, _profile_load, load_config
-from .debrid import _db_resolve
-from .meta import handle_meta
-from .pages import (
-    _admin_page,
-    _configure_page,
-    _configure_save,
-    _health_page,
-    _manifest_reply,
-    _trakt_auth_page,
-    _trakt_status,
-)
-from .sources import _load_manifests_cache, refresh_manifests
-from .state import (
+from conflux.app.bg import _prefetch_catalogs, _refresher
+from conflux.app.meta import handle_meta
+from conflux.app.stream import handle_stream
+from conflux.app.subs import _sub_download, handle_subtitles
+from conflux.core.cfg import _PROF, _profile_load, load_config
+from conflux.core.state import (
     CFG,
     PORT,
     SOURCES,
@@ -38,8 +28,18 @@ from .state import (
     log_ev,
     manifests,
 )
-from .stream import handle_stream
-from .subs import _sub_download, handle_subtitles
+from conflux.domain.catalog import handle_catalog
+from conflux.domain.sources import _load_manifests_cache, refresh_manifests
+from conflux.infra.debrid import _db_resolve
+from conflux.web.pages import (
+    _admin_page,
+    _configure_page,
+    _configure_save,
+    _health_page,
+    _manifest_reply,
+    _trakt_auth_page,
+    _trakt_status,
+)
 
 
 class H(BaseHTTPRequestHandler):

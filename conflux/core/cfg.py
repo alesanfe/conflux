@@ -6,7 +6,7 @@ import os
 import re
 import threading
 
-from .state import _CFG_DEFAULTS, _CFG_FILE, _DISABLED, CFG, _log, _open
+from conflux.core.state import _CFG_DEFAULTS, _CFG_FILE, _DISABLED, CFG, _log, _open
 
 
 def load_config():

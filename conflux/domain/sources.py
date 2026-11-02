@@ -4,8 +4,16 @@
 import json
 from contextlib import suppress
 
-from .net import fetch
-from .state import _MF_CACHE, _POOL_BG, SOURCES, _cget, _cset, _open, manifests
+from conflux.core.state import (
+    _MF_CACHE,
+    _POOL_BG,
+    SOURCES,
+    _cget,
+    _cset,
+    _open,
+    manifests,
+)
+from conflux.infra.net import fetch
 
 
 def _load_manifests_cache():

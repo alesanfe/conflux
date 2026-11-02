@@ -6,11 +6,11 @@ import urllib.request
 from concurrent.futures import TimeoutError as FutureTimeout
 from concurrent.futures import as_completed
 
-from .metafix import _fix_metas
-from .net import fetch
-from .sources import res_of, res_types
-from .state import _POOL, SOURCES, _cget, _cset, _cstale, _meta_c, manifests
-from .stream import _ensure_collect
+from conflux.app.stream import _ensure_collect
+from conflux.core.state import _POOL, SOURCES, _cget, _cset, _cstale, _meta_c, manifests
+from conflux.domain.metafix import _fix_metas
+from conflux.domain.sources import res_of, res_types
+from conflux.infra.net import fetch
 
 
 def _meta_race(futs):

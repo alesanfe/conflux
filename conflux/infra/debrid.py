@@ -6,8 +6,8 @@ from contextlib import suppress
 
 import requests
 
-from .net import _session
-from .state import CFG, PORT
+from conflux.core.state import CFG, PORT
+from conflux.infra.net import _session
 
 # ---- debrid (Real-Debrid / TorBox) — activo solo con key en config.json/env ----
 _DB_OK = {}

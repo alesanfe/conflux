@@ -5,8 +5,8 @@ import re
 import urllib.parse
 import urllib.request
 
-from .net import _session
-from .state import CFG, _health
+from conflux.core.state import CFG, _health
+from conflux.infra.net import _session
 
 try:
     from defusedxml import ElementTree as _ET  # torznab: XML del indexer (no confiable)

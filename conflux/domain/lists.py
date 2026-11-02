@@ -7,9 +7,18 @@ from contextlib import suppress
 
 import requests
 
-from .net import _session, fetch
-from .state import _POOL_BG, _YEARS, CFG, SOURCES, _cat_c, _cget, _cset, _open
-from .trakt import _trakt_h
+from conflux.core.state import (
+    _POOL_BG,
+    _YEARS,
+    CFG,
+    SOURCES,
+    _cat_c,
+    _cget,
+    _cset,
+    _open,
+)
+from conflux.infra.net import _session, fetch
+from conflux.infra.trakt import _trakt_h
 
 _LLIST = {}
 

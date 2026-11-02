@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Tests del proxy Stremio — corre contra fixtures reales de cada fuente.
-Uso: python3 test_proxy.py   (desde ~/stremio-proxy)"""
-import json, os, sys, unittest
+Uso: python3 test_proxy.py   (desde ~/apps/conflux)"""
 import importlib.util
+import json
+import os
+import unittest
 
 spec = importlib.util.spec_from_file_location('proxy', os.path.join(os.path.dirname(__file__), 'proxy.py'))
 px = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(px)
-import conflux.sources as _px_sources
-import conflux.net as _px_net
+import conflux.domain.sources as _px_sources
+import conflux.infra.net as _px_net
 
 FIX = os.path.join(os.path.dirname(__file__), 'fixtures')
 
@@ -50,7 +52,7 @@ class TestSanitiza(unittest.TestCase):
         for f in os.listdir(FIX):
             for s in fixture(f[:-5]):
                 if px._spam(s): continue
-                out, res, seeds, size, cached = px.norm_stream(s, f[:-5])
+                out, _res, _seeds, _size, _cached = px.norm_stream(s, f[:-5])
                 for v in out.values():
                     self.assertIsNotNone(v, f'{f}: campo null en {out.get("name")}')
                 if 'fileIdx' in out:
@@ -88,14 +90,14 @@ class TestParseo(unittest.TestCase):
             bh = s.get('behaviorHints', {})
             if isinstance(bh.get('seeders'), int) and not px.parse_seeds(
                     s.get('description', '')):
-                out, res, seeds, size, cached = px.norm_stream(s, 'Meteor')
+                out, _res, _seeds, _size, _cached = px.norm_stream(s, 'Meteor')
                 self.assertIn(f'👤 {bh["seeders"]}', out['title'])
 
     def test_resolucion_y_orden(self):
         cases = [('x 2160p', '2160p'), ('x 4K', '2160p'), ('x 720p', '720p'),
                  ('sin resolución', 'SD')]
         for titulo, esperado in cases:
-            out, res, *_ = px.norm_stream({'infoHash': 'a' * 40, 'title': titulo}, 'T')
+            out, _res, *_ = px.norm_stream({'infoHash': 'a' * 40, 'title': titulo}, 'T')
             self.assertIn(esperado, out['name'])
 
     def test_codec_no_es_indexer(self):
@@ -111,7 +113,7 @@ class TestParseo(unittest.TestCase):
 
     def test_semillas_con_puntos(self):
         s = {'infoHash': 'a' * 40, 'title': 'Movie\n👤13:0 💾800 MB'}
-        out, res, seeds, *_ = px.norm_stream(s, 'T')
+        _out, _res, seeds, *_ = px.norm_stream(s, 'T')
         self.assertEqual(seeds, 13)
 
     def test_duracion_behaviorhints(self):
@@ -202,7 +204,7 @@ class TestReglas(unittest.TestCase):
         ids = [c['id'] for c in man['catalogs']]
         self.assertEqual(len(ids), len(set(ids)), 'cids duplicados')
         for cid in ids:
-            slug, rest = cid.split('_', 1)
+            _slug, rest = cid.split('_', 1)
             utype, _, real = rest.partition('_')
             self.assertIn(utype, {'movie', 'series', 'anime', 'channel', 'tv'},
                           f'{cid}: tipo upstream ilegible')

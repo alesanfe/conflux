@@ -2,9 +2,9 @@
 # pylint: disable=broad-exception-caught,line-too-long
 import requests
 
-from .net import _session
-from .state import _POOL
-from .wikidata import _wikidata
+from conflux.core.state import _POOL
+from conflux.infra.net import _session
+from conflux.infra.wikidata import _wikidata
 
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 
