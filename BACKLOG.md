@@ -57,7 +57,6 @@ Esfuerzo: **S** <1 sesión · **M** ~1-2 · **L** varias sesiones
 | 5.2 ✅ | **Métricas de streams servidos** — `streams_served` por fuente/resolución en `/health` + tabla en `/admin` | Se ve qué fuente aporta realmente | P2 | S |
 | 5.3 ✅ | **Tests de integración vivos** — `check.sh` pega rutas clave (manifest, catálogo, meta, stream, calendario, búsqueda) + fuentes vivas | `./check.sh` detecta regresiones en <30s | P1 | S |
 | 5.4 ✅ | **Versionado semver + changelog** — tags git + CHANGELOG.md | v1.0.0 taggeada | P2 | S |
-| 5.4 | **Versionado semver + changelog** — tags git + CHANGELOG.md | Cada release identificable | P2 | S |
 
 ## Épica 6 — Distribución
 
