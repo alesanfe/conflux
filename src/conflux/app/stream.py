@@ -225,7 +225,7 @@ def _url_prune():
     """Cota de memoria de los veredictos: purga la mitad más vieja de cada dict."""
     for u in sorted(_URL_BAD, key=lambda u: _URL_BAD[u][1])[:len(_URL_BAD) // 2]:
         _URL_BAD.pop(u, None)
-    for u in sorted(_URL_OK, key=_URL_OK.get)[:len(_URL_OK) // 2]:
+    for u in sorted(_URL_OK, key=lambda u: _URL_OK[u])[:len(_URL_OK) // 2]:
         _URL_OK.pop(u, None)
 
 

@@ -54,7 +54,8 @@ def _busqueda(utype, extra):
     if not q:
         return {'metas': []}
     targets = _search_targets('anime' if utype == 'anime' else utype)
-    seen, out = set(), []
+    seen: set = set()
+    out: list = []
     e = urllib.parse.urlencode({'search': q})
     for d in _POOL_BG.map(lambda x: fetch(f"{x[0]}/catalog/{x[1]}/{x[2]}/{e}.json", 8), targets):
         _search_merge(d, utype, seen, out)

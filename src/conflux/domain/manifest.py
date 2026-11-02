@@ -131,7 +131,8 @@ def _mf_nc(src, c, cid):
 
 def _mf_collect_cats():
     """Catálogos upstream elegibles -> [(rank, nc)]. Marca _REQ/_UTYPE/_ANIME."""
-    cats, seen = [], set()
+    cats: list = []
+    seen: set = set()
     for i, m in enumerate(manifests):
         if not m or SOURCES[i].name in _NO_CATALOG or SOURCES[i].name in _eff_disabled():
             continue
@@ -289,7 +290,7 @@ def _mf_m3u_cat(cats):
 def _mf_dedup_names(cats):
     """Nombres duplicados dentro del mismo tipo -> sufijo '(UpstreamType n)'."""
     counts = collections.Counter((c['name'], c['type']) for c in cats)
-    taken = {}
+    taken: dict = {}
     for nc in cats:
         n = nc['name']
         if counts[(n, nc['type'])] > 1:

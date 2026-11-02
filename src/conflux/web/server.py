@@ -2,6 +2,7 @@
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import gzip
+import hmac
 import json
 import re
 import threading
@@ -59,6 +60,7 @@ class H(BaseHTTPRequestHandler):
             body = gzip.compress(body)
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
+        self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Access-Control-Allow-Origin', '*')
         if gz:
             self.send_header('Content-Encoding', 'gzip')
@@ -84,7 +86,8 @@ class H(BaseHTTPRequestHandler):
         if not tok:
             return True
         q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        return tok in q.get('token', []) or self.headers.get('X-Admin-Token') == tok
+        cand = [self.headers.get('X-Admin-Token') or '', *q.get('token', [])]
+        return any(hmac.compare_digest(tok, c) for c in cand)  # timing-safe
     def _profile(self, p):
         """/p/<nombre>/... -> carga su config y devuelve el path real."""
         pm = re.match(r'^/p/([a-zA-Z0-9_-]{1,24})(/.*)$', p)           # perfil: /p/<nombre>/…
@@ -158,6 +161,8 @@ class H(BaseHTTPRequestHandler):
         b = body.encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('Content-Length', str(len(b)))
         self.end_headers()
         self.wfile.write(b)

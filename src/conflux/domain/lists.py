@@ -123,7 +123,7 @@ def _m3u_metas():
         return []
     if txt == _M3U_TXT[0]:
         return [{**m} for m in _M3U_METAS]
-    metas = []
+    metas: list = []
     _M3U.clear()
     cur = {'name': '', 'logo': '', 'group': ''}
     for raw in txt.splitlines():

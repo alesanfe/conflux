@@ -141,7 +141,7 @@ def _anime_eps_map(al):
     """AiringSchedules -> {tt: [a,...]} resolviendo mal->tt en pool."""
     an_ids = [a['idMal'] for a in al if a.get('idMal')]
     tts = list(_POOL_BG.map(lambda i: _resolve_sid('series', f'mal:{i}'), an_ids))
-    by = {}
+    by: dict = {}
     for a, tt in zip(al, tts, strict=True):
         if str(tt).startswith('tt'):
             by.setdefault(tt, []).append(a)
@@ -217,7 +217,9 @@ def _estrenos_cal(_extra=None):
     calendario inyecta el feed completo — filtrar rompería el auto-poblado."""
     cine, tmdb, kitsu, anise = (_base('Cinemeta'), _base('TMDB'),
                                 _base('Kitsu'), _base('AniSeason'))
-    hoy, seen, out = time.strftime('%Y-%m-%d'), set(), []
+    hoy = time.strftime('%Y-%m-%d')
+    seen: set = set()
+    out: list = []
     # ids semilla: se regenera cada petición — temporada nueva = ids nuevos
     top_ids, fs, fs_amv, td = _cal_seed_ids(cine, kitsu, anise)
     _cal_series_eps(cine, top_ids, seen, out)

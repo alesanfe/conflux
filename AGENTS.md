@@ -12,8 +12,11 @@ python3 -m mypy                             # type-check (config en pyproject)
 # CI: .github/workflows/ci.yml — lint + suites herméticas + coverage>=80
 # (e2e se salta en CI: CI=true; verifica upstreams reales, o CONFLUX_E2E_LIVE=1)
 # config.admin_token != '' -> /admin,/configure,POST /reload,/configure exigen
-# ?token= o header X-Admin-Token (vacío = abierto, solo loopback)
+# ?token= o header X-Admin-Token (compare_digest; vacío = abierto, loopback)
 # requirements.txt = lock con hashes (pip-compile desde requirements.in)
+# escrituras de ficheros de estado SIEMPRE via _atomic_json (tmp+rename):
+# config.json, .manifests-cache.json — un corte a mitad de write no corrompe
+# CI: matrix py3.11-3.13 + pip-audit + detect-secrets + SBOM (artifact)
 systemctl --user restart stremio-proxy      # tras editar src/conflux/
 
 ## Estructura (src-layout estándar PyPA)

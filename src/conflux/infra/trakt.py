@@ -224,8 +224,8 @@ def _recom(utype):
         return {'metas': []}
     seeds = _recom_seeds(hist)
     related = _recom_related(s, h, kind)
-    out = []
-    seen = set()
+    out: list = []
+    seen: set = set()
     for lst in _POOL_BG.map(related, seeds):
         if _recom_add(lst, utype, seen, out) >= 40:
             break

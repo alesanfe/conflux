@@ -1,5 +1,6 @@
 # pylint: disable=missing-docstring,protected-access,import-outside-toplevel,multiple-statements,unused-argument,invalid-name,redefined-outer-name,expression-not-assigned,too-many-public-methods,duplicate-code,non-ascii-name,wrong-import-position
 """Unit tests conflux.domain.sources — recursos, resolución de ids."""
+import os
 import unittest
 
 import conflux.domain.sources as _sources
@@ -67,3 +68,20 @@ class TestIdMapNoTTL(unittest.TestCase):
         _sources._idmap[('kitsu', '999')] = (0, ('tt0009999', []))   # ts=0 = prehistórico
         imdb, _ = _sources._resolve_meta('series', 'kitsu', '999')
         self.assertEqual(imdb, 'tt0009999')
+
+
+class TestAtomicJson(unittest.TestCase):
+    """_atomic_json: tmp+rename — el fichero final nunca queda a medias."""
+
+    def test_escribe_y_reemplaza(self):
+        import conflux.core.state as st
+        path = '/tmp/atomic-test.json'
+        import json
+        st._atomic_json(path, {'a': 1})
+        with open(path, encoding='utf-8') as fh:
+            self.assertEqual(json.load(fh), {'a': 1})
+        st._atomic_json(path, {'a': 2})   # re-escritura atómica
+        with open(path, encoding='utf-8') as fh:
+            self.assertEqual(json.load(fh), {'a': 2})
+        self.assertFalse(os.path.exists(path + '.tmp'))
+        os.unlink(path)

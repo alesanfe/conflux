@@ -8,6 +8,7 @@ import threading
 import time
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
@@ -110,7 +111,7 @@ _CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '',
                  'opensubtitles_key': '', 'admin_token': '',
                  'trakt_access_token': '', 'trakt_refresh_token': '', 'trakt_expires': 0}
 
-CFG = dict(_CFG_DEFAULTS)
+CFG: dict[str, Any] = dict(_CFG_DEFAULTS)
 
 _DISABLED: set = set()
 
@@ -146,6 +147,15 @@ _rtime: dict = {}            # ruta -> (n, total_ms, max_ms) — latencia del se
 _rts: dict = {}            # ruta -> deque(ultimas 512 latencias) — histograma p50/p95/p99
 
 _SERVED: dict = {}            # fuente -> {'n': streams aportados, 'res': {res: n}} — quién aporta de verdad
+
+def _atomic_json(path, obj):
+    """Escribe JSON de forma atómica (tmp+rename): un corte a mitad de write
+    no corrompe el fichero — clave para config.json y el caché de manifests."""
+    tmp = f'{path}.tmp'
+    with open(tmp, 'w', encoding='utf-8') as fh:
+        json.dump(obj, fh)
+    os.replace(tmp, path)
+
 
 def log_ev(ev, **kv):
     """Un evento = una línea JSON — grep/journalctl -o json-pretty friendly."""

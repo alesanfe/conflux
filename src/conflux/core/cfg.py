@@ -6,7 +6,15 @@ import os
 import re
 import threading
 
-from conflux.core.state import _CFG_DEFAULTS, _CFG_FILE, _DISABLED, CFG, _log, _open
+from conflux.core.state import (
+    _CFG_DEFAULTS,
+    _CFG_FILE,
+    _DISABLED,
+    CFG,
+    _atomic_json,
+    _log,
+    _open,
+)
 
 
 def load_config():
@@ -25,8 +33,8 @@ def load_config():
 
 def _save_cfg():
     try:
-        _open(_CFG_FILE, 'w').write(json.dumps(
-            {k: v for k, v in CFG.items() if v or isinstance(v, list)}, indent=1))
+        _atomic_json(_CFG_FILE,
+                     {k: v for k, v in CFG.items() if v or isinstance(v, list)})
     except OSError:
         pass
 

@@ -115,7 +115,7 @@ def _fix_meta_deep(m, yt):
     fw = _POOL.submit(_wikidata, yt)
     fd = _POOL.submit(_dead_videos, vids) if vids else None   # en paralelo con wikidata
     _fix_meta_wd(m, fw.result())
-    if vids:
+    if fd:
         _fix_meta_vids(m, vids, fd.result())
 
 

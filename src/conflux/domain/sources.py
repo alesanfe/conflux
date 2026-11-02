@@ -8,6 +8,7 @@ from conflux.core.state import (
     _MF_CACHE,
     _POOL_BG,
     SOURCES,
+    _atomic_json,
     _cset,
     _open,
     as_dict,
@@ -36,8 +37,8 @@ def refresh_manifests():
         m = f.result()
         if m:
             manifests[i] = m                    # cold-start (vercel) al segundo intento
-    with suppress(OSError, TypeError, ValueError), open(_MF_CACHE, 'w', encoding='utf-8') as f:
-        json.dump(manifests, f)
+    with suppress(OSError, TypeError, ValueError):
+        _atomic_json(_MF_CACHE, manifests)
 
 
 def res_of(m):
