@@ -237,3 +237,15 @@ class TestDbResolvers(_DbBase):
         s, _ = fake_session(RuntimeError('api caída'))
         with patch.object(db, '_session', return_value=s):
             self.assertIsNone(db._db_resolve('real-debrid', self.H, 0))
+
+
+class TestResolveFi(unittest.TestCase):
+    """?fi= del query: malformado -> 0 (no crash ni fallo del resolve)."""
+
+    @patch('conflux.infra.debrid._db_cfg', return_value=('real-debrid', 'k'))
+    def test_fi_malformado_cae_a_cero(self, _):
+        m = unittest.mock.Mock(return_value='http://dl/x')
+        # _DB_RESOLVE guarda referencia directa: hay que parchear el dict
+        with unittest.mock.patch.dict(db._DB_RESOLVE, {'real-debrid': m}):
+            self.assertEqual(db._db_resolve('real-debrid', 'h', 'abc'), 'http://dl/x')
+        self.assertEqual(m.call_args[0][2], 0)

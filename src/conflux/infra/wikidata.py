@@ -24,6 +24,9 @@ _wd_c = {}                                    # yt -> (ts, dict) — TTL 24h: no
 
 def _wikidata(yt):
     """Canal yt -> datos reales de Wikidata (country/website/socials/year) por P2397."""
+    if len(_wd_c) > 400:                                  # cota: purga mitad más vieja
+        for k in sorted(_wd_c, key=lambda k: _wd_c[k][0])[:200]:
+            _wd_c.pop(k, None)
     ent = _wd_c.get(yt)
     if ent and time.time() - ent[0] < 86400:
         return ent[1]

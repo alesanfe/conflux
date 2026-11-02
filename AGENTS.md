@@ -45,6 +45,9 @@ Sub-paquetes por capa — cada uno solo depende "hacia abajo":
   (estrenos sintéticos), `catalog.py` (routing /catalog), `metafix.py` (_fix_meta*)
 - `conflux/app/`    casos de uso: `stream.py` (/stream: _collect* + url-health),
   `meta.py` (/meta race/fallback), `subs.py` (OpenSubtitles), `bg.py` (prefetch+refresher)
+  · `_idmap` (sources): mapeo prefijo->imdb SIN TTL (estable; cap 400 vía _cset)
+  · `_m3u_metas` (lists): re-parsea solo si cambia el contenido del .m3u
+  · `?fi=` de /r/ se sanitiza a int en `_db_resolve` (malformado -> 0)
 - `conflux/web/`    `pages.py` (HTML /configure /admin /health) + `server.py`
   (handler H + ROUTES + main())
 

@@ -229,6 +229,10 @@ def _db_resolve(p, h, fi):
     if not k or not fn:
         return None
     try:
+        fi = int(fi)                       # ?fi= del query: malformado -> 0, no crash
+    except (TypeError, ValueError):
+        fi = 0
+    try:
         return fn(k, h, fi)
     except Exception:                                            # noqa: BLE001 — boundary: debrid devuelve None, nunca crash
         return None

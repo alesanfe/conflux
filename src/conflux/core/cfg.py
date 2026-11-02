@@ -45,6 +45,8 @@ _PROFILES = {}
 
 def _profile_load(name):
     if name not in _PROFILES:
+        if len(_PROFILES) >= 32:                            # cota: un perfil no visto desaloja al más viejo
+            _PROFILES.pop(next(iter(_PROFILES)))
         try:
             _PROFILES[name] = json.load(_open(os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), f'config.{name}.json')))

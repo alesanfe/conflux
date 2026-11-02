@@ -4,7 +4,7 @@
 import requests
 
 from conflux.core.cfg import _cfgget
-from conflux.core.state import PORT
+from conflux.core.state import PORT, as_dict
 from conflux.domain.sources import _resolve_sid
 from conflux.infra.net import _session
 
@@ -26,7 +26,7 @@ def _subs_query(stype, sid):
 def _subs_map(r):
     """respuesta OpenSubtitles -> subs con url /s/<file_id>, ES-first."""
     out = []
-    for d in r.json().get('data') or []:
+    for d in as_dict(r.json()).get('data') or []:
         a = d.get('attributes') or {}
         fid = ((a.get('files') or [{}])[0]).get('file_id')
         if not fid:

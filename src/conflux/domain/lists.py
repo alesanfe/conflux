@@ -110,12 +110,19 @@ def _list_metas(url, utype):
 
 _M3U = {}
 
+_M3U_METAS = []
+_M3U_TXT = [None]        # contenido ya parseado — no re-parsear por request
+
+
 def _m3u_metas():
-    """Parsea config.m3u_path -> metas tv + streams indexados (m3u:N)."""
+    """Parsea config.m3u_path -> metas tv + streams indexados (m3u:N).
+    Lee el fichero en cada llamada pero solo re-parsea si el contenido cambió."""
     try:
         txt = _open(CFG['m3u_path'], encoding='utf-8', errors='replace').read()
     except OSError:
         return []
+    if txt == _M3U_TXT[0]:
+        return [{**m} for m in _M3U_METAS]
     metas = []
     _M3U.clear()
     cur = {'name': '', 'logo': '', 'group': ''}
@@ -131,6 +138,8 @@ def _m3u_metas():
                           'posterShape': 'square',
                           'description': cur['group']})
             cur = {'name': '', 'logo': '', 'group': ''}
+    _M3U_TXT[0] = txt
+    _M3U_METAS[:] = metas
     return metas
 
 def _m3u_extinf(ln):

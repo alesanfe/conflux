@@ -40,12 +40,14 @@ def _anilist_airing(days):
             out.append(row)
     return out
 
+_AIRING_Q = Template('{Page(page:$page,perPage:50){airingSchedules(notYetAired:true,'
+                     'airingAt_lesser:$t_end,sort:TIME){airingAt episode media{idMal '
+                     'title{romaji english} coverImage{large}}}}}')
+
+
 def _anilist_page(page, t_end):
     """Una página de airingSchedules (o [] en error/fin)."""
-    q = {'query': Template('{Page(page:$page,perPage:50){airingSchedules(notYetAired:true,'
-                           'airingAt_lesser:$t_end,sort:TIME){airingAt episode media{idMal '
-                           'title{romaji english} coverImage{large}}}}}')
-         .substitute(page=page, t_end=t_end)}           # Template: las llaves GraphQL chocan con f-string
+    q = {'query': _AIRING_Q.substitute(page=page, t_end=t_end)}  # Template: {} GraphQL chocan con f-string
     try:
         r = _session('graphql.anilist.co').post('https://graphql.anilist.co',
             json=q, timeout=8).json()

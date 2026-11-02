@@ -8,7 +8,6 @@ from conflux.core.state import (
     _MF_CACHE,
     _POOL_BG,
     SOURCES,
-    _cget,
     _cset,
     _open,
     as_dict,
@@ -70,16 +69,18 @@ _PREFIX_SRC = {'kitsu': 'Kitsu', 'mal': 'Kitsu', 'anilist': 'Kitsu', 'anidb': 'K
 
 
 def _resolve_meta(stype, pref, base_id):
-    """meta de la fuente que resuelve el prefijo -> (imdb_id, videos), cacheado."""
+    """meta de la fuente que resuelve el prefijo -> (imdb_id, videos), cacheado
+    SIN TTL: el mapeo id->imdb es estable (años); _cset solo acota a 400."""
     key = (pref, base_id)
-    ent = _cget(_idmap, key)
+    ent = _idmap.get(key)
     if ent is None:
         base = next((b.base for b in SOURCES if b.name == _PREFIX_SRC[pref]), None)
         d = fetch(f'{base}/meta/{stype}/{pref}:{base_id}.json', 4) if base else None
         m = as_dict(d).get('meta') or {}
         ent = (m.get('imdb_id') or '', m.get('videos') or [])
         _cset(_idmap, key, ent)
-    return ent
+        return ent
+    return ent[1]
 
 
 def _video_se(v):

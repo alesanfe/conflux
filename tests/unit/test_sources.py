@@ -57,3 +57,13 @@ class TestResolveSid(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestIdMapNoTTL(unittest.TestCase):
+    """_idmap no expira: el mapeo prefijo->imdb es estable en el tiempo."""
+
+    def test_entrada_vieja_sigue_resolviendo(self):
+        _sources._idmap.clear()
+        _sources._idmap[('kitsu', '999')] = (0, ('tt0009999', []))   # ts=0 = prehistórico
+        imdb, _ = _sources._resolve_meta('series', 'kitsu', '999')
+        self.assertEqual(imdb, 'tt0009999')

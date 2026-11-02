@@ -212,3 +212,25 @@ class TestM3U(unittest.TestCase):
     def test_extinf_parse(self):
         d = L._m3u_extinf('#EXTINF:-1 tvg-logo="L.png" group-title="G",N')
         self.assertEqual(d, {'name': 'N', 'logo': 'L.png', 'group': 'G'})
+
+
+class TestM3UCache(unittest.TestCase):
+    """Segunda llamada con mismo contenido reutiliza el parseo (sin re-copiar)."""
+
+    def test_contenido_igual_reusa_parseo(self):
+        L._M3U_TXT[0] = None
+        _, undo = cfg_swap(m3u_path='/tmp/x.m3u')
+        try:
+            with patch.object(L, '_open', _mo(read_data='#EXTINF:-1,A\nhttp://s/1\n')):
+                a = L._m3u_metas()
+                with patch.object(L, '_m3u_extinf', side_effect=AssertionError('reparseó')):
+                    b = L._m3u_metas()
+            self.assertEqual(len(a), 1)
+            self.assertEqual(len(b), 1)
+            self.assertEqual(b[0]['name'], 'A')
+            b[0]['name'] = 'mutado'                    # copias: no corrompe la caché
+            with patch.object(L, '_open', _mo(read_data='#EXTINF:-1,A\nhttp://s/1\n')):
+                self.assertEqual(L._m3u_metas()[0]['name'], 'A')
+        finally:
+            undo()
+            L._M3U_TXT[0] = None
