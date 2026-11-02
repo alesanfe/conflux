@@ -3,3 +3,4 @@ __pycache__/
 .manifests-cache.json
 proxy.log
 sources.json
+config.json

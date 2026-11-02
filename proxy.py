@@ -65,7 +65,8 @@ _CFG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.jso
 _CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '', 'poster_ratings': False,
                  'm3u_path': '', 'debrid_provider': '', 'debrid_key': '', 'horizon_days': 45,
                  'stream_langs': ['es', 'latam', 'spanish', 'castellano', 'espanol'],
-                 'sources_disabled': []}
+                 'sources_disabled': [], 'trakt_client_secret': '',
+                 'trakt_access_token': '', 'trakt_refresh_token': '', 'trakt_expires': 0}
 CFG = dict(_CFG_DEFAULTS)
 _DISABLED = set()
 def load_config():
@@ -76,6 +77,12 @@ def load_config():
         pass
     global _DISABLED
     _DISABLED = set(CFG.get('sources_disabled') or [])
+def _save_cfg():
+    try:
+        open(_CFG_FILE, 'w').write(json.dumps(
+            {k: v for k, v in CFG.items() if v or isinstance(v, list)}, indent=1))
+    except OSError:
+        pass
 load_config()
 
 _SESS      = {}      # host -> Session (keep-alive: reusa TCP+TLS entre peticiones)
@@ -489,7 +496,36 @@ def handle_stream(stype, sid):
         rows = sorted(state['rows'], key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[2], -r[3]))
     out = [r[0] for r in rows]
     _debrid_mark(out)                                        # si hay key: cache + resolve /r/
+    _url_health(out)                                         # HEAD async a streams http
     return {'streams': out}
+
+
+# ---- health-check de streams HTTP (3.4): HEAD async, muertos filtrados ----
+_URL_BAD = {}        # url -> ts marcado muerto (reintento a los 30min)
+_URL_OK  = {}        # url -> ts verificado vivo
+def _url_health(streams):
+    """Streams http: los confirmados muertos salen de la lista; los desconocidos
+    se HEAD-encolan async (máx 15, 3s). Fallo transitorio (timeout) solo cuenta
+    medio strike — 2 strikes o un 4xx/5xx confirman muerte."""
+    now = time.time()
+    dead = {u for u, (st, ts) in _URL_BAD.items() if st >= 2 and now - ts < 1800}
+    if dead:
+        streams[:] = [s for s in streams if s.get('url') not in dead]
+    todo = [s['url'] for s in streams
+            if s.get('url', '').startswith('http') and '127.0.0.1' not in s['url']
+            and s['url'] not in _URL_BAD and now - _URL_OK.get(s['url'], 0) > 1800][:15]
+    def head(u):
+        try:
+            r = _session(urllib.parse.urlsplit(u).netloc).head(u, timeout=3, allow_redirects=True)
+            if r.status_code < 400:
+                _URL_OK[u] = time.time(); _URL_BAD.pop(u, None)
+            else:
+                _URL_BAD[u] = (2, time.time())                 # 4xx/5xx: muerte segura
+        except Exception:
+            st, _ = _URL_BAD.get(u, (0, 0))
+            _URL_BAD[u] = (st + 1, time.time())                # timeout: strike
+    for u in todo:
+        _POOL_BG.submit(head, u)
 
 
 # ---- debrid (Real-Debrid / TorBox) — activo solo con key en config.json/env ----
@@ -905,6 +941,103 @@ def _trakt_movies(days):
     except Exception:
         return []
 
+# ---- Trakt OAuth (device flow) — token personal para /calendars/my/* ----
+_TRAKT_DEV = {}                    # device_code/interval/expires mientras autoriza
+def _trakt_h(auth=False):
+    h = {'trakt-api-version': '2', 'trakt-api-key': CFG.get('trakt_client_id', ''),
+         'Content-Type': 'application/json'}
+    if auth and CFG.get('trakt_access_token'):
+        h['Authorization'] = f"Bearer {CFG['trakt_access_token']}"
+    return h
+
+def _trakt_device_start():
+    """POST /oauth/device/code -> user_code+verification_url para autorizar una vez."""
+    try:
+        d = _session('api.trakt.tv').post('https://api.trakt.tv/oauth/device/code',
+            json={'client_id': CFG['trakt_client_id']}, timeout=8).json()
+        _TRAKT_DEV.clear(); _TRAKT_DEV.update(d)
+        _TRAKT_DEV['deadline'] = time.time() + d.get('expires_in', 600)
+        threading.Thread(target=_trakt_device_poll, daemon=True).start()
+        return d
+    except Exception:
+        return None
+
+def _trakt_device_poll():
+    """Poll /oauth/device/token hasta que el usuario autoriza (o expira)."""
+    while time.time() < _TRAKT_DEV.get('deadline', 0):
+        time.sleep(max(3, _TRAKT_DEV.get('interval', 5)))
+        try:
+            r = _session('api.trakt.tv').post('https://api.trakt.tv/oauth/device/token',
+                json={'code': _TRAKT_DEV['device_code'],
+                      'client_id': CFG['trakt_client_id'],
+                      'client_secret': CFG['trakt_client_secret']}, timeout=8)
+            d = r.json()
+            if d.get('access_token'):
+                CFG['trakt_access_token']  = d['access_token']
+                CFG['trakt_refresh_token'] = d.get('refresh_token', '')
+                CFG['trakt_expires'] = time.time() + d.get('expires_in', 7776000)
+                _save_cfg(); _TRAKT_DEV.clear()
+                log_ev('trakt_auth', ok=True)
+                return
+        except Exception:
+            pass
+    _TRAKT_DEV.clear()
+
+def _trakt_refresh():
+    """Renueva el access_token si caduca en <10min (grant refresh_token)."""
+    if not CFG.get('trakt_refresh_token'): return
+    if time.time() < CFG.get('trakt_expires', 0) - 600: return
+    try:
+        d = _session('api.trakt.tv').post('https://api.trakt.tv/oauth/token',
+            json={'refresh_token': CFG['trakt_refresh_token'],
+                  'client_id': CFG['trakt_client_id'],
+                  'client_secret': CFG['trakt_client_secret'],
+                  'redirect_uri': 'urn:ietf:wg:oauth:2.0:oob',
+                  'grant_type': 'refresh_token'}, timeout=8).json()
+        if d.get('access_token'):
+            CFG['trakt_access_token']  = d['access_token']
+            CFG['trakt_refresh_token'] = d.get('refresh_token', CFG['trakt_refresh_token'])
+            CFG['trakt_expires'] = time.time() + d.get('expires_in', 7776000)
+            _save_cfg()
+    except Exception:
+        pass
+
+def _trakt_my(days):
+    """Calendario PERSONAL: shows + movies del usuario (requiere token OAuth).
+    -> (eps[(tt, season, ep, when, show_meta)], films[{meta-like}])."""
+    if not CFG.get('trakt_access_token'): return [], []
+    _trakt_refresh()
+    today = time.strftime('%Y-%m-%d')
+    s = _session('api.trakt.tv'); h = _trakt_h(auth=True)
+    eps, films = [], []
+    try:
+        for e in s.get(f'https://api.trakt.tv/calendars/my/shows/{today}/{days}',
+                       headers=h, timeout=8).json():
+            sh = e.get('show') or {}; ids = sh.get('ids') or {}
+            ep = e.get('episode') or {}
+            if not ids.get('imdb'): continue
+            eps.append(('tt' + str(ids['imdb']).lstrip('t'), ep.get('season', 1),
+                        ep.get('number', 1), e.get('first_aired'),
+                        {'id': 'tt' + str(ids['imdb']).lstrip('t'), 'type': 'series',
+                         'name': sh.get('title'), 'year': sh.get('year'),
+                         'poster': f"https://images.metahub.space/poster/medium/{ids['imdb']}/img",
+                         '_my': True}))
+    except Exception:
+        pass
+    try:
+        for e in s.get(f'https://api.trakt.tv/calendars/my/movies/{today}/{days}',
+                       headers=h, timeout=8).json():
+            mv = e.get('movie') or {}; ids = mv.get('ids') or {}
+            if not ids.get('imdb'): continue
+            tt = 'tt' + str(ids['imdb']).lstrip('t')
+            films.append({'id': tt, 'imdb_id': tt, 'type': 'movie', 'name': mv.get('title'),
+                          'released': (e.get('released') or '')[:10] + 'T00:00:00.000Z',
+                          'year': mv.get('year'),
+                          'poster': f"https://images.metahub.space/poster/medium/{ids['imdb']}/img"})
+    except Exception:
+        pass
+    return eps, films
+
 def _busqueda(utype, extra):
     """Búsqueda global: fan-out a TODOS los catálogos del tipo que soportan
     'search' upstream y dedup por id canónico (imdb si resoluble)."""
@@ -1050,6 +1183,29 @@ def _estrenos_cal(extra=None):
     # estrenos reales via Trakt (requiere client_id gratis en config)
     for mv in _trakt_movies(days):
         add_film(mv)
+    # calendario PERSONAL Trakt (token OAuth via /auth/trakt): episodios de
+    # series seguidas + pelis de la watchlist — imdb directo, sin resolver
+    my_eps, my_films = _trakt_my(days)
+    for mv in my_films:
+        add_film(mv)
+    metas_tt = {m['id']: m for m in out}                    # reindexed tras add_film
+    new_tt = sorted({tt for tt, *_ in my_eps if tt not in metas_tt})
+    fmy = [_POOL_BG.submit(fetch, f"{cine}/meta/series/{i}.json", 10) for i in new_tt]
+    fallback = {tt: sm for tt, _, _, _, sm in my_eps}
+    for tt, f in zip(new_tt, fmy):
+        m = (f.result() or {}).get('meta') or fallback.get(tt)
+        if not m or not m.get('id'): continue
+        m = dict(m); m.setdefault('videos', []); m['id'] = tt
+        metas_tt[tt] = m; out.append(m); seen.add(tt)
+    for tt, s_no, e_no, when, _ in my_eps:
+        m = metas_tt.get(tt)
+        if not m: continue
+        vid = f"{tt}:{s_no}:{e_no}"
+        if vid not in {v['id'] for v in m.get('videos', [])}:
+            m['videos'].append({'id': vid, 'name': f"S{s_no}E{e_no} · en tu Trakt",
+                                'season': s_no, 'episode': e_no, 'number': e_no,
+                                'released': when, 'firstAired': when,
+                                'thumbnail': m.get('poster')})
     # SOLO metasDetailed: con 'metas' presente el cliente parsea la variante
     # ligera (sin videos) y el calendario no tiene nada que pintar
     return {'metasDetailed': out} if out else None
@@ -1182,6 +1338,12 @@ class H(BaseHTTPRequestHandler):
             return self._html(_admin_page())
         if p == '/configure':
             return self._html(_configure_page())
+        if p == '/auth/trakt':
+            return self._html(_trakt_auth_page())
+        if p == '/auth/trakt/status':
+            if CFG.get('trakt_access_token') and not _TRAKT_DEV:
+                return self.reply({'state': 'ok'})
+            return self.reply({'state': 'pending' if _TRAKT_DEV else 'none'})
         if p.startswith('/r/'):                                        # debrid redirect
             _, _, pvd, h = p.split('/')
             fi = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('fi', ['0'])[0]
@@ -1221,6 +1383,8 @@ class H(BaseHTTPRequestHandler):
             form = urllib.parse.parse_qs(self.rfile.read(min(ln, 65536)).decode())
             cfg = dict(CFG)
             cfg['trakt_client_id'] = form.get('trakt_client_id', [''])[0].strip()
+            if form.get('trakt_client_secret', [''])[0].strip():
+                cfg['trakt_client_secret'] = form['trakt_client_secret'][0].strip()
             cfg['debrid_provider'] = form.get('debrid_provider', [''])[0].strip()
             if form.get('debrid_key', [''])[0].strip():
                 cfg['debrid_key'] = form['debrid_key'][0].strip()
@@ -1229,10 +1393,7 @@ class H(BaseHTTPRequestHandler):
             cfg['stream_langs'] = [s.strip() for s in form.get('stream_langs', [''])[0].split(',') if s.strip()] or CFG['stream_langs']
             enabled = set(form.get('src', []))
             cfg['sources_disabled'] = [s.name for s in SOURCES if s.name not in enabled]
-            try:
-                open(_CFG_FILE, 'w').write(json.dumps({k: v for k, v in cfg.items() if v or isinstance(v, list)}, indent=1))
-            except OSError:
-                pass
+            CFG.clear(); CFG.update(cfg); _save_cfg()
             load_config()
             self.send_response(303)
             self.send_header('Location', '/configure')
@@ -1280,8 +1441,11 @@ def _configure_page():
             f"<p class='dim'>Guarda en config.json. Tras guardar, POST /reload aplica en caliente.</p>"
             f"<form method='post' action='/configure'>"
             f"<h2>Integraciones</h2>"
-            f"<p>Trakt client_id <span class='dim'>(trakt.tv/oauth/applications — feed de estrenos real)</span><br>"
-            f"<input name='trakt_client_id' value='{CFG.get('trakt_client_id','')}' placeholder='vacío = Trakt off'></p>"
+            f"<p>Trakt <span class='dim'>(app en trakt.tv/oauth/applications — feed global + personal)</span>"
+            f" {'<b class=ok>conectado ✓</b>' if CFG.get('trakt_access_token') else ''}<br>"
+            f"<input name='trakt_client_id' value='{CFG.get('trakt_client_id','')}' placeholder='client_id — vacío = Trakt off'>"
+            f"<input name='trakt_client_secret' value='' placeholder='client_secret (no se muestra el guardado)'></p>"
+            f"{'<p><a class=\"btn\" href=\"/auth/trakt\">Conectar cuenta Trakt</a> <span class=dim>device flow: autorizas una vez en trakt.tv/activate</span></p>' if CFG.get('trakt_client_id') and not CFG.get('trakt_access_token') else ''}"
             f"<p>Debrid <span class='dim'>(reproducción instantánea, sin peers)</span><br>"
             f"<select name='debrid_provider'>{opts}</select><br>"
             f"<input name='debrid_key' value='' placeholder='API key (no se muestra la guardada)'></p>"
@@ -1292,6 +1456,35 @@ def _configure_page():
             f"<h2>Fuentes activas</h2>{src_chk}"
             f"<p><button type='submit'>Guardar</button> <a class='btn' href='/admin'>dashboard</a></p>"
             f"</form></body></html>")
+
+def _trakt_auth_page():
+    """Device Authorization: muestra user_code, el usuario lo introduce en
+    trakt.tv/activate y el poll en background guarda el token."""
+    if not CFG.get('trakt_client_id') or not CFG.get('trakt_client_secret'):
+        return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
+                f"<h1>Conectar Trakt</h1><p>Faltan credenciales de app: crea una en "
+                f"<a href='https://trakt.tv/oauth/applications/new' style='color:#7c5ce0'>"
+                f"trakt.tv/oauth/applications/new</a> (redirect URI: <code>urn:ietf:wg:oauth:2.0:oob</code>)"
+                f" y guarda client_id + client_secret en <a class='btn' href='/configure'>/configure</a>.</p></body></html>")
+    if CFG.get('trakt_access_token'):
+        exp = time.strftime('%Y-%m-%d', time.localtime(CFG.get('trakt_expires', 0)))
+        return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
+                f"<h1>Trakt conectado</h1><p class='ok'>Token activo (expira {exp}).</p>"
+                f"<p><a class='btn' href='/configure'>volver</a></p></body></html>")
+    d = _trakt_device_start() if not _TRAKT_DEV else _TRAKT_DEV
+    if not d:
+        return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
+                f"<h1>Trakt</h1><p class='bad'>No se pudo iniciar el device flow.</p></body></html>")
+    return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
+            f"<h1>Autorizar en Trakt</h1>"
+            f"<p>1. Abre <a href='{d['verification_url']}' style='color:#7c5ce0'>{d['verification_url']}</a><br>"
+            f"2. Introduce el código:</p>"
+            f"<p style='font-size:34px;letter-spacing:4px;color:#7c5ce0'><b>{d['user_code']}</b></p>"
+            f"<p id='st' class='dim'>esperando autorización…</p>"
+            f"<script>setInterval(()=>fetch('/auth/trakt/status').then(r=>r.json()).then(d=>{{"
+            f"if(d.state==='ok'){{document.getElementById('st').innerHTML=\"<span class=ok>Conectado — token guardado</span>\";}}"
+            f"if(d.state==='none')document.getElementById('st').textContent='expirado — recarga para reintentar';"
+            f"}}),4000)</script></body></html>")
 
 _prefetching = False
 
