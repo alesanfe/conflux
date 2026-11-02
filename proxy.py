@@ -18,6 +18,8 @@ from concurrent.futures import TimeoutError as FutureTimeout
 def _open(*a, **kw):
     """open() auto-cerrado al primer read()/write() — para one-liners tipo
     json.load(...) / .write(...) sin `with`."""
+    if 'b' not in str(a[1] if len(a) > 1 else ''):
+        kw.setdefault('encoding', 'utf-8')
     f = open(*a, **kw)  # noqa: SIM115 — es el helper que cierra solo
     class _W:
         def read(self):
@@ -149,9 +151,9 @@ def _load_manifests_cache():
     """Manifests persistidos del arranque anterior: el proxy responde al instante
     y refresh_manifests() en background trae la versión fresca (ventana fría ~0)."""
     try:
-        cached = json.load(_open(_MF_CACHE))
-        if len(cached) == len(SOURCES) and sum(1 for m in cached if m) >= len(SOURCES) // 2:
-            return cached
+        disk = json.load(_open(_MF_CACHE))
+        if len(disk) == len(SOURCES) and sum(1 for m in disk if m) >= len(SOURCES) // 2:
+            return disk
     except Exception:
         pass
     return None
@@ -167,7 +169,7 @@ def refresh_manifests():
         if m:
             manifests[i] = m                    # cold-start (vercel) al segundo intento
     try:
-        with open(_MF_CACHE, 'w') as f:
+        with open(_MF_CACHE, 'w', encoding='utf-8') as f:
             json.dump(manifests, f)
     except Exception:
         pass
@@ -192,7 +194,6 @@ def res_prefixes(m, res):
 
 # ---- normalizacion de streams ----
 RE_RES   = re.compile(r'\b(4320p|2160p|1440p|1080p|720p|576p|480p|360p|240p|8K|4K|HD|SD)\b', re.IGNORECASE)
-RE_TAGS  = re.compile(r'\b(HDR10\+?|HDR|Dolby\s?Vision|DV|WEB-?DL|WEBRip|BluRay|BDRip|Remux|HEVC|x265|x264|10bit|Hi10P|CAM|HDCAM|TS|SCR|DVD|IMAX|Open\s?Matte|REPACK|PROPER)\b', re.IGNORECASE)
 RE_SIZE  = re.compile(r'(\d+(?:[.,]\d+)?)\s?(GB|GiB|MB|MiB|TB)\b', re.IGNORECASE)
 RE_SEEDS = re.compile(r'(?:👤|seed(?:er)?s?|peers?)\s*[:=]?\s*(\d{1,6})|(\d{1,6})\s*(?:seed(?:er)?s?|peers?)\b', re.IGNORECASE)
 RE_SRC   = re.compile(r'[⚙️🔎☁️]\s*([\w.\-]+)')
@@ -498,22 +499,22 @@ def _collect(key, state):
     t0 = time.time()
     try:
         for f in as_completed([_POOL.submit(one, i) for i in range(len(SOURCES))]):
-                try: i, streams, usable = f.result()
-                except Exception: continue
-                state['contrib'][SOURCES[i].name] = usable            # por collect: sin mezclas
-                with state['lock']:
-                    for s in streams:
-                        if not isinstance(s, dict) or _spam(s): continue
-                        k = s.get('infoHash') or s.get('url') or s.get('externalUrl') or s.get('ytId')
-                        if not k: continue
-                        k = str(k).lower()              # infoHash: Ytztvio usa MAYÚSCULAS
-                        if k in state['seen']: continue
-                        state['seen'].add(k)
-                        nr = norm_stream(s, SOURCES[i].name)
-                        state['rows'].append(nr)
-                        sv = _SERVED.setdefault(SOURCES[i].name, {'n': 0, 'res': {}})
-                        sv['n'] += 1                                    # 5.2: qué fuente aporta y en qué calidad
-                        sv['res'][nr[1] or 'SD'] = sv['res'].get(nr[1] or 'SD', 0) + 1
+            try: i, streams, usable = f.result()
+            except Exception: continue
+            state['contrib'][SOURCES[i].name] = usable            # por collect: sin mezclas
+            with state['lock']:
+                for s in streams:
+                    if not isinstance(s, dict) or _spam(s): continue
+                    k = s.get('infoHash') or s.get('url') or s.get('externalUrl') or s.get('ytId')
+                    if not k: continue
+                    k = str(k).lower()              # infoHash: Ytztvio usa MAYÚSCULAS
+                    if k in state['seen']: continue
+                    state['seen'].add(k)
+                    nr = norm_stream(s, SOURCES[i].name)
+                    state['rows'].append(nr)
+                    sv = _SERVED.setdefault(SOURCES[i].name, {'n': 0, 'res': {}})
+                    sv['n'] += 1                                    # 5.2: qué fuente aporta y en qué calidad
+                    sv['res'][nr[1] or 'SD'] = sv['res'].get(nr[1] or 'SD', 0) + 1
     finally:
         for s in _torznab(stype, sid):                        # fuente local (Prowlarr/Jackett)
             k = s['infoHash'].lower()
@@ -547,7 +548,8 @@ def _torznab(stype, sid):
             params={'t': 'movie' if stype == 'movie' else 'tvsearch',
                     'imdbid': imdb, 'apikey': key, 'extended': '1'},
             timeout=10)
-        import xml.etree.ElementTree as ET
+        try: from defusedxml import ElementTree as ET   # noqa: I001 — el indexer sirve XML no confiable
+        except ImportError: import xml.etree.ElementTree as ET  # noqa: I001 — orden = try/except
         root = ET.fromstring(r.content)
         TZ = '{http://torznab.com/schemas/2015/feed}'
         out = []
@@ -1393,11 +1395,11 @@ def _m3u_metas():
     return metas
 
 def _estrenos_cal(_extra=None):
-    """extra se ignora a propósito: el cliente pide sus ids de biblioteca y el
-    calendario inyecta el feed completo — filtrar rompería el auto-poblado."""
     """Calendario completo = series populares en emisión (episodios reales vía
     cinemeta calendar-videos con ids sembrados del top) + pelis del año no
-    estrenadas (vídeo sintético = fecha de estreno)."""
+    estrenadas (vídeo sintético = fecha de estreno).
+    extra se ignora a propósito: el cliente pide sus ids de biblioteca y el
+    calendario inyecta el feed completo — filtrar rompería el auto-poblado."""
     cine = next(b for n, b in SOURCES if n == 'Cinemeta')
     tmdb = next(b for n, b in SOURCES if n == 'TMDB')
     hoy, seen, out = time.strftime('%Y-%m-%d'), set(), []
@@ -1702,13 +1704,13 @@ class H(BaseHTTPRequestHandler):
             load_config()
             _cache.clear(); _meta_c.clear(); _cat_c.clear()
             threading.Thread(target=refresh_manifests, daemon=True).start()
-            log_ev('reload', cfg=dict(CFG))
+            log_ev('reload', cfg=CFG.copy())
             return self.reply({'ok': True, 'config': {k: ('***' if 'key' in k else v)
                                                       for k, v in CFG.items()}})
         if p == '/configure':
             ln = int(self.headers.get('Content-Length') or 0)
             form = urllib.parse.parse_qs(self.rfile.read(min(ln, 65536)).decode())
-            cfg = dict(CFG)
+            cfg = CFG.copy()
             cfg['trakt_client_id'] = form.get('trakt_client_id', [''])[0].strip()
             if form.get('trakt_client_secret', [''])[0].strip():
                 cfg['trakt_client_secret'] = form['trakt_client_secret'][0].strip()
