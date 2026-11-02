@@ -21,13 +21,32 @@ En Stremio: añade el addon `http://127.0.0.1:9700/manifest.json`.
 
 ## Configuración
 
+- **`/configure`** — UI web: fuentes on/off, Trakt client_id, debrid (RD/TorBox),
+  ruta M3U, horizonte del calendario. Guarda en `config.json`.
+- **`/admin`** — dashboard: salud por fuente, circuitos abiertos, latencia p50/p95/p99.
 - `sources.json` — lista de fuentes `[{"name","base"}]`; sobreescribe la embebida.
-- `/health` — estado por fuente, rachas de fallos, cooldowns, fails por host y latencia por ruta.
+- `config.json` — `trakt_client_id`, `debrid_provider`/`debrid_key`, `m3u_path`,
+  `horizon_days`, `stream_langs`, `sources_disabled` (todas opcionales).
+- `POST /reload` — aplica `config.json` en caliente y limpia cachés.
+- `/health` — estado por fuente, fails por host y latencia por ruta.
+
+## Features
+
+- **Búsqueda unificada** — catálogo «Buscar todo» por tipo: fan-out a todos los
+  upstreams que soportan `search`, dedup por id.
+- **Calendario autónomo** — `metasDetailed` con episodios reales (Cinemeta/Kitsu/
+  AniSeason) + AniList airing (fechas exactas) + Trakt anticipated (con key) +
+  estrenos de cine TMDB; sin depender de la biblioteca.
+- **Debrid** — con `debrid_key`: marca ⚡ los hashes cacheados (instantAvailability)
+  y los sirve vía redirect `/r/<provider>/<hash>` → URL HTTP.
+- **M3U propio** — `m3u_path` → catálogo tv «Mis canales» + streams directos.
+- **Streams ES** — badge `ES` y boost de orden para latino/castellano/VOSE.
 
 ## Test
 
 ```bash
 python3 test_proxy.py   # 28 tests
+./check.sh              # smoke test: endpoints + fuentes vivas
 ```
 
 Ver `AGENTS.md` para las reglas operativas (gotchas de localStorage UTF-16LE,
