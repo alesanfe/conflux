@@ -37,10 +37,15 @@ En Stremio: añade el addon `http://127.0.0.1:9700/manifest.json`.
 - **Calendario autónomo** — `metasDetailed` con episodios reales (Cinemeta/Kitsu/
   AniSeason) + AniList airing (fechas exactas) + Trakt anticipated (con key) +
   estrenos de cine TMDB; sin depender de la biblioteca.
+- **Trakt personal** — `/auth/trakt` (device flow, una autorización) → mi
+  calendario (episodios de series seguidas + watchlist) y catálogos
+  «Recomendados · tu Trakt» (history → related). Token auto-renovado.
 - **Debrid** — con `debrid_key`: marca ⚡ los hashes cacheados (instantAvailability)
   y los sirve vía redirect `/r/<provider>/<hash>` → URL HTTP.
 - **M3U propio** — `m3u_path` → catálogo tv «Mis canales» + streams directos.
 - **Streams ES** — badge `ES` y boost de orden para latino/castellano/VOSE.
+- **Salud de streams** — HEAD async a URLs http: las confirmadas caídas
+  (4xx o 2 timeouts) salen de la lista 30min.
 
 ## Test
 

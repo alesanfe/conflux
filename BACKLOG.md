@@ -17,7 +17,7 @@ Esfuerzo: **S** <1 sesión · **M** ~1-2 · **L** varias sesiones
 | 1.1 ✅ | **Feed real de estrenos vía Trakt API** — `/calendars/all/movies`, `/shows/premieres`, `/anticipated` sustituyen el apaño Cinemeta/TMDB | El calendario muestra estrenos a 2-3 meses vista con fecha exacta; sin client_secret, solo `trakt-api-key` (client_id público) | P0 | M |
 | 1.2 ✅ | **Episodios anime con fecha real** — AniChart/AniList API (gratis, sin key) da `nextAiringEpisode.airingAt` exacto para cada anime de temporada | Cada anime de AniSeason/Kitsu muestra su próximo episodio en su día/hora real, no solo los que Cinemeta conoce | P0 | M |
 | 1.3 ✅ | **Ventana rodante configurable** — `horizon_days` en config decide cuántos días futuros alimentar | Cambiar el valor refleja en Discover/Calendar sin tocar código | P1 | S |
-| 1.4 | **"Mi calendario" personal** — con auth Trakt opcional, mezclar `/calendars/my/*` (watchlist propia) con el feed global | Con token Trakt del usuario, la vista prioriza lo suyo; sin token, sigue el feed global | P1 | M |
+| 1.4 ✅ | **"Mi calendario" personal** — Device Auth flow en `/auth/trakt` (una autorización en trakt.tv/activate, token auto-renovado); `/calendars/my/shows`+`movies` fusionados | Con token, la vista incluye lo tuyo marcado "en tu Trakt"; sin token, feed global | P1 | M |
 | 1.5 ✅ | **Notificaciones nativas** — `behaviorHints.newEpisodeNotifications` ya alimenta el panel de avisos; verificar que el feed sintético también dispara "nuevo episodio" | Al arrancar, el panel de notificaciones lista los episodios del día | P1 | S |
 
 ## Épica 2 — Configuración sin tocar archivos (paridad AIOStreams)
@@ -36,7 +36,7 @@ Esfuerzo: **S** <1 sesión · **M** ~1-2 · **L** varias sesiones
 | 3.1 ✅ | **Resolución debrid** — RD/TorBox: `infoHash`→URL HTTP vía API; redirect `/r/<p>/<hash>` | Con key válida, streams ⚡ primero y abren al instante; sin key, todo igual que hoy. *Pendiente: AllDebrid/Premiumize* | P1 | L |
 | 3.2 ✅ | **Check-cache debrid masivo** — `instantAvailability` por lote antes de ordenar | Los hashes cacheados rankean sobre P2P | P1 | M |
 | 3.3 ✅ | **Streams ES prioritarios** — flag `ES` + boost de orden para audio latino/castellano/VOSE (`stream_langs` en config) | Streams ES etiquetados antes que el resto. *Pendiente: endpoint subtitles OpenSubtitles* | P1 | M |
-| 3.4 | **Health-check de streams en background** — HEAD a URLs HTTP periódico; streams muertos se auto-descartan | La lista no muestra streams que den 404/timeout | P2 | M |
+| 3.4 ✅ | **Health-check de streams HTTP** — HEAD async (máx 15/req, 3s): 4xx/5xx o 2 timeouts = fuera 30min | La lista no muestra streams http confirmados caídos | P2 | M |
 | 3.5 | **Prowlarr/Jackett como fuente** — si el usuario corre indexers locales, consultar Torznab directo además de addons | Fuentes Torznab configurables rinden resultados como un addon más | P2 | L |
 
 ## Épica 4 — Descubrimiento
@@ -47,7 +47,7 @@ Esfuerzo: **S** <1 sesión · **M** ~1-2 · **L** varias sesiones
 | 4.2 ✅ | **M3U propio** — `m3u_path` en config parsea playlist local a catálogo `tv` «Mis canales» + streams `m3u:N` | Canales propios aparecen en pestaña TV junto a IPTV/AllIPTV. *Pendiente: Xtream API + EPG* | P1 | M |
 | 4.3 | **Overlays de rating** — metahub/RPDB: nota IMDb/RT en `poster` de metas (config `POSTER_RATINGS`) | Portadas de Discover con badge de nota | P2 | S |
 | 4.4 | **Listas IMDb/MDbList/Trakt como catálogos** — pegar URL de lista → catálogo nuevo | Una lista pública de IMDb/Trakt aparece como sección | P2 | M |
-| 4.5 | **"Porque viste X"** — recomendaciones TMDB `/similar`/`/recommendations` desde la biblioteca local como catálogo sintético | Catálogo "Recomendados" que cambia con lo que ves | P2 | M |
+| 4.5 ✅ | **"Porque viste X"** — historial Trakt (`/users/me/history`) → `/related` por item, catálogo «Recomendados · tu Trakt» movie+series | Con Trakt conectado, recomendaciones personales visibles; sin token, oculto | P2 | M |
 
 ## Épica 5 — Observabilidad y administración
 

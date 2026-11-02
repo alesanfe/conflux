@@ -748,6 +748,13 @@ def build_manifest():
         cats.append((_RANK.get('Cinemeta', 0), {'id': gid, 'type': t,
                      'name': 'Buscar todo',
                      'extra': [{'name': 'search', 'isRequired': True}]}))
+    # 'Porque viste X' — solo con cuenta Trakt conectada (/auth/trakt)
+    if CFG.get('trakt_access_token'):
+        for t in ('movie', 'series'):
+            rid = f'suniform_{t}_recom'
+            _SYNTH[rid] = (t, '_recom', None)
+            cats.append((_RANK.get('Cinemeta', 0), {'id': rid, 'type': t,
+                         'name': 'Recomendados · tu Trakt'}))
     # canales M3U propios (config.m3u_path)
     if CFG.get('m3u_path') and os.path.exists(CFG['m3u_path']):
         mid = 'sm3u_tv_channels'
@@ -1038,6 +1045,40 @@ def _trakt_my(days):
         pass
     return eps, films
 
+def _recom(utype):
+    """'Porque viste X' (4.5): historial reciente Trakt -> /related por item,
+    dedup por imdb. Solo con token OAuth."""
+    if not CFG.get('trakt_access_token'): return {'metas': []}
+    _trakt_refresh()
+    kind = 'movies' if utype == 'movie' else 'shows'
+    s = _session('api.trakt.tv'); h = _trakt_h(auth=True)
+    try:
+        hist = s.get(f'https://api.trakt.tv/users/me/history/{kind}?limit=6',
+                     headers=h, timeout=8).json()
+    except Exception:
+        return {'metas': []}
+    seeds = [str((e.get('movie') or e.get('show') or {}).get('ids', {}).get('trakt', ''))
+             for e in hist]
+    seeds = [x for x in seeds if x and x != 'None']
+    def related(slug):
+        try:
+            return s.get(f'https://api.trakt.tv/{kind}/{slug}/related?limit=10',
+                         headers=h, timeout=8).json() or []
+        except Exception:
+            return []
+    seen, out = set(), []
+    for lst in _POOL_BG.map(related, seeds):
+        for it in lst:
+            ids = it.get('ids') or {}
+            if not ids.get('imdb') or ids['imdb'] in seen: continue
+            seen.add(ids['imdb'])
+            out.append({'id': 'tt' + str(ids['imdb']).lstrip('t'),
+                        'type': utype, 'name': it.get('title'), 'year': it.get('year'),
+                        'poster': f"https://images.metahub.space/poster/medium/{ids['imdb']}/img"})
+            if len(out) >= 40: break
+        if len(out) >= 40: break
+    return {'metas': out}
+
 def _busqueda(utype, extra):
     """Búsqueda global: fan-out a TODOS los catálogos del tipo que soportan
     'search' upstream y dedup por id canónico (imdb si resoluble)."""
@@ -1237,6 +1278,11 @@ def handle_catalog(stype, cid, extra):
             utype, real, defx = _SYNTH[cid]
             if real == '_busqueda':
                 return _busqueda(utype, extra)
+            if real == '_recom':
+                hit2 = _cget(_cat_c, ('recom', utype))         # related es caro: cache normal
+                if hit2 is None:
+                    hit2 = _recom(utype); _cset(_cat_c, ('recom', utype), hit2)
+                return hit2
             if real == '_m3u':
                 return {'metas': _m3u_metas()}
             if real == '_estrenos_cal':
