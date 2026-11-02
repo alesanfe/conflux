@@ -1,0 +1,219 @@
+"""GET /stream: colección paralela, dedup, debrid-mark, url-health."""
+# pylint: disable=broad-exception-caught,line-too-long
+# broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import re
+import threading
+import time
+import urllib.parse
+import urllib.request
+from concurrent.futures import as_completed
+
+from .cfg import _eff_disabled
+from .debrid import _debrid_mark
+from .lists import _M3U, _m3u_metas
+from .net import _session, fetch
+from .sources import _resolve_sid
+from .state import (
+    _POOL,
+    _POOL_BG,
+    _SERVED,
+    COOLDOWN,
+    COOLDOWN_T,
+    FAIL_CD_T,
+    FAIL_STREAK,
+    HEALTH,
+    SOURCES,
+    STREAM_BUDGET,
+    STREAM_TIMEOUT,
+    _cache,
+    _cget,
+    _cset,
+    _health,
+    log_ev,
+    manifests,
+)
+from .text import RANK, _skip_manifest, _spam, norm_stream
+from .torznab import _torznab
+
+_inflight = {}            # (stype,sid) -> estado compartido
+
+_slock    = threading.Lock()
+
+_RE_LIMIT  = re.compile(r'daily limit|limit reached|link limit|quota', re.IGNORECASE)
+
+_SOFT      = ('cuota', 'espera', 'manifest sin stream', 'tipo no soportado', 'prefijo')
+
+
+def _collect_skip(i, stype, sid):
+    """Por qué NO consultar la fuente i (skip blando), o None si toca fetch."""
+    name = SOURCES[i].name
+    if name in _eff_disabled():
+        return 'deshabilitada'
+    m = manifests[i] if i < len(manifests) else None
+    r = _skip_manifest(m, stype, sid)
+    if r:
+        return r
+    cd = COOLDOWN.get(name)
+    if cd and time.time() < cd[0]:                                # cuota o fallos: saltar
+        return f'en espera ({cd[1]})'
+    return None
+
+
+def _quota_hit(ss):
+    """La respuesta lleva aviso de cuota/rate-limit (disyuntor 12h)."""
+    return any(isinstance(s, dict) and _RE_LIMIT.search(str(s.get('title') or '')) for s in ss)
+
+
+def _collect_one(i, stype, sid):
+    """Fetch de una fuente -> (i, streams, usable). Health + disyuntores."""
+    name = SOURCES[i].name
+    skip = _collect_skip(i, stype, sid)
+    if skip:
+        if skip != 'deshabilitada':
+            _health(name, True, skip, 0)
+        return i, [], 0
+    name, d, ss = _collect_fetch(i, stype, sid)
+    if _quota_hit(ss):
+        COOLDOWN[name] = (time.time() + COOLDOWN_T, 'cuota')       # disyuntor 12h
+        _health(name, True, 'cuota agotada → espera 12h', 0)
+        return i, [], 0
+    usable = sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+    _health(name, d is not None, '' if d is not None else 'timeout/error', usable)
+    if d is None and HEALTH[name]['streak'] >= FAIL_STREAK:        # racha de fallos: descanso
+        COOLDOWN[name] = (time.time() + FAIL_CD_T, 'fallos')
+    return i, ss, usable
+
+
+def _collect_fetch(i, stype, sid):
+    """El fetch real de la fuente (post-guards)."""
+    name, base = SOURCES[i]
+    d = fetch(f"{base}/stream/{stype}/{urllib.parse.quote(sid, safe=':')}.json", STREAM_TIMEOUT)
+    ss = (d or {}).get('streams')
+    if not isinstance(ss, list):
+        ss = []            # "streams":null o tipo raro
+    return name, d, ss
+
+
+def _merge_key(s):
+    """Clave dedup del stream: infoHash (canónica) o URL — minúsculas."""
+    k = s.get('infoHash') or s.get('url') or s.get('externalUrl') or s.get('ytId')
+    return str(k).lower() if k else None          # infoHash: Ytztvio usa MAYÚSCULAS
+
+
+def _collect_merge(state, i, streams):
+    """Merge dedup + norm de los streams de la fuente i en state."""
+    for s in streams:
+        if not isinstance(s, dict) or _spam(s):
+            continue
+        k = _merge_key(s)
+        if not k or k in state['seen']:
+            continue
+        state['seen'].add(k)
+        nr = norm_stream(s, SOURCES[i].name)
+        state['rows'].append(nr)
+        sv = _SERVED.setdefault(SOURCES[i].name, {'n': 0, 'res': {}})
+        sv['n'] += 1                                    # 5.2: qué fuente aporta y en qué calidad
+        sv['res'][nr[1] or 'SD'] = sv['res'].get(nr[1] or 'SD', 0) + 1
+
+
+def _collect_torznab(state, stype, sid):
+    for s in _torznab(stype, sid):                        # fuente local (Prowlarr/Jackett)
+        k = s['infoHash'].lower()
+        if k in state['seen']:
+            continue
+        state['seen'].add(k)
+        state['rows'].append(norm_stream(s, 'Torznab'))
+        state['contrib']['Torznab'] = state['contrib'].get('Torznab', 0) + 1
+
+
+def _collect(key, state):
+    stype, sid = key
+    sid = _resolve_sid(stype, sid)            # kitsu/mal -> imdb para las fuentes
+    try:
+        for f in as_completed([_POOL.submit(_collect_one, i, stype, sid)
+                               for i in range(len(SOURCES))]):
+            try:
+                i, streams, usable = f.result()
+            except Exception as e:                              # noqa: BLE001 — el worker puede lanzar cualquier cosa
+                log_ev('src_worker', err=repr(e)[:100])
+                continue
+            state['contrib'][SOURCES[i].name] = usable            # por collect: sin mezclas
+            with state['lock']:
+                _collect_merge(state, i, streams)
+    finally:
+        _collect_torznab(state, stype, sid)
+        with state['lock']:
+            final = [r[0] for r in sorted(state['rows'], key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[2], -r[3]))]
+        with _slock:
+            _cset(_cache, key, final)
+            _inflight.pop(key, None)
+
+
+def _ensure_collect(key):
+    with _slock:
+        state = _inflight.get(key)
+        if state is None:
+            state = {'rows': [], 'seen': set(), 'contrib': {}, 'done': threading.Event(), 'lock': threading.Lock()}
+            _inflight[key] = state
+            threading.Thread(target=_collect, args=(key, state), daemon=True).start()
+        return state
+
+
+def handle_stream(stype, sid):
+    """GET /stream — agrega fuentes (pool), dedup, ordena, marca debrid y filtra urls muertas."""
+    if sid.startswith('m3u:'):                              # canales M3U propios
+        if not _M3U:
+            _m3u_metas()
+        u = _M3U.get(sid)
+        return {'streams': [{'name': 'M3U', 'title': 'Canal propio', 'url': u}] if u else []}
+    key = (stype, sid)
+    hit = _cget(_cache, key)
+    if hit is not None:
+        return {'streams': hit}
+    state = _ensure_collect(key)
+    state['done'].wait(STREAM_BUDGET)
+    with state['lock']:
+        rows = sorted(state['rows'], key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[2], -r[3]))
+    out = [r[0] for r in rows]
+    _debrid_mark(out)                                        # si hay key: cache + resolve /r/
+    _url_health(out)                                         # HEAD async a streams http
+    return {'streams': out}
+
+
+
+# ---- health-check de streams HTTP (3.4): HEAD async, muertos filtrados ----
+_URL_BAD = {}        # url -> ts marcado muerto (reintento a los 30min)
+
+_URL_OK  = {}        # url -> ts verificado vivo
+
+def _url_todo(streams, now):
+    """urls externas http sin veredicto reciente -> candidatas a HEAD (máx 15)."""
+    return [s['url'] for s in streams
+            if s.get('url', '').startswith('http') and '127.0.0.1' not in s['url']
+            and s['url'] not in _URL_BAD and now - _URL_OK.get(s['url'], 0) > 1800][:15]
+
+
+def _url_head(u):
+    """HEAD async: <400 -> vivo; 4xx/5xx -> muerte segura; resto -> 1 strike."""
+    try:
+        r = _session(urllib.parse.urlsplit(u).netloc).head(u, timeout=3, allow_redirects=True)
+        if r.status_code < 400:
+            _URL_OK[u] = time.time()
+            _URL_BAD.pop(u, None)
+        else:
+            _URL_BAD[u] = (2, time.time())                 # 4xx/5xx: muerte segura
+    except Exception:                                    # noqa: BLE001 — timeout/SSL/cualquiera = strike
+        st, _ = _URL_BAD.get(u, (0, 0))
+        _URL_BAD[u] = (st + 1, time.time())                # timeout: strike
+
+
+def _url_health(streams):
+    """Streams http: los confirmados muertos salen de la lista; los desconocidos
+    se HEAD-encolan async (máx 15, 3s). Fallo transitorio (timeout) solo cuenta
+    medio strike — 2 strikes o un 4xx/5xx confirman muerte."""
+    now = time.time()
+    dead = {u for u, (st, ts) in _URL_BAD.items() if st >= 2 and now - ts < 1800}
+    if dead:
+        streams[:] = [s for s in streams if s.get('url') not in dead]
+    for u in _url_todo(streams, now):
+        _POOL_BG.submit(_url_head, u)

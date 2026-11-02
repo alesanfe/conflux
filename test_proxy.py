@@ -7,6 +7,8 @@ import importlib.util
 spec = importlib.util.spec_from_file_location('proxy', os.path.join(os.path.dirname(__file__), 'proxy.py'))
 px = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(px)
+import conflux.sources as _px_sources
+import conflux.net as _px_net
 
 FIX = os.path.join(os.path.dirname(__file__), 'fixtures')
 
@@ -165,19 +167,19 @@ class TestReglas(unittest.TestCase):
         meta = {'meta': {'imdb_id': 'tt2359704', 'videos': [
             {'id': 'kitsu:49847:1', 'season': '1', 'episode': '1'},
             {'id': 'kitsu:49847:2', 'season': '1', 'episode': '2'}]}}
-        orig = px.fetch
-        px.fetch = lambda *a, **k: meta
+        orig = _px_sources.fetch
+        _px_sources.fetch = _px_net.fetch = lambda *a, **k: meta
         try:
             self.assertEqual(px._resolve_sid('series', 'kitsu:49847:2'), 'tt2359704:1:2')
             self.assertEqual(px._resolve_sid('series', 'kitsu:7442:1:1'), 'tt2359704:1:1')
         finally:
-            px.fetch = orig
+            _px_sources.fetch = _px_net.fetch = orig
             px._idmap.clear()
 
     # --- R3: el manifest es contrato — idPrefixes debe cubrir los datos reales ---
     def _manifest_sintetico(self):
-        old = px.manifests
-        px.manifests = [{'resources': ['catalog'], 'catalogs': [
+        old = list(px.manifests)
+        px.manifests[:] = [{'resources': ['catalog'], 'catalogs': [
             {'type': 'movie', 'id': 'a', 'name': 'A'},
             {'type': 'series', 'id': 'a', 'name': 'A'},
             {'type': 'series', 'id': 'animes_filter', 'name': 'Anime Filter'},
@@ -186,7 +188,7 @@ class TestReglas(unittest.TestCase):
         try:
             return px.build_manifest()
         finally:
-            px.manifests = old
+            px.manifests[:] = old
 
     def test_idprefixes_minimos(self):
         """Sin estos prefijos la app devuelve 'No addons were requested'."""

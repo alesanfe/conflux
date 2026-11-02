@@ -10,7 +10,7 @@ python3 -c 'import requests' 2>/dev/null || {
     echo 'instalando python3-requests…'
     sudo apt-get update -qq && sudo apt-get install -y python3-requests
 }
-# defusedxml: opcional — torznab parsea XML del indexer (no confiable); sin él cae a stdlib
+# defusedxml: opcional — torznab parsea XML del indexer (no confiable); sin él torznab queda off
 python3 -c 'import defusedxml' 2>/dev/null || \
     sudo apt-get install -y -qq python3-defusedxml 2>/dev/null || true
 

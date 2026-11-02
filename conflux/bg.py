@@ -1,0 +1,38 @@
+"""Tareas de background: prefetch de catálogos y refresco periódico de manifests."""
+# pylint: disable=broad-exception-caught,line-too-long
+# broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import threading
+import time
+from contextlib import suppress
+
+from .catalog import handle_catalog
+from .manifest import build_manifest
+from .sources import refresh_manifests
+from .state import _POOL_BG, log_ev
+
+_prefetching = threading.Event()
+
+def _prefetch_catalogs():
+    """Calienta _cat_c en background: Discover pide ~170 catálogos a la vez y si
+    llegan en frío los upstreams lentos hacen saltar 'Load failed' en el cliente."""
+    if _prefetching.is_set():
+        return
+    _prefetching.set()
+    try:
+        fs = [_POOL_BG.submit(handle_catalog, c['type'], c['id'], None)
+              for c in build_manifest()['catalogs']]
+        for f in fs:
+            with suppress(Exception):
+                f.result()
+    finally:
+        _prefetching.clear()
+
+
+
+def _refresher():
+    while True:
+        time.sleep(1800)
+        try:
+            refresh_manifests()
+        except Exception as e:                                  # noqa: BLE001 — el daemon no debe morir nunca
+            log_ev('refresh_err', err=repr(e)[:100])

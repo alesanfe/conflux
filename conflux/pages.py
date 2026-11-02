@@ -1,0 +1,214 @@
+"""HTML embebido: /configure, /admin, /health, auth Trakt, POSTs."""
+# pylint: disable=broad-exception-caught,line-too-long
+# broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import threading
+import time
+
+from .bg import _prefetch_catalogs
+from .cfg import _PROF, _save_cfg, load_config
+from .feeds import _TRAKT_DEV, _trakt_device_start
+from .manifest import build_manifest
+from .state import (
+    _DISABLED,
+    _SERVED,
+    CFG,
+    COOLDOWN,
+    HEALTH,
+    SOURCES,
+    _cache,
+    _cat_c,
+    _fails,
+    _meta_c,
+    _pct,
+    _rtime,
+    _rts,
+    manifests,
+)
+
+
+# ---- servidor ----
+def _health_page():
+    """Estado por fuente: contrib, cooldowns, fallos, latencias (observabilidad)."""
+    now = time.time()
+    return {'sources': {n: dict(h, cd_min=round((COOLDOWN[n][0]-now)/60), cd_motivo=COOLDOWN[n][1])
+                        if n in COOLDOWN and COOLDOWN[n][0] > now else dict(h)
+                        for n, h in HEALTH.items()},
+            'fetch_fails': _fails,
+            'streams_served': _SERVED,
+            'latency_ms': {k: {'n': n, 'avg': round(t/n, 1), 'max': round(x, 1),
+                               'p50': _pct(list(_rts.get(k, ())), .5),
+                               'p95': _pct(list(_rts.get(k, ())), .95),
+                               'p99': _pct(list(_rts.get(k, ())), .99)}
+                           for k, (n, t, x) in _rtime.items()}}
+
+
+def _manifest_reply():
+    """Manifest base + prefetch de catálogos (Discover pega caché) + id por perfil."""
+    threading.Thread(target=_prefetch_catalogs, daemon=True).start()
+    mf = build_manifest()
+    if _PROF.name:                                             # identidad por perfil
+        mf = dict(mf, id=f"local.uniform.streams.{_PROF.name}",
+                  name=f"Streams Unificados · {_PROF.name}")
+    return mf
+
+
+def _csv_list(form, k):
+    """Campo CSV del form -> [items] limpios."""
+    return [s.strip() for s in form.get(k, [''])[0].split(',') if s.strip()]
+
+
+def _cfg_form_fields(form, cfg):
+    """Campos restantes del form -> cfg (listas CSV, claves opcionales)."""
+    cfg['horizon_days'] = int(form.get('horizon_days', [CFG['horizon_days']])[0] or CFG['horizon_days'])
+    cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
+    for k in ('torznab_url', 'catalog_lists', 'opensubtitles_key'):
+        cfg[k] = form.get(k, [''])[0].strip()
+    for k in ('torznab_key', 'mdblist_key'):
+        if form.get(k, [''])[0].strip():
+            cfg[k] = form[k][0].strip()
+    cfg['source_order'] = _csv_list(form, 'source_order')
+    cfg['catalogs_disabled'] = _csv_list(form, 'catalogs_disabled')
+    enabled = set(form.get('src', []))
+    cfg['sources_disabled'] = [s.name for s in SOURCES if s.name not in enabled]
+
+
+def _configure_save(form):
+    """POST /configure: solo campos presentes pisan; claves vacías conservan el
+    valor previo (no se muestran en el form)."""
+    cfg = CFG.copy()
+    cfg['trakt_client_id'] = form.get('trakt_client_id', [''])[0].strip()
+    if form.get('trakt_client_secret', [''])[0].strip():
+        cfg['trakt_client_secret'] = form['trakt_client_secret'][0].strip()
+    cfg['debrid_provider'] = form.get('debrid_provider', [''])[0].strip()
+    if form.get('debrid_key', [''])[0].strip():
+        cfg['debrid_key'] = form['debrid_key'][0].strip()
+    cfg['m3u_path'] = form.get('m3u_path', [''])[0].strip()
+    _cfg_form_fields(form, cfg)
+    CFG.clear()
+    CFG.update(cfg)
+    _save_cfg()
+    load_config()
+
+
+def _trakt_status():
+    if CFG.get('trakt_access_token') and not _TRAKT_DEV:
+        return {'state': 'ok'}
+    return {'state': 'pending' if _TRAKT_DEV else 'none'}
+
+
+_PAGE_CSS = ('<style>body{font:15px/1.5 system-ui;background:#0f0f14;color:#e8e8f0;max-width:880px;margin:24px auto;padding:0 16px}'
+             'h1{font-size:22px}h2{font-size:16px;color:#9d9db5;margin-top:28px}'
+             'table{border-collapse:collapse;width:100%}td,th{padding:6px 10px;border-bottom:1px solid #26262f;text-align:left}'
+             'input,select{background:#1a1a24;border:1px solid #333;color:#e8e8f0;padding:6px 8px;border-radius:6px;width:100%}'
+             'button,a.btn{background:#7c5ce0;color:#fff;border:0;padding:8px 16px;border-radius:6px;cursor:pointer;text-decoration:none;display:inline-block}'
+             '.ok{color:#4ade80}.bad{color:#f87171}.dim{color:#8b8ba0;font-size:13px}</style>')
+
+
+def _admin_page():
+    now = time.time()
+    rows = []
+    for n, h in HEALTH.items():
+        cd = COOLDOWN.get(n, (0, ''))
+        cdtxt = f'{max(0,(cd[0]-now))/60:.0f} min · {cd[1]}' if cd[0] > now else '—'
+        sv = _SERVED.get(n, {'n': 0, 'res': {}})
+        res_txt = ' '.join(f"{r}:{c}" for r, c in sorted(sv['res'].items(), key=lambda kv: -kv[1])[:4])
+        rows.append(f"<tr><td>{n}</td><td class='ok'>{h.get('ok',0)}</td><td class='bad'>{h.get('fail',0)}</td>"
+                    f"<td>{sv['n']}</td><td class='dim'>{res_txt}</td>"
+                    f"<td>{h.get('ultimo','—')}</td><td>{cdtxt}</td></tr>")
+    lat = ''.join(f"<tr><td>{k}</td><td>{n2}</td><td>{t/n2:.0f}</td><td>{_pct(list(_rts.get(k,())),.5):.0f}</td>"
+                  f"<td>{_pct(list(_rts.get(k,())),.95):.0f}</td><td>{_pct(list(_rts.get(k,())),.99):.0f}</td><td>{x:.0f}</td></tr>"
+                  for k, (n2, t, x) in _rtime.items())
+    return (f"<html><head><title>admin</title>{_PAGE_CSS}</head><body>"
+            f"<h1>Streams Unificados · admin</h1>"
+            f"<p class='dim'>sources {sum(1 for m in manifests if m)}/{len(manifests)} up · "
+            f"cache streams {len(_cache)} · meta {len(_meta_c)} · cat {len(_cat_c)} · "
+            f"<a class='btn' href='/configure'>configure</a></p>"
+            f"<h2>Fuentes</h2><table><tr><th>fuente</th><th>ok</th><th>fail</th><th>streams</th><th>por calidad</th><th>último</th><th>circuito</th></tr>{''.join(rows)}</table>"
+            f"<h2>Latencia por ruta (ms)</h2><table><tr><th>ruta</th><th>n</th><th>avg</th><th>p50</th><th>p95</th><th>p99</th><th>max</th></tr>{lat}</table>"
+            f"<h2>Fails por host</h2><p class='dim'>{' · '.join(f'{k}: {v}' for k, v in _fails.items()) or '—'}</p></body></html>")
+
+
+def _cfg_trakt_state():
+    return '<b class=ok>conectado ✓</b>' if CFG.get('trakt_access_token') else ''
+
+
+def _cfg_trakt_link():
+    if CFG.get('trakt_client_id') and not CFG.get('trakt_access_token'):
+        return ('<p><a class="btn" href="/auth/trakt">Conectar cuenta Trakt</a> '
+                '<span class=dim>device flow: autorizas una vez en trakt.tv/activate</span></p>')
+    return ''
+
+
+def _configure_page():
+    src_chk = ''.join(
+        f"<label style='display:flex;gap:8px;padding:4px 0'><input type='checkbox' name='src' value='{s.name}'"
+        f"{' checked' if s.name not in _DISABLED else ''} style='width:auto'> {s.name}</label>"
+        for s in SOURCES)
+    langs = ','.join(CFG.get('stream_langs') or [])
+    opts = ''.join(f"<option value='{v}'{' selected' if CFG.get('debrid_provider')==v else ''}>{v or '— ninguno —'}</option>"
+                   for v in ('', 'real-debrid', 'torbox', 'alldebrid', 'premiumize',
+                             'easydebrid', 'debrid-link'))
+    return (f"<html><head><title>configure</title>{_PAGE_CSS}</head><body>"
+            f"<h1>Streams Unificados · configuración</h1>"
+            f"<p class='dim'>Guarda en config.json. Tras guardar, POST /reload aplica en caliente.</p>"
+            f"<form method='post' action='/configure'>"
+            f"<h2>Integraciones</h2>"
+            f"<p>Trakt <span class='dim'>(app en trakt.tv/oauth/applications — feed global + personal)</span>"
+            f" {_cfg_trakt_state()}<br>"
+            f"<input name='trakt_client_id' value='{CFG.get('trakt_client_id','')}' placeholder='client_id — vacío = Trakt off'>"
+            f"<input name='trakt_client_secret' value='' placeholder='client_secret (no se muestra el guardado)'></p>"
+            f"{_cfg_trakt_link()}"
+            f"<p>Debrid <span class='dim'>(reproducción instantánea, sin peers)</span><br>"
+            f"<select name='debrid_provider'>{opts}</select><br>"
+            f"<input name='debrid_key' value='' placeholder='API key (no se muestra la guardada)'></p>"
+            f"<p>M3U propio <span class='dim'>(ruta local, catálogo tv 'Mis canales')</span><br>"
+            f"<input name='m3u_path' value='{CFG.get('m3u_path','')}' placeholder='/home/…/canales.m3u'></p>"
+            f"<p>Torznab <span class='dim'>(Prowlarr/Jackett local — fuente extra de streams)</span><br>"
+            f"<input name='torznab_url' value='{CFG.get('torznab_url','')}' placeholder='http://localhost:9696/api/v1.0/indexers/all/results/torznab'>"
+            f"<input name='torznab_key' value='' placeholder='apikey (no se muestra)'></p>"
+            f"<p>OpenSubtitles <span class='dim'>(endpoint /subtitles ES-first)</span><br>"
+            f"<input name='opensubtitles_key' value='' placeholder='api key — vacío = off'></p>"
+            f"<p>Horizonte calendario (días) <input name='horizon_days' value='{CFG.get('horizon_days',45)}' style='width:80px'>"
+            f" · idiomas streams <input name='stream_langs' value='{langs}' style='width:200px'></p>"
+            f"<h2>Catálogos</h2>"
+            f"<p>Listas externas <span class='dim'>(URLs Trakt /lists/, IMDb /list/ o mdblist:ID — separadas por coma)</span><br>"
+            f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://trakt.tv/users/me/lists/mis-favs, https://www.imdb.com/list/ls123456/'>"
+            f"<input name='mdblist_key' value='' placeholder='mdblist apikey (solo si usas MDBList)'></p>"
+            f"<p>Catálogos ocultos <span class='dim'>(ids separados por coma — visibles en /health &gt; manifest)</span><br>"
+            f"<input name='catalogs_disabled' value='{','.join(CFG.get('catalogs_disabled') or [])}' placeholder='sid_catalogo1, sid_catalogo2'></p>"
+            f"<h2>Fuentes activas</h2>"
+            f"<p class='dim'>Orden en Discover (nombres separados por coma, vacío = orden fijo):<br>"
+            f"<input name='source_order' value='{','.join(CFG.get('source_order') or [])}' placeholder='Cinemeta,TMDB,Kitsu'></p>"
+            f"{src_chk}"
+            f"<p><button type='submit'>Guardar</button> <a class='btn' href='/admin'>dashboard</a></p>"
+            f"</form></body></html>")
+
+
+def _trakt_auth_page():
+    """Device Authorization: muestra user_code, el usuario lo introduce en
+    trakt.tv/activate y el poll en background guarda el token."""
+    if not CFG.get('trakt_client_id') or not CFG.get('trakt_client_secret'):
+        return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
+                f"<h1>Conectar Trakt</h1><p>Faltan credenciales de app: crea una en "
+                f"<a href='https://trakt.tv/oauth/applications/new' style='color:#7c5ce0'>"
+                f"trakt.tv/oauth/applications/new</a> (redirect URI: <code>urn:ietf:wg:oauth:2.0:oob</code>)"
+                f" y guarda client_id + client_secret en <a class='btn' href='/configure'>/configure</a>.</p></body></html>")
+    if CFG.get('trakt_access_token'):
+        exp = time.strftime('%Y-%m-%d', time.localtime(CFG.get('trakt_expires', 0)))
+        return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
+                f"<h1>Trakt conectado</h1><p class='ok'>Token activo (expira {exp}).</p>"
+                f"<p><a class='btn' href='/configure'>volver</a></p></body></html>")
+    d = _trakt_device_start() if not _TRAKT_DEV else _TRAKT_DEV
+    if not d:
+        return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
+                f"<h1>Trakt</h1><p class='bad'>No se pudo iniciar el device flow.</p></body></html>")
+    return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
+            f"<h1>Autorizar en Trakt</h1>"
+            f"<p>1. Abre <a href='{d['verification_url']}' style='color:#7c5ce0'>{d['verification_url']}</a><br>"
+            f"2. Introduce el código:</p>"
+            f"<p style='font-size:34px;letter-spacing:4px;color:#7c5ce0'><b>{d['user_code']}</b></p>"
+            f"<p id='st' class='dim'>esperando autorización…</p>"
+            f"<script>setInterval(()=>fetch('/auth/trakt/status').then(r=>r.json()).then(d=>{{"
+            f"if(d.state==='ok'){{document.getElementById('st').innerHTML=\"<span class=ok>Conectado — token guardado</span>\";}}"
+            f"if(d.state==='none')document.getElementById('st').textContent='expirado — recarga para reintentar';"
+            f"}}),4000)</script></body></html>")
