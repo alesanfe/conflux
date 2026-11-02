@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-RUN pip install --no-cache-dir requests==2.34.1 defusedxml==0.7.1
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 COPY proxy.py .
 COPY src ./src
 

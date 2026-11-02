@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conflux"
+version = "1.0.0"
+description = "Proxy local que unifica streams, catálogos, metas y calendario de addons Stremio"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.32,<3",
+    "defusedxml>=0.7.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pylint>=4",
+    "ruff>=0.14",
+    "radon>=6",
+    "xenon>=0.9",
+    "bandit>=1.9",
+    "vulture>=2",
+    "refurb>=2",
+    "mypy>=1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+src = ["src", "tests"]
+
+[tool.pylint.main]
+source-roots = "src"
+
+[tool.pytest.ini_options]
+pythonpath = "src"
+testpaths = "tests"

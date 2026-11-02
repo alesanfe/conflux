@@ -1,6 +1,13 @@
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
 .manifests-cache.json
 proxy.log
 sources.json
 config.json
+config.*.json

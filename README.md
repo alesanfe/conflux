@@ -64,13 +64,13 @@ En Stremio: añade el addon `http://127.0.0.1:9700/manifest.json`.
 docker compose up -d         # Dockerfile mínimo, puerto 9700
 ```
 
-Rutas documentadas en `openapi.yaml`.
+Rutas documentadas en `docs/openapi.yaml`.
 
 ## Test
 
 ```bash
-python3 test_proxy.py   # 28 tests
-./check.sh              # smoke test: endpoints + fuentes vivas
+python3 -m unittest discover -s tests -t .   # suite completa
+scripts/check.sh        # smoke test: endpoints + fuentes vivas
 ```
 
 Ver `AGENTS.md` para las reglas operativas (gotchas de localStorage UTF-16LE,

@@ -5,19 +5,27 @@ Proxy unificador de addons Stremio en `http://127.0.0.1:9700` (systemd user `str
 ## Comandos
 
 ```bash
-python3 -m unittest discover -s test -t .   # 168 tests (~65s): unit+integration+security+e2e
-python3 -m unittest discover -s test/unit -t .        # solo unit (~1s)
-./check.sh                                 # suite + smoke endpoints + fuentes
-systemctl --user restart stremio-proxy   # tras editar src/conflux/
+python3 -m unittest discover -s tests -t .  # 168 tests (~65s): unit+integration+security+e2e
+python3 -m unittest discover -s tests/unit -t .       # solo unit (~1s)
+scripts/check.sh                            # suite + smoke endpoints + fuentes
+systemctl --user restart stremio-proxy      # tras editar src/conflux/
 
-## Estructura (paquete conflux/ por capas, proxy.py = entry+fachada)
+## Estructura (src-layout estándar PyPA)
 
-Repo en `~/apps/conflux`. Código en `src/conflux/` (src-layout), tests en `test/`:
+Repo en `~/apps/conflux`:
 
-- `test/unit/`        un archivo por módulo (fixtures reales, mocks locales)
-- `test/integration/` flujos multi-módulo con `patch_fetch` global
-- `test/security/`    defusedxml/XXE, traversal, redirects, secretos
-- `test/e2e/`         servidor HTTP real en hilo: TODOS los endpoints
+- `src/conflux/`     paquete por capas (imports absolutos `from conflux.* import`)
+- `proxy.py`         entry + fachada compat (inserta src/ en sys.path)
+- `tests/`           unit/ integration/ security/ e2e/ + `fixtures/` (datos reales)
+- `scripts/`         check.sh, setup.sh, install_addon.py, stremio-proxy.service
+- `docs/`            openapi.yaml
+- `pyproject.toml`   metadata PEP 621 + deps + config herramientas
+- `requirements.txt` / `requirements-dev.txt`   deps pinned
+
+- `tests/unit/`        un archivo por módulo (fixtures reales, mocks locales)
+- `tests/integration/` flujos multi-módulo con `patch_fetch` global
+- `tests/security/`    defusedxml/XXE, traversal, redirects, secretos
+- `tests/e2e/`         servidor HTTP real en hilo: TODOS los endpoints
 
 Sub-paquetes por capa — cada uno solo depende "hacia abajo":
 
