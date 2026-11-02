@@ -123,8 +123,12 @@ def _fix_meta_deep(m, yt):
 def _fix_metas(d, deep=False):
     """Canal yt: avatar ggpht caducado -> unavatar; descripción vacía -> stats reales;
     deep=True (detalle): + Wikidata (país, web, social, año), awards por subs, logo, vídeos muertos."""
+    if not isinstance(d, dict):
+        return d
     ms = d.get('metas') or ([d['meta']] if isinstance(d.get('meta'), dict) else [])
     for m in ms:
+        if not isinstance(m, dict):
+            continue
         yt = m.get('yt_id')
         i = str(m.get('id') or '')
         if not yt and i.startswith('yt_id:'):

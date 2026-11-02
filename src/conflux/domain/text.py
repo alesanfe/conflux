@@ -141,9 +141,13 @@ def _ef_indexer(text):
 
 def _ef_text(s):
     """Texto completo del stream para regex: title/name + hints de archivo."""
-    bh  = s.get('behaviorHints') or {}
-    raw = (s.get('title') or s.get('description') or s.get('name') or '').strip()
-    text = ' '.join(x for x in [raw, s.get('name',''), bh.get('filename',''), bh.get('bingeGroup','')] if x)
+    bh = s.get('behaviorHints') or {}
+    if not isinstance(bh, dict):                     # upstream puede mandar cualquier cosa
+        bh = {}
+    raw = next((v for k in ('title', 'description', 'name')
+                if isinstance((v := s.get(k)), str) and v), '').strip()
+    parts = [raw, s.get('name'), bh.get('filename'), bh.get('bingeGroup')]
+    text = ' '.join(x for x in parts if isinstance(x, str) and x)
     return bh, raw, text
 
 
@@ -269,10 +273,11 @@ def _id_prefix(sid):
 
 
 def _spam(s):
-    raw0 = (s.get('title') or s.get('description') or '')
-    rawn = s.get('name') or ''
-    return raw0.lstrip().startswith(('⚠','🔒')) or rawn.lstrip().startswith(('⚠','🔒')) \
-        or 'ERROR!' in raw0 or _RE_SPAM.search(raw0)
+    raw0 = next((v for k in ('title', 'description')
+                 if isinstance((v := s.get(k)), str) and v), '')
+    rawn = s.get('name') if isinstance(s.get('name'), str) else ''
+    return bool(raw0.lstrip().startswith(('⚠','🔒')) or rawn.lstrip().startswith(('⚠','🔒'))
+        or 'ERROR!' in raw0 or _RE_SPAM.search(raw0))
 
 
 def _skip_manifest(m, stype, sid):

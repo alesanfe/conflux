@@ -13,6 +13,7 @@ from conflux.core.state import (
     _cget,
     _cset,
     _cstale,
+    as_dict,
     manifests,
 )
 from conflux.domain.calendar import _estrenos_cal
@@ -61,8 +62,8 @@ def _busqueda(utype, extra):
 
 def _search_merge(d, seen, out):
     """Metas de una respuesta -> out, dedup por id."""
-    for m in (d or {}).get('metas') or []:
-        if not m or m.get('id') in seen:
+    for m in as_dict(d).get('metas') or []:
+        if not isinstance(m, dict) or not m.get('id') or m['id'] in seen:
             continue
         seen.add(m['id'])
         out.append(m)
@@ -152,6 +153,14 @@ def _cat_resolve(cid, stype, extra, key):
     return base, utype, real, extra
 
 
+def _cat_norm(d):
+    """Respuesta catálogo -> contrato: metas/metasDetailed solo listas de dicts."""
+    for k in ('metas', 'metasDetailed'):
+        if k in d:
+            d[k] = [m for m in d[k] if isinstance(m, dict)] \
+                if isinstance(d[k], list) else []
+
+
 def handle_catalog(stype, cid, extra):
     """GET /catalog — routing: sintéticos, listas externas, rewrite anime y upstream."""
     key = (stype, cid, extra)
@@ -167,7 +176,8 @@ def handle_catalog(stype, cid, extra):
     base, utype, real, extra = resolved
     tail = f"/{urllib.parse.quote(extra, safe='=&,:')}" if extra else ''
     d = fetch(f"{base}/catalog/{utype}/{urllib.parse.quote(real, safe='')}{tail}.json", 7)
-    if d:
+    if isinstance(d, dict):
+        _cat_norm(d)
         _fix_metas(d)
         _cset(_cat_c, key, d)
         return d

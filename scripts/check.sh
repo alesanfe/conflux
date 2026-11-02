@@ -14,6 +14,16 @@ echo "== integration =="
 python3 -m unittest discover -s tests/integration -t . 2>&1 | tail -2
 echo "== security =="
 python3 -m unittest discover -s tests/security -t . 2>&1 | tail -2
+echo "== contract =="
+python3 -m unittest discover -s tests/contract -t . 2>&1 | tail -2
+echo "== property =="
+python3 -m unittest discover -s tests/property -t . 2>&1 | tail -2
+echo "== resilience =="
+python3 -m unittest discover -s tests/resilience -t . 2>&1 | tail -2
+echo "== regression =="
+python3 -m unittest discover -s tests/regression -t . 2>&1 | tail -2
+echo "== performance =="
+python3 -m unittest discover -s tests/performance -t . 2>&1 | tail -2
 echo "== e2e (servicio en vivo :9700) =="
 t manifest "$(curl -s -o /dev/null -w '%{http_code}' $B/manifest.json)" 200
 t health   "$(curl -s -o /dev/null -w '%{http_code}' $B/health)" 200

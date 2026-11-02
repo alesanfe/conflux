@@ -11,6 +11,7 @@ from conflux.core.state import (
     _cget,
     _cset,
     _open,
+    as_dict,
     manifests,
 )
 from conflux.infra.net import fetch
@@ -75,7 +76,7 @@ def _resolve_meta(stype, pref, base_id):
     if ent is None:
         base = next((b.base for b in SOURCES if b.name == _PREFIX_SRC[pref]), None)
         d = fetch(f'{base}/meta/{stype}/{pref}:{base_id}.json', 4) if base else None
-        m = (d or {}).get('meta') or {}
+        m = as_dict(d).get('meta') or {}
         ent = (m.get('imdb_id') or '', m.get('videos') or [])
         _cset(_idmap, key, ent)
     return ent

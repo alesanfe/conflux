@@ -38,7 +38,7 @@ def _meta_one(i, want, mid):
     if ts is not None and want not in ts:
         return None
     d = fetch(f"{SOURCES[i].base}/meta/{want}/{urllib.parse.quote(mid, safe=':')}.json", 4)
-    return d if d and d.get('meta') else None
+    return d if isinstance(d, dict) and d.get('meta') else None
 
 
 def handle_meta(stype, mid):

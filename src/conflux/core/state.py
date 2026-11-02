@@ -182,6 +182,11 @@ def _cget(cache, key):
     return ent[1] if ent and time.time() - ent[0] < CACHE_TTL else None
 
 
+def as_dict(x):
+    """x si es dict, {} si no — respuestas upstream degeneradas (JSON list/str/int)."""
+    return x if isinstance(x, dict) else {}
+
+
 STALE_MAX = 24*3600   # techo del stale-if-error: upstream muerto >24h = vacío
 
 

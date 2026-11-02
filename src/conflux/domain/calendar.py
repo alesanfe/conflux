@@ -5,7 +5,7 @@ import time
 import urllib.parse
 import urllib.request
 
-from conflux.core.state import _POOL_BG, _YEARS, CFG, SOURCES
+from conflux.core.state import _POOL_BG, _YEARS, CFG, SOURCES, as_dict
 from conflux.domain.lists import tmdb_year
 from conflux.domain.sources import _resolve_sid
 from conflux.infra.anilist import _anilist_airing
@@ -16,7 +16,7 @@ from conflux.infra.trakt import _trakt_movies, _trakt_my
 def _cal_add_film(m, hoy, seen, out):
     """Peli con fecha de estreno FUTURA -> meta 'series' + vídeo sintético
     (el pipeline del calendario solo entiende episodios)."""
-    if not m:
+    if not isinstance(m, dict) or not m:
         return
     if m.get('imdb_id'):
         m['id'] = m['imdb_id']              # canonical tt: dedup + ficha
@@ -49,7 +49,7 @@ def _cal_seed_ids(cine, kitsu, anise):
     fs = [_POOL_BG.submit(fetch, f"{cine}/catalog/movie/year/genre={y}"
                        f"{'&skip='+str(s) if s else ''}.json", 10)
           for y in (_YEARS[0], str(int(_YEARS[0]) + 1)) for s in (0, 50, 100)]
-    td = fetch(tmdb_year(), 10) or {}
+    td = as_dict(fetch(tmdb_year(), 10))
     return _cal_top_ids(fs_top, fs_sea, fs_air), fs, fs_amv, td
 
 
@@ -65,24 +65,24 @@ def _cal_top_ids(fs_top, fs_sea, fs_air):
 
 def _cat_ids(fut, prefix=''):
     """ids de un catálogo future -> lista (filtrable por prefijo, p.ej. 'tt')."""
-    return [m['id'] for m in (fut.result() or {}).get('metas') or []
-            if str(m.get('id', '')).startswith(prefix)]
+    return [m['id'] for m in as_dict(fut.result()).get('metas') or []
+            if isinstance(m, dict) and str(m.get('id', '')).startswith(prefix)]
 
 
 def _cal_series_eps(cine, top_ids, seen, out):
     """calendar-videos upstream: TODOS los episodios fechados de los ids semilla."""
     if not top_ids:
         return
-    cv = fetch(f"{cine}/catalog/series/calendar-videos/calendarVideosIds={','.join(top_ids)}.json", 12) or {}
+    cv = as_dict(fetch(f"{cine}/catalog/series/calendar-videos/calendarVideosIds={','.join(top_ids)}.json", 12))
     for m in cv.get('metasDetailed') or []:
-        if m and m['id'] not in seen and m.get('videos'):
+        if isinstance(m, dict) and m.get('id') and m['id'] not in seen and m.get('videos'):
             seen.add(m['id'])
             out.append(m)
 
 
 def _cal_year_films(fs, hoy, seen, out):
     for f in fs:
-        for m in (f.result() or {}).get('metas') or []:
+        for m in as_dict(f.result()).get('metas') or []:
             _cal_add_film(m, hoy, seen, out)
 
 
@@ -91,7 +91,7 @@ def _cal_meta_films(tmdb, ids, hoy, seen, out):
     fs3 = [_POOL_BG.submit(fetch, f"{tmdb}/meta/movie/{urllib.parse.quote(i, safe='')}.json", 10)
            for i in ids]
     for f in fs3:
-        m = (f.result() or {}).get('meta')
+        m = as_dict(f.result()).get('meta')
         if m and m.get('imdb_id'):
             m['id'] = m['imdb_id']
         _cal_add_film(m, hoy, seen, out)
@@ -107,8 +107,9 @@ def _cal_films(tmdb, fs, fs_amv, td, hoy, seen, out):  # pylint: disable=too-man
 
 def _cal_bare_ids(fs, fs_amv):
     """ids tt sin fecha de estreno (anime temporada + cinemeta year sin released)."""
-    bare = [m['id'] for f in fs for m in (f.result() or {}).get('metas') or []
-            if not (m.get('released') or '')[:10] and m.get('id', '').startswith('tt')][:40]
+    bare = [m['id'] for f in fs for m in as_dict(f.result()).get('metas') or []
+            if isinstance(m, dict) and not (m.get('released') or '')[:10]
+            and m.get('id', '').startswith('tt')][:40]
     return _cat_ids(fs_amv, 'tt') + bare
 
 
@@ -154,7 +155,7 @@ def _cal_anime_eps(cine, days, seen, out):
     metas_tt = {m['id']: m for m in out}
     fmeta = [_POOL_BG.submit(fetch, f"{cine}/meta/series/{i}.json", 10) for i in eps_by_tt]
     for (tt, eps), f in zip(eps_by_tt.items(), fmeta, strict=True):
-        _cal_anime_fill(tt, eps, metas_tt.get(tt) or (f.result() or {}).get('meta'),
+        _cal_anime_fill(tt, eps, metas_tt.get(tt) or as_dict(f.result()).get('meta'),
                         metas_tt, seen, out)
 
 def _cal_anime_fill(tt, eps, meta_raw, metas_tt, seen, out):  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -190,7 +191,7 @@ def _cal_my_fill(cine, new_tt, my_eps, metas_tt, seen, out):  # pylint: disable=
     fallback = {tt: sm for tt, _, _, _, sm in my_eps}
     fmy = [_POOL_BG.submit(fetch, f"{cine}/meta/series/{i}.json", 10) for i in new_tt]
     for tt, f in zip(new_tt, fmy, strict=True):
-        _cal_ensure_meta(tt, (f.result() or {}).get('meta') or fallback.get(tt),
+        _cal_ensure_meta(tt, as_dict(f.result()).get('meta') or fallback.get(tt),
                          metas_tt, seen, out)
 
 

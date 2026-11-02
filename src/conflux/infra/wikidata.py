@@ -2,6 +2,7 @@
 # pylint: disable=broad-exception-caught,line-too-long
 import time
 
+from conflux.core.state import as_dict
 from conflux.infra.net import fetch
 
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
@@ -29,10 +30,10 @@ def _wikidata(yt):
     out = {}
     d = fetch(f'https://www.wikidata.org/w/api.php?action=query&list=search'
               f'&srsearch=haswbstatement:P2397={yt}&format=json&srlimit=1', 6)
-    q = ((d or {}).get('query', {}).get('search') or [{}])[0].get('title')
+    q = (as_dict(d).get('query', {}).get('search') or [{}])[0].get('title')
     if q:
-        c = (fetch(f'https://www.wikidata.org/wiki/Special:EntityData/{q}.json', 8) or {}
-             ).get('entities', {}).get(q, {}).get('claims', {})
+        c = as_dict(fetch(f'https://www.wikidata.org/wiki/Special:EntityData/{q}.json', 8)
+                    ).get('entities', {}).get(q, {}).get('claims', {})
         out = _wd_claims_out(c)
     _wd_c[yt] = (time.time(), out)
     return out
@@ -51,7 +52,7 @@ def _wd_country(c):
     if not isinstance(cq, dict):
         return None
     d2 = fetch(f'https://www.wikidata.org/wiki/Special:EntityData/{cq["id"]}.json', 6)
-    return ((d2 or {}).get('entities', {}).get(cq['id'], {})
+    return (as_dict(d2).get('entities', {}).get(cq['id'], {})
             .get('labels', {}).get('en', {}).get('value'))
 
 

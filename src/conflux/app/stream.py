@@ -92,9 +92,9 @@ def _collect_fetch(i, stype, sid):
     """El fetch real de la fuente (post-guards)."""
     name, base = SOURCES[i]
     d = fetch(f"{base}/stream/{stype}/{urllib.parse.quote(sid, safe=':')}.json", STREAM_TIMEOUT)
-    ss = (d or {}).get('streams')
+    ss = d.get('streams') if isinstance(d, dict) else None
     if not isinstance(ss, list):
-        ss = []            # "streams":null o tipo raro
+        ss = []            # "streams":null, tipo raro o JSON no-dict
     return name, d, ss
 
 
@@ -151,6 +151,7 @@ def _collect(key, state):
         with _slock:
             _cset(_cache, key, final)
             _inflight.pop(key, None)
+        state['done'].set()          # despierta a handle_stream antes del budget
 
 
 def _ensure_collect(key):

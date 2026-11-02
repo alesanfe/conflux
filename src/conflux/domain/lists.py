@@ -16,6 +16,7 @@ from conflux.core.state import (
     _cget,
     _cset,
     _open,
+    as_dict,
 )
 from conflux.infra.net import _session, fetch
 from conflux.infra.trakt import _trakt_h
@@ -41,8 +42,9 @@ def _list_trakt(url):
 
 def _trakt_items(rows):
     """items trakt -> [(type, tt_id)]."""
-    return [('movie' if e.get('movie') else 'series', 'tt' + str(ids['imdb']).lstrip('t'))
-            for e in rows if (ids := (e.get('movie') or e.get('show') or {}).get('ids') or {}).get('imdb')]
+    return [('movie' if as_dict(e).get('movie') else 'series', 'tt' + str(ids['imdb']).lstrip('t'))
+            for e in rows if isinstance(e, dict)
+            and (ids := as_dict(as_dict(e).get('movie') or as_dict(e).get('show')).get('ids')).get('imdb')]
 
 
 def _list_imdb(url):
@@ -99,7 +101,7 @@ def _list_metas(url, utype):
     cine = next(b for n, b in SOURCES if n == 'Cinemeta')
     out = []
     for f in _POOL_BG.map(lambda i: fetch(f"{cine}/meta/{utype}/{i}.json", 8), ids):
-        m = (f or {}).get('meta')
+        m = as_dict(f).get('meta')
         if m:
             out.append(m)
     return {'metas': out}

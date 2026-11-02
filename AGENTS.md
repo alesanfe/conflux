@@ -5,7 +5,7 @@ Proxy unificador de addons Stremio en `http://127.0.0.1:9700` (systemd user `str
 ## Comandos
 
 ```bash
-python3 -m unittest discover -s tests -t .  # 168 tests (~65s): unit+integration+security+e2e
+python3 -m unittest discover -s tests -t .  # 198 tests (~45s): unit+integration+security+contract+property+resilience+regression+performance+e2e
 python3 -m unittest discover -s tests/unit -t .       # solo unit (~1s)
 scripts/check.sh                            # suite + smoke endpoints + fuentes
 systemctl --user restart stremio-proxy      # tras editar src/conflux/
@@ -25,6 +25,11 @@ Repo en `~/apps/conflux`:
 - `tests/unit/`        un archivo por módulo (fixtures reales, mocks locales)
 - `tests/integration/` flujos multi-módulo con `patch_fetch` global
 - `tests/security/`    defusedxml/XXE, traversal, redirects, secretos
+- `tests/contract/`    forma de payloads contra el protocolo Stremio (R3)
+- `tests/property/`    hypothesis: invariantes de parsers sobre entrada generada
+- `tests/resilience/`  matriz de upstreams degenerados → payload válido (R5)
+- `tests/regression/`  bugs históricos fijados con su contexto
+- `tests/performance/` presupuestos de latencia + fan-out concurrente
 - `tests/e2e/`         servidor HTTP real en hilo: TODOS los endpoints
 
 Sub-paquetes por capa — cada uno solo depende "hacia abajo":
