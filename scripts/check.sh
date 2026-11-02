@@ -24,6 +24,15 @@ echo "== regression =="
 python3 -m unittest discover -s tests/regression -t . 2>&1 | tail -2
 echo "== performance =="
 python3 -m unittest discover -s tests/performance -t . 2>&1 | tail -2
+echo "== coverage (umbral 80%) =="
+if python3 -c 'import coverage' 2>/dev/null; then
+  python3 -m coverage run -m unittest discover -s tests -t . >/dev/null 2>&1
+  cov=$(python3 -m coverage report --include='src/conflux/*' | tail -1 | awk '{print $NF}' | tr -d '%')
+  t "coverage ${cov}%" "$([ "${cov%.*}" -ge 80 ] && echo ok || echo bajo)" ok
+else
+  echo "  (coverage no instalado — pip install coverage)"
+fi
+
 echo "== e2e (servicio en vivo :9700) =="
 t manifest "$(curl -s -o /dev/null -w '%{http_code}' $B/manifest.json)" 200
 t health   "$(curl -s -o /dev/null -w '%{http_code}' $B/health)" 200

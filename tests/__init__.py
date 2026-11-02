@@ -1,4 +1,4 @@
-# pylint: disable=missing-docstring,protected-access,import-outside-toplevel,multiple-statements,unused-argument,invalid-name,redefined-outer-name,expression-not-assigned,too-many-public-methods,duplicate-code,non-ascii-name,wrong-import-position
+# pylint: disable=missing-docstring,protected-access,import-outside-toplevel,multiple-statements,unused-argument,invalid-name,redefined-outer-name,expression-not-assigned,too-many-public-methods,duplicate-code,non-ascii-name,wrong-import-position,too-few-public-methods
 """Bootstrap de tests: src/ + repo root en sys.path y helpers compartidos."""
 import json
 import os
@@ -36,4 +36,50 @@ def patch_fetch(fn):
             mod.fetch = f
     return restore
 
-__all__ = ['FIX', 'ROOT', 'fixture', 'patch_fetch', 'px']
+
+def fake_session(*script):
+    """Sesión falsa para `patch.object(mod, '_session', return_value=s)`.
+    script = [{'json':..., 'text':..., 'status':...}] consumido en orden
+    por llamada (el último se repite). Devuelve (session, calls[])."""
+    seq = list(script) or [{'json': None}]
+    calls = []
+
+    class _R:
+        def __init__(self, spec):
+            self._j = spec.get('json')
+            self.text = spec.get('text', '')
+            self.status_code = spec.get('status', 200)
+            self.content = spec.get('content', b'')
+        def json(self):
+            return self._j
+
+    class _S:
+        def _c(self, method, url, **kw):
+            calls.append((method, url, kw))
+            spec = seq.pop(0) if len(seq) > 1 else seq[0]
+            if isinstance(spec, Exception):
+                raise spec
+            return _R(spec)
+        def get(self, url, **kw):
+            return self._c('GET', url, **kw)
+        def post(self, url, **kw):
+            return self._c('POST', url, **kw)
+        def head(self, url, **kw):
+            return self._c('HEAD', url, **kw)
+
+    return _S(), calls
+
+
+def cfg_swap(**kv):
+    """Fija claves de CFG y devuelve (old, restore): restore() deja CFG
+    exactamente como estaba. Uso: old, undo = cfg_swap(x='v') ... undo()."""
+    import conflux.core.state as st
+    old = dict(st.CFG)
+    st.CFG.update(kv)
+    def restore():
+        st.CFG.clear()
+        st.CFG.update(old)
+    return old, restore
+
+
+__all__ = ['FIX', 'ROOT', 'cfg_swap', 'fake_session', 'fixture', 'patch_fetch', 'px']

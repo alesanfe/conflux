@@ -170,8 +170,13 @@ class ServerE2E(unittest.TestCase):
         self.assertIn('year', d['meta'])
 
     def test_meta_series(self):
-        code, d = _get(self.port, '/meta/series/tt0944947.json')
-        self.assertEqual(code, 200)
+        # upstream a veces responde meta movie-shape para un tt de serie
+        # (transitorio, R5) — reintentar hasta la forma esperada
+        for _ in range(4):
+            code, d = _get(self.port, '/meta/series/tt0944947.json', timeout=30)
+            self.assertEqual(code, 200)
+            if 'videos' in d['meta']:
+                return
         self.assertIn('videos', d['meta'])
 
     def test_meta_prefijo_alien(self):

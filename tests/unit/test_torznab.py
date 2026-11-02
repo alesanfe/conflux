@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import conflux.core.state as st
 import conflux.infra.torznab as tz
+from tests import cfg_swap, fake_session
 
 
 class TestTzItem(unittest.TestCase):
@@ -64,3 +65,31 @@ class TestTorznab(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+
+class TestTorznabErrorPath(unittest.TestCase):
+    def test_excepcion_marca_health_y_vacio(self):
+        _, undo = cfg_swap(torznab_url='http://idx', torznab_key='K')
+        try:
+            with patch.object(tz, '_tz_query', side_effect=RuntimeError('boom')):
+                out = tz._torznab('movie', 'tt0137523')
+        finally:
+            undo()
+        self.assertEqual(out, [])
+        self.assertEqual(st.HEALTH['Torznab']['fail'], 1)
+
+
+class TestTzQuery(unittest.TestCase):
+    def test_parsea_items_xml(self):
+        xml = ('<rss xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel>'
+               '<item><title>Rel</title>'
+               '<link>magnet:?xt=urn:btih:abcdef0123456789abcdef0123456789abcdef01</link>'
+               '<torznab:attr name="seeders" value="7"/></item>'
+               '</channel></rss>')
+        s2, _ = fake_session({'content': xml.encode()})
+        with patch.object(tz, '_session', return_value=s2):
+            out = tz._tz_query('http://idx', 'K', 'movie', 'tt1')
+        self.assertEqual(out[0]['title'], 'Rel')
+        self.assertEqual(out[0]['infoHash'], 'abcdef0123456789abcdef0123456789abcdef01')
+        self.assertEqual(out[0]['behaviorHints']['seeders'], 7)

@@ -1,8 +1,12 @@
 # pylint: disable=missing-docstring,protected-access,import-outside-toplevel,multiple-statements,unused-argument,invalid-name,redefined-outer-name,expression-not-assigned,too-many-public-methods,duplicate-code,non-ascii-name,wrong-import-position
 """Unit tests conflux.domain.manifest — contrato R3."""
+import os
+import tempfile
 import unittest
+from unittest.mock import patch
 
-from tests import px
+import conflux.domain.manifest as MF
+from tests import cfg_swap, px
 
 
 class TestReglas(unittest.TestCase):
@@ -59,3 +63,133 @@ class TestReglas(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+
+
+
+class TestEffRank(unittest.TestCase):
+    def test_source_order_manda(self):
+        import conflux.core.state as st
+        old = dict(st.CFG)
+        st.CFG['source_order'] = ['Kitsu', 'Cinemeta']
+        try:
+            r_kitsu = MF._eff_rank('Kitsu')
+            r_cine = MF._eff_rank('Cinemeta')
+            r_otro = MF._eff_rank('Otro')
+        finally:
+            st.CFG.clear(); st.CFG.update(old)
+        self.assertLess(r_kitsu, r_cine)
+        self.assertLess(r_cine, r_otro)
+
+
+class TestCatName(unittest.TestCase):
+    def test_prefijo_redundante(self):
+        c = {'id': 'x', 'name': 'AllIPTV · Deportes'}
+        self.assertEqual(MF._cat_name('AllIPTV', c), 'AllIPTV · Deportes')
+
+    def test_tmdb_punto(self):
+        c = {'id': 'x', 'name': 'tmdb.top'}
+        self.assertEqual(MF._cat_name('TMDB', c), 'TMDB · top')
+
+    def test_nombre_vacio_fallback_id(self):
+        c = {'id': 'best-movies', 'name': 'TMDB'}
+        self.assertEqual(MF._cat_name('TMDB', c), 'TMDB · Movies')
+
+    def test_nombre_igual_a_fuente(self):
+        c = {'id': 'kitsu', 'name': 'Kitsu'}
+        self.assertEqual(MF._cat_name('Kitsu', c), 'Kitsu')
+
+
+class TestMfListCats(unittest.TestCase):
+    def setUp(self):
+        self._s = dict(MF._SYNTH)
+
+    def tearDown(self):
+        MF._SYNTH.clear(); MF._SYNTH.update(self._s)
+
+    def test_lista_genera_catalogos(self):
+        _, undo = cfg_swap(catalog_lists='mdblist:1')
+        try:
+            with patch.object(MF, '_list_fetch',
+                              return_value=('Top', [('movie', 'tt1'), ('series', 'tt2')])):
+                cats = []
+                MF._mf_list_cats(cats)
+        finally:
+            undo()
+        self.assertEqual(len(cats), 2)
+        ids = {c['id'] for _, c in cats}
+        self.assertIn('slist0_movie', ids)
+        self.assertIn('slist0_series', ids)
+        self.assertIn('slist0_movie', MF._SYNTH)
+
+
+class TestMfRecomCats(unittest.TestCase):
+    def setUp(self):
+        self._s = dict(MF._SYNTH)
+
+    def tearDown(self):
+        MF._SYNTH.clear(); MF._SYNTH.update(self._s)
+
+    def test_con_token_dos_catalogos(self):
+        _, undo = cfg_swap(trakt_access_token='AT')
+        try:
+            cats = []
+            MF._mf_recom_cats(cats)
+        finally:
+            undo()
+        self.assertEqual(len(cats), 2)
+        self.assertIn('suniform_movie_recom', MF._SYNTH)
+        self.assertIn('suniform_series_recom', MF._SYNTH)
+
+    def test_sin_token_vacio(self):
+        _, undo = cfg_swap(trakt_access_token='')
+        try:
+            cats = []
+            MF._mf_recom_cats(cats)
+        finally:
+            undo()
+        self.assertEqual(cats, [])
+
+
+class TestMfM3uCat(unittest.TestCase):
+    def setUp(self):
+        self._s = dict(MF._SYNTH)
+
+    def tearDown(self):
+        MF._SYNTH.clear(); MF._SYNTH.update(self._s)
+
+    def test_con_m3u_crea_catalogo(self):
+        with tempfile.NamedTemporaryFile(suffix='.m3u', delete=False) as f:
+            f.write(b'#EXTM3U\n')
+            path = f.name
+        _, undo = cfg_swap(m3u_path=path)
+        try:
+            cats = []
+            MF._mf_m3u_cat(cats)
+        finally:
+            undo(); os.unlink(path)
+        self.assertEqual(len(cats), 1)
+        self.assertIn('sm3u_tv_channels', MF._SYNTH)
+
+    def test_sin_m3u_vacio(self):
+        _, undo = cfg_swap(m3u_path='')
+        try:
+            cats = []
+            MF._mf_m3u_cat(cats)
+        finally:
+            undo()
+        self.assertEqual(cats, [])
+
+
+class TestMfDedupNames(unittest.TestCase):
+    def test_duplicados_sufijados(self):
+        cats = [{'id': 'a1', 'type': 'movie', 'name': 'Top'},
+                {'id': 'a2', 'type': 'movie', 'name': 'Top'},
+                {'id': 'a3', 'type': 'movie', 'name': 'Top'},
+                {'id': 'b', 'type': 'movie', 'name': 'Otro'}]
+        MF._UTYPE['a1'] = 'movie'; MF._UTYPE['a2'] = 'series'; MF._UTYPE['a3'] = 'series'
+        MF._mf_dedup_names(cats)
+        self.assertEqual(cats[1]['name'], 'Top (Series)')
+        self.assertEqual(cats[2]['name'], 'Top (Series 2)')
+        self.assertEqual(cats[3]['name'], 'Otro')

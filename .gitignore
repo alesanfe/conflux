@@ -11,3 +11,8 @@ proxy.log
 sources.json
 config.json
 config.*.json
+
+# coverage
+.coverage
+coverage.xml
+htmlcov/
