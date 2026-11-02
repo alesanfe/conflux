@@ -50,8 +50,13 @@ def fake_session(*script):
             self.text = spec.get('text', '')
             self.status_code = spec.get('status', 200)
             self.content = spec.get('content', b'')
+            body = spec.get('content') or json.dumps(
+                self._j if self._j is not None else self.text).encode()
+            self.raw = type('Raw', (), {'read': lambda self_, *a, **k: body})()
         def json(self):
             return self._j
+        def close(self):
+            pass
 
     class _S:
         def _c(self, method, url, **kw):

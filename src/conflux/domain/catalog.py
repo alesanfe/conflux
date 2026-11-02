@@ -20,7 +20,8 @@ from conflux.domain.calendar import _estrenos_cal
 from conflux.domain.lists import _list_metas, _m3u_metas
 from conflux.domain.manifest import _GRP, _LEGACY, _SYNTH, _UTYPE, _YR_OPTS
 from conflux.domain.metafix import _fix_metas
-from conflux.domain.sources import _resolve_sid
+from conflux.domain.sources import _PREFIX_SRC, _resolve_sid
+from conflux.domain.text import _id_prefix
 from conflux.infra.net import fetch
 from conflux.infra.trakt import _recom
 
@@ -56,16 +57,27 @@ def _busqueda(utype, extra):
     seen, out = set(), []
     e = urllib.parse.urlencode({'search': q})
     for d in _POOL_BG.map(lambda x: fetch(f"{x[0]}/catalog/{x[1]}/{x[2]}/{e}.json", 8), targets):
-        _search_merge(d, seen, out)
+        _search_merge(d, utype, seen, out)
     return {'metas': out}
 
 
-def _search_merge(d, seen, out):
-    """Metas de una respuesta -> out, dedup por id."""
-    for m in as_dict(d).get('metas') or []:
-        if not isinstance(m, dict) or not m.get('id') or m['id'] in seen:
+def _search_key(utype, mid):
+    """Clave dedup del meta: id canónico (tt resolviendo prefijos alien).
+
+    tt y prefijos no mapeables son gratis; los alien pasan por _resolve_sid
+    (fetch cacheado por (pref,base_id))."""
+    return _resolve_sid(utype, mid) if _id_prefix(mid) in _PREFIX_SRC else mid
+
+
+def _search_merge(d, utype, seen, out):
+    """Metas de una respuesta -> out, dedup por id canónico (tt si resoluble)."""
+    metas = [m for m in as_dict(d).get('metas') or []
+             if isinstance(m, dict) and m.get('id')]
+    keys = _POOL.map(lambda m: _search_key(utype, m['id']), metas)
+    for m, k in zip(metas, keys):
+        if k in seen:
             continue
-        seen.add(m['id'])
+        seen.add(k)
         out.append(m)
 
 

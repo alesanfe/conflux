@@ -33,7 +33,7 @@ def _health_page():
     return {'sources': {n: dict(h, cd_min=round((COOLDOWN[n][0]-now)/60), cd_motivo=COOLDOWN[n][1])
                         if n in COOLDOWN and COOLDOWN[n][0] > now else dict(h)
                         for n, h in HEALTH.items()},
-            'fetch_fails': _fails,
+            'fetch_fails': {k: v[0] for k, v in _fails.items()},
             'streams_served': _SERVED,
             'latency_ms': {k: {'n': n, 'avg': round(t/n, 1), 'max': round(x, 1),
                                'p50': _pct(list(_rts.get(k, ())), .5),
@@ -125,7 +125,7 @@ def _admin_page():
             f"<a class='btn' href='/configure'>configure</a></p>"
             f"<h2>Fuentes</h2><table><tr><th>fuente</th><th>ok</th><th>fail</th><th>streams</th><th>por calidad</th><th>último</th><th>circuito</th></tr>{''.join(rows)}</table>"
             f"<h2>Latencia por ruta (ms)</h2><table><tr><th>ruta</th><th>n</th><th>avg</th><th>p50</th><th>p95</th><th>p99</th><th>max</th></tr>{lat}</table>"
-            f"<h2>Fails por host</h2><p class='dim'>{' · '.join(f'{k}: {v}' for k, v in _fails.items()) or '—'}</p></body></html>")
+            f"<h2>Fails por host</h2><p class='dim'>{' · '.join(f'{k}: {v[0]}' for k, v in _fails.items()) or '—'}</p></body></html>")
 
 
 def _cfg_trakt_state():

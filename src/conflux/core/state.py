@@ -135,7 +135,11 @@ _cat_c    = {}            # catálogo cacheado
 
 HEALTH    = {}            # fuente -> {'ok':n,'fail':n,'last':ts,'err':str,'n':usable,'streak':n}
 
-_fails    = {}            # host -> nº fetchs fallados (observabilidad en /health)
+_fails    = {}            # host -> (strikes consecutivos, último ts) — disyuntor por host
+
+HOST_OPEN  = 4            # strikes seguidos que abren el disyuntor
+
+HOST_CD    = 60           # s de fail-fast con disyuntor abierto
 
 _rtime    = {}            # ruta -> (n, total_ms, max_ms) — latencia del servidor
 

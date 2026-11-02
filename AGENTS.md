@@ -134,6 +134,18 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   extras. Lo mismo con `*_filter` upstream (StravoII): endpoint de filtro sin
   args = lista genérica redundante con las opciones del propio grupo.
   Regla en `_mf_one_cat`: `req ∩ _FEED_EXTRA` o `id endswith '_filter'` -> None.
+- Disyuntor por host en `fetch()`: `_fails[host]=(strikes,ts)` cuenta fallos
+  CONSECUTIVOS (éxito resetea); ≥HOST_OPEN (4) -> fail-fast HOST_CD (60s) sin
+  tocar la red. Los hosts muertos (Fenix/Frost...) no cuestan timeout en
+  refresh/búsqueda/meta/stream.
+- `_collect` despierta `done` temprano: `Timer(2.0)` dispara si `pending<=3`
+  (los últimos stragglers son típicamente fuentes muertas/cold-start). El
+  bucle sigue para el caché completo — los waiters ven ~todo a los ~2s en
+  vez del budget 3.2s. Torznab va como futuro paralelo (antes síncrono en
+  `finally` retrasaba `done` hasta su timeout).
+- Búsqueda: dedup por id CANÓNICO (`_search_key` — `_resolve_sid` solo para
+  prefijos alien; tt es gratis). Kitsu:X y su tt resuelto no duplican.
+- `_URL_BAD`/`_URL_OK` acotados (`_url_prune` a >2000).
 - Cinemeta standalone NO se re-añade solo: su reaparición fue por editar el
   perfil SQLite con la app abierta (ésta lo persistía de vuelta al salir).
   **Siempre `flatpak kill com.stremio.Stremio` antes de tocar localstorage.**

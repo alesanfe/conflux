@@ -65,20 +65,20 @@ def _quota_hit(ss):
 
 
 def _collect_one(i, stype, sid):
-    """Fetch de una fuente -> (i, streams, usable). Health + disyuntores."""
+    """Fetch de una fuente -> (nombre, streams, usable). Health + disyuntores."""
     name = SOURCES[i].name
     skip = _collect_skip(i, stype, sid)
     if skip:
         if skip != 'deshabilitada':
             _health(name, True, skip, 0)
-        return i, [], 0
+        return name, [], 0
     name, d, ss = _collect_fetch(i, stype, sid)
     if _quota_hit(ss):
         COOLDOWN[name] = (time.time() + COOLDOWN_T, 'cuota')       # disyuntor 12h
         _health(name, True, 'cuota agotada → espera 12h', 0)
-        return i, [], 0
+        return name, [], 0
     _collect_health(name, d, ss)
-    return i, ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+    return name, ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
 
 def _collect_health(name, d, ss):
     """Health + cooldown por racha de fallos (o nada si responde bien)."""
@@ -104,8 +104,8 @@ def _merge_key(s):
     return str(k).lower() if k else None          # infoHash: Ytztvio usa MAYÚSCULAS
 
 
-def _collect_merge(state, i, streams):
-    """Merge dedup + norm de los streams de la fuente i en state."""
+def _collect_merge(state, name, streams):
+    """Merge dedup + norm de los streams de la fuente en state."""
     for s in streams:
         if not isinstance(s, dict) or _spam(s):
             continue
@@ -113,39 +113,48 @@ def _collect_merge(state, i, streams):
         if not k or k in state['seen']:
             continue
         state['seen'].add(k)
-        nr = norm_stream(s, SOURCES[i].name)
+        nr = norm_stream(s, name)
         state['rows'].append(nr)
-        sv = _SERVED.setdefault(SOURCES[i].name, {'n': 0, 'res': {}})
+        sv = _SERVED.setdefault(name, {'n': 0, 'res': {}})
         sv['n'] += 1                                    # 5.2: qué fuente aporta y en qué calidad
         sv['res'][nr[1] or 'SD'] = sv['res'].get(nr[1] or 'SD', 0) + 1
 
 
-def _collect_torznab(state, stype, sid):
-    for s in _torznab(stype, sid):                        # fuente local (Prowlarr/Jackett)
-        k = s['infoHash'].lower()
-        if k in state['seen']:
-            continue
-        state['seen'].add(k)
-        state['rows'].append(norm_stream(s, 'Torznab'))
-        state['contrib']['Torznab'] = state['contrib'].get('Torznab', 0) + 1
+def _collect_tz(stype, sid):
+    """Worker Torznab (indexer local): mismo contrato que _collect_one."""
+    try:
+        ss = _torznab(stype, sid)
+    except Exception as e:                              # noqa: BLE001 — indexer local nunca tumba el collect
+        log_ev('src_worker', err=repr(e)[:100])
+        return 'Torznab', [], 0
+    return 'Torznab', ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
 
 
 def _collect(key, state):
     stype, sid = key
     sid = _resolve_sid(stype, sid)            # kitsu/mal -> imdb para las fuentes
     try:
-        for f in as_completed([_POOL.submit(_collect_one, i, stype, sid)
-                               for i in range(len(SOURCES))]):
+        futs = [_POOL.submit(_collect_one, i, stype, sid) for i in range(len(SOURCES))]
+        futs.append(_POOL.submit(_collect_tz, stype, sid))     # indexer en paralelo: no como straggler en finally
+        pending = len(futs)
+
+        def _nearly_done():                                    # ~2s: si solo cuelgan stragglers
+            if pending <= 3:                                   # (típicos muertos/cold-start),
+                state['done'].set()                            # despertar: waiters ya tienen ~todo
+        t = threading.Timer(2.0, _nearly_done)
+        t.daemon = True
+        t.start()
+        for f in as_completed(futs):
+            pending -= 1
             try:
-                i, streams, usable = f.result()
+                name, streams, usable = f.result()
             except Exception as e:                              # noqa: BLE001 — el worker puede lanzar cualquier cosa
                 log_ev('src_worker', err=repr(e)[:100])
                 continue
-            state['contrib'][SOURCES[i].name] = usable            # por collect: sin mezclas
+            state['contrib'][name] = usable                     # por collect: sin mezclas
             with state['lock']:
-                _collect_merge(state, i, streams)
+                _collect_merge(state, name, streams)
     finally:
-        _collect_torznab(state, stype, sid)
         with state['lock']:
             final = [r[0] for r in sorted(state['rows'], key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[2], -r[3]))]
         with _slock:
@@ -212,11 +221,21 @@ def _url_head(u):
         _URL_BAD[u] = (st + 1, time.time())                # timeout: strike
 
 
+def _url_prune():
+    """Cota de memoria de los veredictos: purga la mitad más vieja de cada dict."""
+    for u in sorted(_URL_BAD, key=lambda u: _URL_BAD[u][1])[:len(_URL_BAD) // 2]:
+        _URL_BAD.pop(u, None)
+    for u in sorted(_URL_OK, key=_URL_OK.get)[:len(_URL_OK) // 2]:
+        _URL_OK.pop(u, None)
+
+
 def _url_health(streams):
     """Streams http: los confirmados muertos salen de la lista; los desconocidos
     se HEAD-encolan async (máx 15, 3s). Fallo transitorio (timeout) solo cuenta
     medio strike — 2 strikes o un 4xx/5xx confirman muerte."""
     now = time.time()
+    if len(_URL_BAD) + len(_URL_OK) > 2000:
+        _url_prune()
     dead = {u for u, (st, ts) in _URL_BAD.items() if st >= 2 and now - ts < 1800}
     if dead:
         streams[:] = [s for s in streams if s.get('url') not in dead]

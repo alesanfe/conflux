@@ -42,13 +42,13 @@ class TestCollectMerge(unittest.TestCase):
     def test_merge_dedup_infohash(self):
         stt = self._state()
         h = 'a' * 40
-        S._collect_merge(stt, 0, [{'infoHash': h, 'title': 'x 1080p'},
+        S._collect_merge(stt, 'Src', [{'infoHash': h, 'title': 'x 1080p'},
                                    {'infoHash': h, 'title': 'x 1080p'}])
         self.assertEqual(len(stt['rows']), 1)
 
     def test_spam_no_entra(self):
         stt = self._state()
-        S._collect_merge(stt, 0, [{'title': 'upgrade your account to premium'}])
+        S._collect_merge(stt, 'Src', [{'title': 'upgrade your account to premium'}])
         self.assertEqual(len(stt['rows']), 0)
 
 

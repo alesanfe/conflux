@@ -1,6 +1,7 @@
 # pylint: disable=missing-docstring,protected-access,import-outside-toplevel,multiple-statements,unused-argument,invalid-name,redefined-outer-name,expression-not-assigned,too-many-public-methods,duplicate-code,non-ascii-name,wrong-import-position
 """Unit tests conflux.domain.catalog — routing + dispatch sintéticos."""
 import unittest
+from unittest.mock import patch
 
 import conflux.domain.catalog as C
 import conflux.domain.manifest as mf
@@ -20,14 +21,14 @@ class TestCatRoute(unittest.TestCase):
 class TestSearchMerge(unittest.TestCase):
     def test_merge_dedup(self):
         seen, out = set(), []
-        C._search_merge({'metas': [{'id': 'a'}, {'id': 'b'}]}, seen, out)
-        C._search_merge({'metas': [{'id': 'a'}, {'id': 'c'}]}, seen, out)
+        C._search_merge({'metas': [{'id': 'a'}, {'id': 'b'}]}, 'movie', seen, out)
+        C._search_merge({'metas': [{'id': 'a'}, {'id': 'c'}]}, 'movie', seen, out)
         self.assertEqual([m['id'] for m in out], ['a', 'b', 'c'])
 
     def test_merge_vacio(self):
         seen, out = set(), []
-        C._search_merge(None, seen, out)
-        C._search_merge({}, seen, out)
+        C._search_merge(None, 'movie', seen, out)
+        C._search_merge({}, 'movie', seen, out)
         self.assertEqual(out, [])
 
 
@@ -56,3 +57,23 @@ class TestXlateIds(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestSearchKeyCanonico(unittest.TestCase):
+    """Dedup por id canónico: kitsu:X y su tt resuelto = mismo meta."""
+
+    def test_kitsu_dedup_con_tt(self):
+        seen, out = set(), []
+        with patch.object(C, '_resolve_sid', return_value='tt0409591') as rs:
+            C._search_merge({'metas': [{'id': 'kitsu:1'}]}, 'series', seen, out)
+            C._search_merge({'metas': [{'id': 'tt0409591'}]}, 'series', seen, out)
+        rs.assert_called_once_with('series', 'kitsu:1')
+        self.assertEqual([m['id'] for m in out], ['kitsu:1'],
+                         'kitsu:1 resuelve a tt0409591 -> el tt posterior es dupe')
+
+    def test_tt_sin_resolucion(self):
+        seen, out = set(), []
+        with patch.object(C, '_resolve_sid') as rs:
+            C._search_merge({'metas': [{'id': 'tt1'}]}, 'movie', seen, out)
+        rs.assert_not_called()          # tt: resolución gratis, sin fetch
+        self.assertEqual(len(out), 1)
