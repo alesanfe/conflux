@@ -47,7 +47,7 @@ def _profile_load(name):
     if name not in _PROFILES:
         try:
             _PROFILES[name] = json.load(_open(os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), f'config.{name}.json')))
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), f'config.{name}.json')))
         except (OSError, ValueError):
             _PROFILES[name] = {}
     return _PROFILES[name]

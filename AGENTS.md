@@ -5,12 +5,21 @@ Proxy unificador de addons Stremio en `http://127.0.0.1:9700` (systemd user `str
 ## Comandos
 
 ```bash
-python3 test_proxy.py                    # 28 tests, ~11s
-systemctl --user restart stremio-proxy   # tras editar conflux/
+python3 -m unittest discover -s test -t .   # 168 tests (~65s): unit+integration+security+e2e
+python3 -m unittest discover -s test/unit -t .        # solo unit (~1s)
+./check.sh                                 # suite + smoke endpoints + fuentes
+systemctl --user restart stremio-proxy   # tras editar src/conflux/
 
 ## Estructura (paquete conflux/ por capas, proxy.py = entry+fachada)
 
-Repo en `~/apps/conflux`. Sub-paquetes por capa — cada uno solo depende "hacia abajo":
+Repo en `~/apps/conflux`. Código en `src/conflux/` (src-layout), tests en `test/`:
+
+- `test/unit/`        un archivo por módulo (fixtures reales, mocks locales)
+- `test/integration/` flujos multi-módulo con `patch_fetch` global
+- `test/security/`    defusedxml/XXE, traversal, redirects, secretos
+- `test/e2e/`         servidor HTTP real en hilo: TODOS los endpoints
+
+Sub-paquetes por capa — cada uno solo depende "hacia abajo":
 
 - `conflux/core/`   `state.py` (CFG/cachés/HEALTH/COOLDOWN/pools/log — nunca re-asignar
   nombres compartidos; mutar in situ: `manifests[:] =`, `_M3U.clear()`; solo `cfg.RE_ES`

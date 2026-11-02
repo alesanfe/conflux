@@ -88,7 +88,7 @@ SOURCES = [
 
 # fuentes externalizadas: sources.json (junto al proxy) sobreescribe la lista —
 # [ {"name": ..., "base": ...}, ... ]. Config fuera del código (12-factor).
-_SRC_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'sources.json')
+_SRC_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'sources.json')
 
 try:
     _raw = json.load(_open(_SRC_FILE))
@@ -99,7 +99,7 @@ except (OSError, ValueError) as e:
 
 
 # ---- config.json unificado (opciones del usuario, todo opcional) ----
-_CFG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config.json')
+_CFG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'config.json')
 
 _CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '',
                  'm3u_path': '', 'debrid_provider': '', 'debrid_key': '', 'horizon_days': 45,
@@ -124,7 +124,7 @@ _sess_lock = threading.Lock()
 manifests = []          # [dict manifest | None]
 
 
-_MF_CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.manifests-cache.json')
+_MF_CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), '.manifests-cache.json')
 
 
 _cache    = {}            # (stype,sid) -> (ts, [streams])
