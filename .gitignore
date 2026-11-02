@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.manifests-cache.json
+proxy.log
+sources.json

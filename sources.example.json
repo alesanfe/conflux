@@ -1,0 +1,98 @@
+[
+ {
+  "name": "Cinemeta",
+  "base": "https://v3-cinemeta.strem.io"
+ },
+ {
+  "name": "Torrentio",
+  "base": "https://torrentio.strem.fun/language=spanish"
+ },
+ {
+  "name": "TorrentsDB",
+  "base": "https://torrentsdb.com"
+ },
+ {
+  "name": "Peerflix",
+  "base": "https://addon.peerflix.mov"
+ },
+ {
+  "name": "Meteor",
+  "base": "https://meteorfortheweebs.midnightignite.me"
+ },
+ {
+  "name": "Ytztvio",
+  "base": "https://ytztvio.galacticcapsule.workers.dev"
+ },
+ {
+  "name": "NoTorrent",
+  "base": "https://addon.notorrent2.workers.dev"
+ },
+ {
+  "name": "Orion",
+  "base": "<ORION_URL_CON_TU_TOKEN>"
+ },
+ {
+  "name": "PublicDom",
+  "base": "https://caching.stremio.net/publicdomainmovies.now.sh"
+ },
+ {
+  "name": "Kitsu",
+  "base": "https://anime-kitsu.strem.fun"
+ },
+ {
+  "name": "YouTube",
+  "base": "https://v3-channels.strem.io"
+ },
+ {
+  "name": "IPTV",
+  "base": "https://ip-tv.hatip.dev"
+ },
+ {
+  "name": "AllIPTV",
+  "base": "https://fun.lnpx.workers.dev"
+ },
+ {
+  "name": "Stravo",
+  "base": "https://stravo.site/local"
+ },
+ {
+  "name": "StravoII",
+  "base": "https://v2.stravo.site/local"
+ },
+ {
+  "name": "Hyper",
+  "base": "https://hyper.stravo.site/local"
+ },
+ {
+  "name": "Frost",
+  "base": "https://froststream.cloutteam.com"
+ },
+ {
+  "name": "Fenix",
+  "base": "https://fenixflix.fenixhub.online"
+ },
+ {
+  "name": "AniSeason",
+  "base": "https://victorgveloso.github.io/animes-season-addon"
+ },
+ {
+  "name": "TorrentCat",
+  "base": "https://torrent-catalogs.strem.fun"
+ },
+ {
+  "name": "OnePace",
+  "base": "https://onepaceaddon-zoropogger.koyeb.app"
+ },
+ {
+  "name": "IMDBCat",
+  "base": "https://1fe84bc728af-imdb-catalogs.baby-beamup.club"
+ },
+ {
+  "name": "RTomatoes",
+  "base": "https://7a82163c306e-rottentomatoes.baby-beamup.club"
+ },
+ {
+  "name": "TMDB",
+  "base": "https://tmdb.elfhosted.com"
+ }
+]
