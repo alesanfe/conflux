@@ -62,12 +62,14 @@ except Exception:
 
 # ---- config.json unificado (opciones del usuario, todo opcional) ----
 _CFG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-CFG = {'calendar_months_ahead': 2, 'trakt_client_id': '', 'poster_ratings': False,
-       'm3u_path': '', 'debrid_provider': '', 'debrid_key': '', 'horizon_days': 45,
-       'stream_langs': ['es', 'latam', 'spanish', 'castellano', 'espanol'],
-       'sources_disabled': []}
+_CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '', 'poster_ratings': False,
+                 'm3u_path': '', 'debrid_provider': '', 'debrid_key': '', 'horizon_days': 45,
+                 'stream_langs': ['es', 'latam', 'spanish', 'castellano', 'espanol'],
+                 'sources_disabled': []}
+CFG = dict(_CFG_DEFAULTS)
 _DISABLED = set()
 def load_config():
+    CFG.clear(); CFG.update(_CFG_DEFAULTS)                  # reset: borrar el archivo = defaults
     try:
         CFG.update({k: v for k, v in json.load(open(_CFG_FILE)).items() if k in CFG})
     except Exception:
@@ -1228,11 +1230,13 @@ class H(BaseHTTPRequestHandler):
             enabled = set(form.get('src', []))
             cfg['sources_disabled'] = [s.name for s in SOURCES if s.name not in enabled]
             try:
-                open(CFG_PATH, 'w').write(json.dumps({k: v for k, v in cfg.items() if v}, indent=1))
+                open(_CFG_FILE, 'w').write(json.dumps({k: v for k, v in cfg.items() if v or isinstance(v, list)}, indent=1))
             except OSError:
                 pass
+            load_config()
             self.send_response(303)
-            self.send_header('Location', '/configure'); self.end_headers()
+            self.send_header('Location', '/configure')
+            self.send_header('Content-Length', '0'); self.end_headers()
             return
         self.reply({'err': 'not found'}, 404)
 
