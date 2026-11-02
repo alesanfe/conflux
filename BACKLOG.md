@@ -45,7 +45,7 @@ Esfuerzo: **S** <1 sesión · **M** ~1-2 · **L** varias sesiones
 |---|---|---|---|---|
 | 4.1 ✅ | **Búsqueda unificada** — `search=` fan-out a todos los catálogos con soporte + dedup por id | Buscar "one piece" devuelve resultados mezclados de todas las fuentes sin duplicar | P0 | M |
 | 4.2 ✅ | **M3U propio** — `m3u_path` en config parsea playlist local a catálogo `tv` «Mis canales» + streams `m3u:N` | Canales propios aparecen en pestaña TV junto a IPTV/AllIPTV. *Pendiente: Xtream API + EPG* | P1 | M |
-| 4.3 | **Overlays de rating** — metahub/RPDB: nota IMDb/RT en `poster` de metas (config `POSTER_RATINGS`) | Portadas de Discover con badge de nota | P2 | S |
+| 4.3 ❌ | **Overlays de rating** — RPDB es servicio de pago; metahub no hace overlays. Descartado | — | P2 | S |
 | 4.4 ✅ | **Listas IMDb/MDbList/Trakt como catálogos** — `catalog_lists` con URLs → catálogo «☰ nombre» por tipo | Una lista pública de IMDb/Trakt aparece como sección | P2 | M |
 | 4.5 ✅ | **"Porque viste X"** — historial Trakt (`/users/me/history`) → `/related` por item, catálogo «Recomendados · tu Trakt» movie+series | Con Trakt conectado, recomendaciones personales visibles; sin token, oculto | P2 | M |
 
@@ -71,6 +71,8 @@ Esfuerzo: **S** <1 sesión · **M** ~1-2 · **L** varias sesiones
 ## Lo que queda FUERA (decisiones tomadas)
 
 - **Usenet/NZB**: servicios de pago no usados — reabrir si cambia
+- **Ratings en posters (RPDB)**: solo de pago — fuera
+- **Cualquier feature que dependa de un servicio de pago**: fuera
 - **Multi-usuario cifrado en URL**: proxy personal en localhost — sin beneficio real
 - **Telegram/Stalker/Xtream scraping**: fiabilidad/legalidad dudosa
 - **Scrobble playback**: vive en el cliente (Stremio lo hace con Trakt nativo), no en un addon

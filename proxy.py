@@ -62,7 +62,7 @@ except Exception:
 
 # ---- config.json unificado (opciones del usuario, todo opcional) ----
 _CFG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
-_CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '', 'poster_ratings': False,
+_CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '',
                  'm3u_path': '', 'debrid_provider': '', 'debrid_key': '', 'horizon_days': 45,
                  'stream_langs': ['es', 'latam', 'spanish', 'castellano', 'espanol'],
                  'sources_disabled': [], 'trakt_client_secret': '',
