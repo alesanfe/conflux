@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Proxy local para Stremio: unifica el formato de los streams de todos los
 addons y pasa sus catálogos/metadatos. Escucha en 127.0.0.1:9700."""
-import json, os, re, urllib.request, urllib.parse, threading, time, gzip
+import json, os, re, urllib.request, urllib.parse, threading, time, gzip, logging, sys
 import requests
-from collections import namedtuple
+from collections import namedtuple, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeout
 
@@ -286,6 +286,19 @@ _slock    = threading.Lock()
 HEALTH    = {}            # fuente -> {'ok':n,'fail':n,'last':ts,'err':str,'n':usable,'streak':n}
 _fails    = {}            # host -> nº fetchs fallados (observabilidad en /health)
 _rtime    = {}            # ruta -> (n, total_ms, max_ms) — latencia del servidor
+_rts      = {}            # ruta -> deque(ultimas 512 latencias) — histograma p50/p95/p99
+
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+_log = logging.getLogger('stremio-proxy')
+
+def log_ev(ev, **kv):
+    """Un evento = una línea JSON — grep/journalctl -o json-pretty friendly."""
+    _log.info(json.dumps({'ev': ev, **kv}, separators=(',', ':')))
+
+def _pct(vals, q):
+    if not vals: return 0
+    s = sorted(vals)
+    return round(s[min(len(s) - 1, int(len(s) * q))], 1)
 COOLDOWN  = {}            # fuente -> (ts, motivo) hasta el que se salta
 COOLDOWN_T = 12*3600      # cuota agotada: 12h
 FAIL_CD_T  = 15*60        # racha de fallos: 15 min y reintenta
@@ -858,9 +871,8 @@ class H(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'   # keep-alive: menos TCP por petición
     timeout = 30                    # cliente que conecta y calla no retiene el hilo
     def log_message(self, fmt, *a):
-        import sys
         ua = self.headers.get('User-Agent', '-') if hasattr(self, 'headers') else '-'
-        print(f'[req] {fmt % a} UA={ua[:70]}', file=sys.stderr, flush=True)
+        log_ev('req', msg=fmt % a, ua=ua[:60])
     def reply(self, obj, code=200):
         body = json.dumps(obj).encode()
         gz = len(body) > 1024 and 'gzip' in self.headers.get('Accept-Encoding', '')
@@ -894,7 +906,10 @@ class H(BaseHTTPRequestHandler):
                                if n in COOLDOWN and COOLDOWN[n][0] > now else dict(h)
                                for n, h in HEALTH.items()},
                                'fetch_fails': _fails,
-                               'latency_ms': {k: {'n': n, 'avg': round(t/n, 1), 'max': round(x, 1)}
+                               'latency_ms': {k: {'n': n, 'avg': round(t/n, 1), 'max': round(x, 1),
+                                                  'p50': _pct(list(_rts.get(k, ())), .5),
+                                                  'p95': _pct(list(_rts.get(k, ())), .95),
+                                                  'p99': _pct(list(_rts.get(k, ())), .99)}
                                               for k, (n, t, x) in _rtime.items()}})
         t0 = time.time(); seg = p.split('/')[1] if '/' in p else 'root'
         try:
@@ -906,6 +921,7 @@ class H(BaseHTTPRequestHandler):
             ms = (time.time() - t0) * 1000
             n, tot, mx = _rtime.get(seg, (0, 0, 0))
             _rtime[seg] = (n + 1, tot + ms, max(mx, ms))   # latencia por ruta en /health
+            _rts.setdefault(seg, deque(maxlen=512)).append(ms)
 
 _prefetching = False
 
@@ -946,10 +962,10 @@ if __name__ == '__main__':
     if cached:
         manifests = cached
         threading.Thread(target=refresh_manifests, daemon=True).start()   # fresco en bg
-        print(f'{sum(1 for m in manifests if m)}/{len(SOURCES)} fuentes (caché)', flush=True)
+        log_ev('manifests', n=sum(1 for m in manifests if m), total=len(SOURCES), src='cache')
     else:
         refresh_manifests()
-        print(f'{sum(1 for m in manifests if m)}/{len(SOURCES)} fuentes activas', flush=True)
+        log_ev('manifests', n=sum(1 for m in manifests if m), total=len(SOURCES), src='live')
     threading.Thread(target=_refresher, daemon=True).start()
     threading.Thread(target=_prefetch_catalogs, daemon=True).start()   # caché caliente antes del primer cliente
     class Srv(ThreadingHTTPServer): daemon_threads = True   # sin hilos zombie
