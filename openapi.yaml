@@ -1,0 +1,87 @@
+openapi: 3.0.3
+info:
+  title: conflux — Streams Unificados
+  version: 1.0.0
+  description: |
+    Addon agregador para Stremio: un manifest que fusiona ~24 addons upstream
+    (streams + metas + catálogos) con calendario de estrenos real, búsqueda
+    unificada, debrid, listas externas y administración web.
+servers:
+  - url: http://127.0.0.1:9700
+
+paths:
+  /manifest.json:
+    get:
+      summary: Manifest Stremio
+      responses:
+        '200': {description: manifest del addon}
+  /p/{perfil}/manifest.json:
+    get:
+      summary: Manifest de un perfil (config.<perfil>.json)
+      parameters:
+        - {name: perfil, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: manifest con id/nombre propios}
+  /stream/{type}/{id}.json:
+    get:
+      summary: Streams agregados (dedup + orden calidad/semillas/ES + ⚡debrid)
+      parameters:
+        - {name: type, in: path, required: true, schema: {type: string, enum: [movie, series, anime, tv, channel]}}
+        - {name: id, in: path, required: true, schema: {type: string}, description: 'tt123, kitsu:49847:2, m3u:N…'}
+      responses:
+        '200': {description: '{streams: [...]}'}
+  /catalog/{type}/{id}.json:
+    get:
+      summary: Catálogo sin extras
+      responses: {'200': {description: '{metas|metasDetailed: [...]}'}}
+  /catalog/{type}/{id}/{extra}.json:
+    get:
+      summary: Catálogo con extras (genre, year, search, calendarVideosIds…)
+      responses: {'200': {description: '{metas|metasDetailed: [...]}'}}
+  /meta/{type}/{id}.json:
+    get:
+      summary: Metadatos resueltos (ids no-tt traducidos)
+      responses: {'200': {description: '{meta: {...}}'}}
+  /subtitles/{type}/{id}.json:
+    get:
+      summary: Subtítulos OpenSubtitles ES-first (requiere opensubtitles_key)
+      responses: {'200': {description: '{subtitles: [{id,url,lang}]}'}}
+  /s/{file_id}:
+    get:
+      summary: Redirect 302 a la URL CDN del subtítulo
+      responses: {'302': {description: Location=URL}, '404': {description: sin key/fallo}}
+  /r/{provider}/{hash}:
+    get:
+      summary: Redirect 302 a la URL HTTP del debrid
+      parameters:
+        - {name: provider, in: path, required: true, schema: {type: string, enum: [real-debrid, torbox, alldebrid, premiumize, easydebrid, debrid-link]}}
+        - {name: hash, in: path, required: true, schema: {type: string}}
+        - {name: fi, in: query, schema: {type: integer, default: 0}}
+      responses: {'302': {description: Location=URL}, '404': {description: sin key}}
+  /health:
+    get:
+      summary: Salud por fuente + fails por host + latencias p50/p95/p99 + streams servidos
+      responses: {'200': {description: JSON de observabilidad}}
+  /admin:
+    get:
+      summary: Dashboard HTML (fuentes, circuitos, latencias)
+      responses: {'200': {description: HTML}}
+  /configure:
+    get:
+      summary: UI de configuración (fuentes, keys, listas, orden, idiomas)
+      responses: {'200': {description: HTML}}
+    post:
+      summary: Guarda config.json y aplica en caliente
+      responses: {'303': {description: redirect a /configure}}
+  /auth/trakt:
+    get:
+      summary: Device Authorization flow — muestra user_code, guarda token al autorizar
+      responses: {'200': {description: HTML con código}}
+  /auth/trakt/status:
+    get:
+      summary: Estado del device flow
+      responses: {'200': {description: '{state: pending|ok|none}'}}
+  /reload:
+    post:
+      summary: Recarga config.json en caliente + limpia cachés
+      responses: {'200': {description: '{ok: true, config: {...}}'}}

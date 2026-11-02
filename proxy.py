@@ -66,6 +66,9 @@ _CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '', 'poster_rati
                  'm3u_path': '', 'debrid_provider': '', 'debrid_key': '', 'horizon_days': 45,
                  'stream_langs': ['es', 'latam', 'spanish', 'castellano', 'espanol'],
                  'sources_disabled': [], 'trakt_client_secret': '',
+                 'torznab_url': '', 'torznab_key': '', 'mdblist_key': '',
+                 'catalog_lists': '', 'source_order': [], 'catalogs_disabled': [],
+                 'opensubtitles_key': '',
                  'trakt_access_token': '', 'trakt_refresh_token': '', 'trakt_expires': 0}
 CFG = dict(_CFG_DEFAULTS)
 _DISABLED = set()
@@ -75,8 +78,10 @@ def load_config():
         CFG.update({k: v for k, v in json.load(open(_CFG_FILE)).items() if k in CFG})
     except Exception:
         pass
-    global _DISABLED
+    global _DISABLED, RE_ES
     _DISABLED = set(CFG.get('sources_disabled') or [])
+    langs = '|'.join(re.escape(x) for x in CFG.get('stream_langs') or ['es'])
+    RE_ES = re.compile(rf'\b({langs})\b', re.I)              # langs configurables en vivo
 def _save_cfg():
     try:
         open(_CFG_FILE, 'w').write(json.dumps(
@@ -174,7 +179,32 @@ RE_CODEC = re.compile(r'\b(HEVC|x265|h265|x264|h264|AV1|VP9|AVC|XviD)\b', re.I)
 RE_AUDIO = re.compile(r'\b(Dolby\s?Atmos|Atmos|DDP?5\.1|DD\+|TrueHD|DTS(?:-HD|-X)?|FLAC|AAC2?\.0|AAC|[257]\.1|Stereo|Mono)\b', re.I)
 RE_DUR   = re.compile(r'(\d+)\s?h\s?(\d+)\s?m|(\d{1,2}):(\d{2}):\d{2}|(\d+)\s?min', re.I)
 FLAGS    = re.compile(r'[\U0001F1E6-\U0001F1FF]{2}')
-RE_ES    = re.compile(r'\b(LATINO|LATAM|CASTELLANO|ESPAÑOL|ESP|Spanish|SPANISH|VOSE|ES)\b', re.I)
+# RE_ES lo asigna load_config() desde stream_langs (no estático aquí: el orden
+# de módulo es CFG->load_config->regexes; un compile fijo aquí lo pisaría)
+
+# ---- perfiles (2.4): /p/<nombre>/... usa config.<nombre>.json sobre CFG ----
+_PROF = threading.local()
+_PROFILES = {}
+def _profile_load(name):
+    if name not in _PROFILES:
+        try:
+            _PROFILES[name] = json.load(open(os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), f'config.{name}.json')))
+        except Exception:
+            _PROFILES[name] = {}
+    return _PROFILES[name]
+def _cfgget(k, default=None):
+    pc = getattr(_PROF, 'cfg', None)
+    if pc is not None and k in pc: return pc[k]
+    return CFG.get(k, default)
+def _eff_disabled():
+    pc = getattr(_PROF, 'cfg', None)
+    return set(pc['sources_disabled']) if pc is not None and 'sources_disabled' in pc else _DISABLED
+def _es_pat():
+    pc = getattr(_PROF, 'cfg', None)
+    langs = (pc or {}).get('stream_langs') if pc else None
+    if not langs: return RE_ES.pattern
+    return r'\b(' + '|'.join(re.escape(x) for x in langs) + r')\b'
 RE_SRCT  = re.compile(r'\b(BDREMUX|REMUX|BluRay|BDRip|WEB-?DL|WEBRip|HDTV|DVDRip|DVD|CAM|HDCAM|TS|SCR)\b', re.I)
 RE_HDR   = re.compile(r'\b(HDR10\+|Dolby\s?Vision|HDR10|HDR|DV)\b', re.I)
 
@@ -250,7 +280,7 @@ def extract_fields(s):
         'cached': bool(bh.get('cached') or '☁️' in text or 'debrid' in text.lower()),
         'srctype': _prio(RE_SRCT.findall(text), SRCT_ORD),
         'hdr': _prio(RE_HDR.findall(text), HDR_ORD),
-        'es': bool(RE_ES.search(text)),
+        'es': bool(re.search(_es_pat(), text, re.I)),
     }
 
 _CODEC_TOKENS = {'X265','X264','H265','H264','HEVC','AV1','VP9','AVC','10BIT','AAC','DTS'}
@@ -316,6 +346,7 @@ HEALTH    = {}            # fuente -> {'ok':n,'fail':n,'last':ts,'err':str,'n':u
 _fails    = {}            # host -> nº fetchs fallados (observabilidad en /health)
 _rtime    = {}            # ruta -> (n, total_ms, max_ms) — latencia del servidor
 _rts      = {}            # ruta -> deque(ultimas 512 latencias) — histograma p50/p95/p99
+_SERVED   = {}            # fuente -> {'n': streams aportados, 'res': {res: n}} — quién aporta de verdad
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 _log = logging.getLogger('stremio-proxy')
@@ -412,7 +443,7 @@ def _collect(key, state):
     sid = _resolve_sid(stype, sid)            # kitsu/mal -> imdb para las fuentes
     def one(i):
         name, base = SOURCES[i]
-        if name in _DISABLED: return i, [], 0
+        if name in _eff_disabled(): return i, [], 0
         m = manifests[i] if i < len(manifests) else None
         if m is not None and m.get('resources') and 'stream' not in res_of(m):
             _health(name, True, 'manifest sin stream', 0)
@@ -456,8 +487,18 @@ def _collect(key, state):
                         k = str(k).lower()              # infoHash: Ytztvio usa MAYÚSCULAS
                         if k in state['seen']: continue
                         state['seen'].add(k)
-                        state['rows'].append(norm_stream(s, SOURCES[i].name))
+                        nr = norm_stream(s, SOURCES[i].name)
+                        state['rows'].append(nr)
+                        sv = _SERVED.setdefault(SOURCES[i].name, {'n': 0, 'res': {}})
+                        sv['n'] += 1                                    # 5.2: qué fuente aporta y en qué calidad
+                        sv['res'][nr[1] or 'SD'] = sv['res'].get(nr[1] or 'SD', 0) + 1
     finally:
+        for s in _torznab(stype, sid):                        # fuente local (Prowlarr/Jackett)
+            k = s['infoHash'].lower()
+            if k in state['seen']: continue
+            state['seen'].add(k)
+            state['rows'].append(norm_stream(s, 'Torznab'))
+            state['contrib']['Torznab'] = state['contrib'].get('Torznab', 0) + 1
         with state['lock']:
             final = [r[0] for r in sorted(state['rows'], key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[2], -r[3]))]
         with _slock:
@@ -471,6 +512,38 @@ def _collect(key, state):
         print(f"[done] {key[1]} → {len(final)} streams · {time.time()-t0:.1f}s · [{contribs}]"
               f" · fallos: {', '.join(fails) or 'ninguno'}", flush=True)
         state['done'].set()                             # siempre: el cliente nunca espera de más
+
+def _torznab(stype, sid):
+    """Prowlarr/Jackett (3.5): Torznab directo como fuente extra de streams.
+    Config: torznab_url (p.ej. http://localhost:9696/api/v1.0/indexers/all/results/torznab)
+    + torznab_key."""
+    url, key = CFG.get('torznab_url', '').rstrip('/'), CFG.get('torznab_key', '')
+    imdb = sid.split(':')[0]
+    if not url or not key or not imdb.startswith('tt'): return []
+    try:
+        r = _session(urllib.parse.urlsplit(url).netloc).get(url,
+            params={'t': 'search', 'imdbid': imdb, 'apikey': key, 'extended': '1'},
+            timeout=10)
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(r.content)
+        TZ = '{http://torznab.com/schemas/2015/feed}'
+        out = []
+        for it in root.iter('item'):
+            attrs = {a.get('name'): a.get('value') for a in it.iter(TZ + 'attr')}
+            link = it.findtext('link') or ''
+            magnet = link if link.startswith('magnet') else attrs.get('magneturl', '')
+            mh = re.search(r'btih:([0-9a-fA-F]{40}|[a-zA-Z2-7]{32})', magnet)
+            if not mh: continue
+            out.append({'name': 'Torznab', 'title': it.findtext('title') or 'torrent',
+                        'infoHash': mh.group(1),
+                        'behaviorHints': {'seeders': int(attrs.get('seeders') or 0),
+                                          'videoSize': float(attrs.get('size') or 0),
+                                          'bingeGroup': 'torznab'}})
+        _health('Torznab', True, '', len(out))
+        return out
+    except Exception:
+        _health('Torznab', False, 'error', 0)
+        return []
 
 def _ensure_collect(key):
     with _slock:
@@ -554,6 +627,39 @@ def _db_avail(hashes):
                     headers={'Authorization': f'Bearer {k}'}, timeout=6)
                 ok = set((r.json().get('data') or {}).keys())
                 for h in miss[:40]: _DB_OK[h] = h.lower() in ok
+            elif p == 'alldebrid':
+                r = _session('api.alldebrid.com').post(
+                    'https://api.alldebrid.com/v4/magnet/instant',
+                    params={'agent': 'conflux', 'apikey': k},
+                    data=[('magnets[]', f'magnet:?xt=urn:btih:{h}') for h in miss[:40]], timeout=6)
+                mags = {m.get('magnet', '').split(':')[-1].lower(): m.get('instant')
+                        for m in ((r.json().get('data') or {}).get('magnets') or [])}
+                for h in miss[:40]: _DB_OK[h] = bool(mags.get(h.lower()))
+            elif p == 'premiumize':
+                r = _session('www.premiumize.me').post(
+                    f'https://www.premiumize.me/api/cache/check?apikey={k}',
+                    data=[('items[]', f'magnet:?xt=urn:btih:{h}') for h in miss[:40]], timeout=6)
+                flags = r.json().get('response') or []
+                for h, ok in zip(miss[:40], flags): _DB_OK[h] = bool(ok)
+            elif p == 'easydebrid':
+                r = _session('easydebrid.com').post(
+                    'https://easydebrid.com/api/v1/link/lookup',
+                    json={'urls': [f'magnet:?xt=urn:btih:{h}' for h in miss[:40]]},
+                    headers={'Authorization': f'Bearer {k}'}, timeout=6)
+                res = r.json()
+                lst = res if isinstance(res, list) else (res.get('data') or res.get('results') or [])
+                hit = {str(x.get('url','')).split(':')[-1].lower(): x.get('cached', True)
+                       for x in lst if isinstance(x, dict)}
+                for h in miss[:40]: _DB_OK[h] = bool(hit.get(h.lower(), h.lower() in hit))
+            elif p == 'debrid-link':
+                ok_ = set()
+                for h in miss[:20]:                            # API: una petición por magnet
+                    r = _session('debrid-link.com').get(
+                        'https://debrid-link.com/api/v2/seedbox/cached',
+                        params={'url': f'magnet:?xt=urn:btih:{h}'},
+                        headers={'Authorization': f'Bearer {k}'}, timeout=6)
+                    if (r.json().get('value')): ok_.add(h)
+                for h in miss[:20]: _DB_OK[h] = h in ok_
         except Exception:
             pass
     return {h for h in hashes if _DB_OK.get(h)}
@@ -604,6 +710,54 @@ def _db_resolve(p, h, fi):
                         params={'token': k, 'torrent_id': tid, 'file_id': fi},
                         headers=h_, timeout=10).json()
             return (lnk.get('data') or {}).get('link') or (lnk.get('data'))
+        elif p == 'alldebrid':
+            s = _session('api.alldebrid.com')
+            q = {'agent': 'conflux', 'apikey': k}
+            up = s.post('https://api.alldebrid.com/v4/magnet/upload',
+                        params=q, data={'magnets[]': f'magnet:?xt=urn:btih:{h}'}, timeout=10).json()
+            mid = ((up.get('data') or {}).get('magnets') or [{}])[0].get('id')
+            st = s.get('https://api.alldebrid.com/v4/magnet/status',
+                       params={**q, 'id': mid}, timeout=10).json()
+            m = (st.get('data') or {}).get('magnets') or {}
+            fs = [f for f in m.get('links', []) if str(f.get('filename', '')).lower().endswith(
+                ('.mp4', '.mkv', '.avi', '.m4v', '.webm'))]
+            fsel = fs[int(fi)] if int(fi) < len(fs) else (fs[0] if fs else None)
+            if not fsel: return None
+            d = s.get('https://api.alldebrid.com/v4/link/unlock',
+                      params={**q, 'link': fsel['link']}, timeout=10).json()
+            return ((d.get('data') or {}).get('link'))
+        elif p == 'premiumize':
+            s = _session('www.premiumize.me')
+            d = s.post(f'https://www.premiumize.me/api/transfer/directdl?apikey={k}',
+                       data={'src': f'magnet:?xt=urn:btih:{h}'}, timeout=15).json()
+            fs = [f for f in (d.get('content') or []) if str(f.get('path', '')).lower().endswith(
+                ('.mp4', '.mkv', '.avi', '.m4v', '.webm'))]
+            if not fs: return None
+            fsel = fs[int(fi)] if int(fi) < len(fs) else max(fs, key=lambda f: f.get('size', 0))
+            return fsel.get('link')
+        elif p == 'easydebrid':
+            s = _session('easydebrid.com'); h_ = {'Authorization': f'Bearer {k}'}
+            d = s.post('https://easydebrid.com/api/v1/link/generate',
+                       json={'url': f'magnet:?xt=urn:btih:{h}'}, headers=h_, timeout=10).json()
+            files = [f for f in (d.get('files') or d.get('data') or [])
+                     if isinstance(f, dict) and str(f.get('name', '')).lower().endswith(
+                         ('.mp4', '.mkv', '.avi', '.m4v', '.webm'))]
+            if files:
+                fsel = files[int(fi)] if int(fi) < len(files) else files[0]
+                return fsel.get('url') or fsel.get('link')
+            return d.get('url') or d.get('link')
+        elif p == 'debrid-link':
+            s = _session('debrid-link.com'); h_ = {'Authorization': f'Bearer {k}'}
+            add = s.post('https://debrid-link.com/api/v2/seedbox/add',
+                         json={'url': f'magnet:?xt=urn:btih:{h}', 'async': True},
+                         headers=h_, timeout=10).json()
+            tid = (add.get('value') or {}).get('id')
+            fs = s.get(f'https://debrid-link.com/api/v2/seedbox/{tid}/files',
+                       headers=h_, timeout=10).json().get('value') or []
+            fs = [f for f in fs if str(f.get('name', '')).lower().endswith(
+                ('.mp4', '.mkv', '.avi', '.m4v', '.webm'))]
+            fsel = fs[int(fi)] if int(fi) < len(fs) else (fs[0] if fs else None)
+            return fsel.get('downloadUrl') if fsel else None
     except Exception:
         return None
 
@@ -642,6 +796,14 @@ def _noemoji(s):
     s2 = re.sub(r'\s{2,}', ' ', s2).strip(' ··-—|:')
     return s2 or s.strip()
 
+def _eff_rank(n):
+    """Orden de catálogos en Discover: config.source_order manda (los listados
+    primero, en orden); el resto por _RANK base."""
+    order = _cfgget('source_order') or []
+    if n in order:
+        return min(_RANK.values()) - len(order) + order.index(n)
+    return _RANK.get(n, 99)
+
 _RANK = {n: i for i, n in enumerate((          # orden agradable en el selector de Discover
     'Cinemeta', 'NoTorrent', 'TMDB', 'IMDBCat', 'RTomatoes', 'AniSeason', 'TorrentCat',
     'OnePace', 'StravoII', 'Stravo', 'Fenix', 'PublicDom',
@@ -664,7 +826,7 @@ def build_manifest():
     cats = []
     seen = set()
     for i, m in enumerate(manifests):
-        if not m or SOURCES[i].name in _NO_CATALOG or SOURCES[i].name in _DISABLED: continue
+        if not m or SOURCES[i].name in _NO_CATALOG or SOURCES[i].name in _eff_disabled(): continue
         keep = _CAT_KEEP.get(SOURCES[i].name)
         for c in m.get('catalogs', []):
             if keep and not keep.search(c['id']): continue
@@ -685,7 +847,7 @@ def build_manifest():
             _UTYPE[cid] = c['type']                            # tipo real upstream
             if c['type'] in ('movie', 'series') and _ANIME_CAT.search(f"{c.get('name', '')} {c['id']}"):
                 nc['type'] = 'anime'                           # contenido anime -> Discover anime
-            cats.append((_RANK.get(SOURCES[i].name, 99), nc))
+            cats.append((_eff_rank(SOURCES[i].name), nc))
     # fuentes con muchos catálogos de un tipo -> un catálogo con 2º selector (genre)
     import collections
     bytype = collections.defaultdict(list)
@@ -730,7 +892,7 @@ def build_manifest():
     # catálogo sintético: 'Estrenos' = cinemeta year+genre=año actual (incluye no estrenados aún)
     ecid = 'scinemeta_movie_estrenos'
     _SYNTH[ecid] = ('movie', 'year', f'genre={_YEARS[0]}')
-    cats.append((_RANK['Cinemeta'], {'id': ecid, 'type': 'movie',
+    cats.append((_eff_rank('Cinemeta'), {'id': ecid, 'type': 'movie',
                  'name': 'Cinemeta · Estrenos',
                  'extra': [{'name': 'genre', 'isRequired': False, 'options': _YEARS}]}))
     # estrenos de cine EN EL CALENDARIO: metasDetailed con vídeo sintético = fecha
@@ -738,30 +900,39 @@ def build_manifest():
     # catálogos series — los metas siguen type=movie y la ficha abre bien.
     ccid = 'scinemeta_series_estrenoscal'
     _SYNTH[ccid] = ('movie', '_estrenos_cal', None)
-    cats.append((_RANK['Cinemeta'], {'id': ccid, 'type': 'series',
+    cats.append((_eff_rank('Cinemeta'), {'id': ccid, 'type': 'series',
                  'name': 'Cinemeta · Próximos estrenos',
                  'extra': [{'name': 'calendarVideosIds', 'isRequired': True}]}))
     # búsqueda global: un catálogo por tipo que hace fan-out a todas las fuentes
     for t in ('movie', 'series', 'anime'):
         gid = f'suniform_{t}_search'
         _SYNTH[gid] = (t, '_busqueda', None)
-        cats.append((_RANK.get('Cinemeta', 0), {'id': gid, 'type': t,
+        cats.append((_eff_rank('Cinemeta'), {'id': gid, 'type': t,
                      'name': 'Buscar todo',
                      'extra': [{'name': 'search', 'isRequired': True}]}))
+    # listas externas como catálogos (4.4): config.catalog_lists
+    for i, url in enumerate(_list_defs()):
+        lname, items = _list_fetch(url)
+        for t in sorted({t for t, _ in items}):
+            rid = f'slist{i}_{t}'
+            _SYNTH[rid] = (t, '_list', url)
+            cats.append((_eff_rank('Cinemeta') + 1, {'id': rid, 'type': t,
+                         'name': f'☰ {lname}'}))
     # 'Porque viste X' — solo con cuenta Trakt conectada (/auth/trakt)
     if CFG.get('trakt_access_token'):
         for t in ('movie', 'series'):
             rid = f'suniform_{t}_recom'
             _SYNTH[rid] = (t, '_recom', None)
-            cats.append((_RANK.get('Cinemeta', 0), {'id': rid, 'type': t,
+            cats.append((_eff_rank('Cinemeta'), {'id': rid, 'type': t,
                          'name': 'Recomendados · tu Trakt'}))
     # canales M3U propios (config.m3u_path)
     if CFG.get('m3u_path') and os.path.exists(CFG['m3u_path']):
         mid = 'sm3u_tv_channels'
         _SYNTH[mid] = ('tv', '_m3u', None)
-        cats.append((_RANK.get('IPTV', 0), {'id': mid, 'type': 'tv',
+        cats.append((_eff_rank('IPTV'), {'id': mid, 'type': 'tv',
                      'name': 'Mis canales'}))
-    cats = [nc for _, nc in sorted(cats, key=lambda t: t[0])]
+    _catoff = set(_cfgget('catalogs_disabled') or [])
+    cats = [nc for _, nc in sorted(cats, key=lambda t: t[0]) if nc['id'] not in _catoff]
     counts = collections.Counter((c['name'], c['type']) for c in cats)  # dup solo choca en el mismo tipo
     taken = {}
     for nc in cats:
@@ -775,7 +946,8 @@ def build_manifest():
         'id': 'local.uniform.streams', 'version': '1.0.0',
         'name': 'Streams Unificados',
         'description': 'Streams de todos los addons con formato uniforme + catálogos fusionados',
-        'resources': ['catalog', 'meta', 'stream'],
+        'resources': (['catalog', 'meta', 'stream']
+                      + (['subtitles'] if _cfgget('opensubtitles_key') else [])),
         'types': ['movie', 'series', 'anime', 'channel', 'tv'],
         'catalogs': cats,
         'idPrefixes': ['tt', 'kitsu', 'mal', 'anilist', 'anidb', 'tmdb', 'tvdb', 'ia', 'tpb', 'pluto', 'pd', 'yt', 'yt_id', 'iptv', 'local', 'mx', '_onepace', 'm3u'],
@@ -1079,6 +1251,71 @@ def _recom(utype):
         if len(out) >= 40: break
     return {'metas': out}
 
+_LLIST = {}
+def _list_defs():
+    """config.catalog_lists: URLs (Trakt/IMDb/MDBList) separadas por coma."""
+    return [x.strip() for x in (CFG.get('catalog_lists') or '').split(',') if x.strip()]
+
+def _list_fetch(url):
+    """Lista externa -> (nombre, [(type, tt_id)])  — cacheada en _cat_c."""
+    hit = _cget(_cat_c, ('list', url))
+    if hit is not None: return hit
+    name, items = 'Lista', []
+    try:
+        if 'trakt.tv' in url:
+            m = re.search(r'trakt\.tv/users/([^/]+)/lists/([^/?]+)', url)
+            if not m: raise ValueError('url trakt no reconocida')
+            s = _session('api.trakt.tv')
+            meta = s.get(f'https://api.trakt.tv/users/{m[1]}/lists/{m[2]}',
+                         headers=_trakt_h(), timeout=8).json()
+            name = meta.get('name') or 'Lista Trakt'
+            rows = s.get(f'https://api.trakt.tv/users/{m[1]}/lists/{m[2]}/items?extended=full&limit=200',
+                         headers=_trakt_h(), timeout=10).json()
+            for e in rows:
+                it = e.get('movie') or e.get('show') or {}
+                ids = it.get('ids') or {}
+                if ids.get('imdb'):
+                    items.append(('movie' if e.get('movie') else 'series',
+                                  'tt' + str(ids['imdb']).lstrip('t')))
+        elif 'imdb.com' in url:
+            m = re.search(r'/list/(ls\d+)', url)
+            if not m: raise ValueError('url imdb no reconocida')
+            r = _session('www.imdb.com').get(f'https://www.imdb.com/list/{m[1]}/export', timeout=10)
+            name = f'IMDb · {m[1]}'
+            for row in r.text.splitlines()[1:201]:
+                cols = row.split(',')
+                if len(cols) > 9 and cols[1].startswith('tt'):
+                    items.append(('series' if 'series' in cols[9].lower() else 'movie', cols[1]))
+        else:
+            m = re.search(r'mdblist\.com/lists/(\d+)|^mdblist:(\d+)$', url)
+            lid = (m.group(1) or m.group(2)) if m else None
+            key = CFG.get('mdblist_key', '')
+            if not lid or not key: raise ValueError('mdblist sin id o key')
+            r = _session('api.mdblist.com').get(
+                f'https://api.mdblist.com/lists/{lid}/items?apikey={key}&limit=200', timeout=10)
+            d = r.json()
+            name = d.get('name') or f'MDBList {lid}'
+            for it in d.get('items') or []:
+                if it.get('imdb_id'):
+                    items.append(('series' if it.get('mediatype') == 'show' else 'movie',
+                                  'tt' + str(it['imdb_id']).lstrip('t')))
+    except Exception:
+        pass
+    res = (name, items)
+    _cset(_cat_c, ('list', url), res)
+    return res
+
+def _list_metas(url, utype):
+    """Items de lista -> metas (resueltos via Cinemeta por tt)."""
+    _, items = _list_fetch(url)
+    ids = [i for t, i in items if t == utype]
+    cine = next(b for n, b in SOURCES if n == 'Cinemeta')
+    out = []
+    for f in _POOL_BG.map(lambda i: fetch(f"{cine}/meta/{utype}/{i}.json", 8), ids):
+        m = (f or {}).get('meta')
+        if m: out.append(m)
+    return {'metas': out}
+
 def _busqueda(utype, extra):
     """Búsqueda global: fan-out a TODOS los catálogos del tipo que soportan
     'search' upstream y dedup por id canónico (imdb si resoluble)."""
@@ -1088,7 +1325,7 @@ def _busqueda(utype, extra):
     t = 'anime' if utype == 'anime' else utype
     targets = []                                   # (base, utype_up, catid)
     for i, m in enumerate(manifests):
-        if not m or SOURCES[i].name in _DISABLED: continue
+        if not m or SOURCES[i].name in _eff_disabled(): continue
         for c in m.get('catalogs') or []:
             ct = _UTYPE.get(f"s{SOURCES[i].name.lower()}_{c['type']}_{c['id']}", c['type'])
             if ct != t and c['type'] != t: continue
@@ -1283,6 +1520,8 @@ def handle_catalog(stype, cid, extra):
                 if hit2 is None:
                     hit2 = _recom(utype); _cset(_cat_c, ('recom', utype), hit2)
                 return hit2
+            if real == '_list':
+                return _list_metas(defx, utype)               # defx = url de la lista
             if real == '_m3u':
                 return {'metas': _m3u_metas()}
             if real == '_estrenos_cal':
@@ -1366,15 +1605,26 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
     def do_GET(self):
         p = urllib.parse.unquote(self.path.split('?', 1)[0])           # sin query string
+        pm = re.match(r'^/p/([a-zA-Z0-9_-]{1,24})(/.*)$', p)           # perfil: /p/<nombre>/…
+        if pm:
+            _PROF.name, _PROF.cfg = pm.group(1), _profile_load(pm.group(1))
+            p = pm.group(2)
+        else:
+            _PROF.name, _PROF.cfg = None, None
         if p == '/manifest.json':
             threading.Thread(target=_prefetch_catalogs, daemon=True).start()   # Discover pega caché
-            return self.reply(build_manifest())
+            mf = build_manifest()
+            if _PROF.name:                                             # identidad por perfil
+                mf = dict(mf, id=f"local.uniform.streams.{_PROF.name}",
+                          name=f"Streams Unificados · {_PROF.name}")
+            return self.reply(mf)
         if p == '/health':
             now = time.time()
             return self.reply({'sources': {n: dict(h, cd_min=round((COOLDOWN[n][0]-now)/60), cd_motivo=COOLDOWN[n][1])
                                if n in COOLDOWN and COOLDOWN[n][0] > now else dict(h)
                                for n, h in HEALTH.items()},
                                'fetch_fails': _fails,
+                               'streams_served': _SERVED,
                                'latency_ms': {k: {'n': n, 'avg': round(t/n, 1), 'max': round(x, 1),
                                                   'p50': _pct(list(_rts.get(k, ())), .5),
                                                   'p95': _pct(list(_rts.get(k, ())), .95),
@@ -1394,6 +1644,12 @@ class H(BaseHTTPRequestHandler):
             _, _, pvd, h = p.split('/')
             fi = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('fi', ['0'])[0]
             u = _db_resolve(pvd, h, fi)
+            self.send_response(302 if u else 404)
+            if u: self.send_header('Location', u)
+            self.send_header('Content-Length', '0'); self.end_headers()
+            return
+        if p.startswith('/s/'):                                        # subtitle redirect
+            u = _sub_download(p.rsplit('/', 1)[-1])
             self.send_response(302 if u else 404)
             if u: self.send_header('Location', u)
             self.send_header('Content-Length', '0'); self.end_headers()
@@ -1437,6 +1693,12 @@ class H(BaseHTTPRequestHandler):
             cfg['m3u_path'] = form.get('m3u_path', [''])[0].strip()
             cfg['horizon_days'] = int(form.get('horizon_days', [CFG['horizon_days']])[0] or CFG['horizon_days'])
             cfg['stream_langs'] = [s.strip() for s in form.get('stream_langs', [''])[0].split(',') if s.strip()] or CFG['stream_langs']
+            for k in ('torznab_url', 'catalog_lists', 'opensubtitles_key'):
+                cfg[k] = form.get(k, [''])[0].strip()
+            for k in ('torznab_key', 'mdblist_key'):
+                if form.get(k, [''])[0].strip(): cfg[k] = form[k][0].strip()
+            cfg['source_order'] = [s.strip() for s in form.get('source_order', [''])[0].split(',') if s.strip()]
+            cfg['catalogs_disabled'] = [s.strip() for s in form.get('catalogs_disabled', [''])[0].split(',') if s.strip()]
             enabled = set(form.get('src', []))
             cfg['sources_disabled'] = [s.name for s in SOURCES if s.name not in enabled]
             CFG.clear(); CFG.update(cfg); _save_cfg()
@@ -1460,7 +1722,10 @@ def _admin_page():
     for n, h in HEALTH.items():
         cd = COOLDOWN.get(n, (0, ''))
         cdtxt = f'{max(0,(cd[0]-now))/60:.0f} min · {cd[1]}' if cd[0] > now else '—'
+        sv = _SERVED.get(n, {'n': 0, 'res': {}})
+        res_txt = ' '.join(f"{r}:{c}" for r, c in sorted(sv['res'].items(), key=lambda kv: -kv[1])[:4])
         rows.append(f"<tr><td>{n}</td><td class='ok'>{h.get('ok',0)}</td><td class='bad'>{h.get('fail',0)}</td>"
+                    f"<td>{sv['n']}</td><td class='dim'>{res_txt}</td>"
                     f"<td>{h.get('ultimo','—')}</td><td>{cdtxt}</td></tr>")
     lat = ''.join(f"<tr><td>{k}</td><td>{n2}</td><td>{t/n2:.0f}</td><td>{_pct(list(_rts.get(k,())),.5):.0f}</td>"
                   f"<td>{_pct(list(_rts.get(k,())),.95):.0f}</td><td>{_pct(list(_rts.get(k,())),.99):.0f}</td><td>{x:.0f}</td></tr>"
@@ -1470,7 +1735,7 @@ def _admin_page():
             f"<p class='dim'>sources {sum(1 for m in manifests if m)}/{len(manifests)} up · "
             f"cache streams {len(_cache)} · meta {len(_meta_c)} · cat {len(_cat_c)} · "
             f"<a class='btn' href='/configure'>configure</a></p>"
-            f"<h2>Fuentes</h2><table><tr><th>fuente</th><th>ok</th><th>fail</th><th>último</th><th>circuito</th></tr>{''.join(rows)}</table>"
+            f"<h2>Fuentes</h2><table><tr><th>fuente</th><th>ok</th><th>fail</th><th>streams</th><th>por calidad</th><th>último</th><th>circuito</th></tr>{''.join(rows)}</table>"
             f"<h2>Latencia por ruta (ms)</h2><table><tr><th>ruta</th><th>n</th><th>avg</th><th>p50</th><th>p95</th><th>p99</th><th>max</th></tr>{lat}</table>"
             f"<h2>Fails por host</h2><p class='dim'>{' · '.join(f'{k}: {v}' for k, v in _fails.items()) or '—'}</p></body></html>")
 
@@ -1481,7 +1746,8 @@ def _configure_page():
         for s in SOURCES)
     langs = ','.join(CFG.get('stream_langs') or [])
     opts = ''.join(f"<option value='{v}'{' selected' if CFG.get('debrid_provider')==v else ''}>{v or '— ninguno —'}</option>"
-                   for v in ('', 'real-debrid', 'torbox'))
+                   for v in ('', 'real-debrid', 'torbox', 'alldebrid', 'premiumize',
+                             'easydebrid', 'debrid-link'))
     return (f"<html><head><title>configure</title>{_PAGE_CSS}</head><body>"
             f"<h1>Streams Unificados · configuración</h1>"
             f"<p class='dim'>Guarda en config.json. Tras guardar, POST /reload aplica en caliente.</p>"
@@ -1497,9 +1763,23 @@ def _configure_page():
             f"<input name='debrid_key' value='' placeholder='API key (no se muestra la guardada)'></p>"
             f"<p>M3U propio <span class='dim'>(ruta local, catálogo tv 'Mis canales')</span><br>"
             f"<input name='m3u_path' value='{CFG.get('m3u_path','')}' placeholder='/home/…/canales.m3u'></p>"
+            f"<p>Torznab <span class='dim'>(Prowlarr/Jackett local — fuente extra de streams)</span><br>"
+            f"<input name='torznab_url' value='{CFG.get('torznab_url','')}' placeholder='http://localhost:9696/api/v1.0/indexers/all/results/torznab'>"
+            f"<input name='torznab_key' value='' placeholder='apikey (no se muestra)'></p>"
+            f"<p>OpenSubtitles <span class='dim'>(endpoint /subtitles ES-first)</span><br>"
+            f"<input name='opensubtitles_key' value='' placeholder='api key — vacío = off'></p>"
             f"<p>Horizonte calendario (días) <input name='horizon_days' value='{CFG.get('horizon_days',45)}' style='width:80px'>"
             f" · idiomas streams <input name='stream_langs' value='{langs}' style='width:200px'></p>"
-            f"<h2>Fuentes activas</h2>{src_chk}"
+            f"<h2>Catálogos</h2>"
+            f"<p>Listas externas <span class='dim'>(URLs Trakt /lists/, IMDb /list/ o mdblist:ID — separadas por coma)</span><br>"
+            f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://trakt.tv/users/me/lists/mis-favs, https://www.imdb.com/list/ls123456/'>"
+            f"<input name='mdblist_key' value='' placeholder='mdblist apikey (solo si usas MDBList)'></p>"
+            f"<p>Catálogos ocultos <span class='dim'>(ids separados por coma — visibles en /health &gt; manifest)</span><br>"
+            f"<input name='catalogs_disabled' value='{','.join(CFG.get('catalogs_disabled') or [])}' placeholder='sid_catalogo1, sid_catalogo2'></p>"
+            f"<h2>Fuentes activas</h2>"
+            f"<p class='dim'>Orden en Discover (nombres separados por coma, vacío = orden fijo):<br>"
+            f"<input name='source_order' value='{','.join(CFG.get('source_order') or [])}' placeholder='Cinemeta,TMDB,Kitsu'></p>"
+            f"{src_chk}"
             f"<p><button type='submit'>Guardar</button> <a class='btn' href='/admin'>dashboard</a></p>"
             f"</form></body></html>")
 
@@ -1549,7 +1829,49 @@ def _prefetch_catalogs():
     finally:
         _prefetching = False
 
+def handle_subtitles(stype, sid):
+    """OpenSubtitles REST (3.3): ES/LATAM primero, resto después.
+    sid = tt123[:season[:ep]]. Cada sub apunta a /s/<file_id> (redirect al CDN)."""
+    key = _cfgget('opensubtitles_key')
+    if not key: return {'subtitles': []}
+    parts = sid.split(':')
+    imdb = parts[0]
+    if not imdb.startswith('tt'): imdb = _resolve_sid(stype, sid).split(':')[0]
+    if not imdb.startswith('tt'): return {'subtitles': []}
+    q = {'imdb_id': imdb.lstrip('t'), 'languages': 'es,en'}
+    if stype == 'series' and len(parts) > 2:
+        q['season_number'], q['episode_number'] = parts[1], parts[2]
+    try:
+        r = _session('api.opensubtitles.com').get(
+            'https://api.opensubtitles.com/api/v1/subtitles',
+            params=q, headers={'Api-Key': key, 'User-Agent': 'conflux 1.0'}, timeout=8)
+        out = []
+        for d in r.json().get('data') or []:
+            a = d.get('attributes') or {}
+            fid = ((a.get('files') or [{}])[0]).get('file_id')
+            if not fid: continue
+            out.append({'id': str(fid), 'lang': a.get('language') or 'es',
+                        'url': f'http://127.0.0.1:{PORT}/s/{fid}'})
+        out.sort(key=lambda s: 0 if s['lang'].startswith('es') else 1)   # ES-first
+        return {'subtitles': out[:20]}
+    except Exception:
+        return {'subtitles': []}
+
+def _sub_download(file_id):
+    """file_id -> URL CDN (POST /download) para redirect 302."""
+    key = _cfgget('opensubtitles_key')
+    if not key: return None
+    try:
+        return (_session('api.opensubtitles.com').post(
+            'https://api.opensubtitles.com/api/v1/download', json={'file_id': int(file_id)},
+            headers={'Api-Key': key, 'User-Agent': 'conflux 1.0'}, timeout=8)
+            .json().get('link'))
+    except Exception:
+        return None
+
 ROUTES = [
+    (re.compile(r'^/subtitles/([^/]+)/(.+)\.json$'),
+     lambda m: handle_subtitles(m.group(1), m.group(2))),
     (re.compile(r'^/stream/([^/]+)/(.+)\.json$'),
      lambda m: handle_stream(m.group(1), m.group(2))),
     (re.compile(r'^/catalog/([^/]+)/([^/]+)/(.+)\.json$'),

@@ -1,0 +1,9 @@
+services:
+  conflux:
+    build: .
+    ports:
+      - "9700:9700"
+    volumes:
+      - ./config.json:/app/config.json:ro        # opcional: quita si no existe
+      - ./sources.json:/app/sources.json:ro      # opcional
+    restart: unless-stopped

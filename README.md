@@ -42,12 +42,29 @@ En Stremio: añade el addon `http://127.0.0.1:9700/manifest.json`.
 - **Trakt personal** — `/auth/trakt` (device flow, una autorización) → mi
   calendario (episodios de series seguidas + watchlist) y catálogos
   «Recomendados · tu Trakt» (history → related). Token auto-renovado.
-- **Debrid** — con `debrid_key`: marca ⚡ los hashes cacheados (instantAvailability)
-  y los sirve vía redirect `/r/<provider>/<hash>` → URL HTTP.
+- **Debrid** — 6 providers (RD, TorBox, AllDebrid, Premiumize, EasyDebrid,
+  Debrid-Link): marca ⚡ los cacheados (instantAvailability) y los sirve vía
+  redirect `/r/<provider>/<hash>` → URL HTTP.
+- **Torznab** — `torznab_url`+`torznab_key`: Prowlarr/Jackett local como fuente
+  extra de streams.
+- **Listas externas** — `catalog_lists`: URLs de listas Trakt, IMDb (`/list/ls*`)
+  o `mdblist:ID` (con `mdblist_key`) aparecen como catálogos.
+- **Perfiles** — `/p/<nombre>/manifest.json` usa `config.<nombre>.json`
+  (fuentes/idiomas propios); cada perfil es un addon instalable.
+- **Subtítulos** — con `opensubtitles_key`: recurso `subtitles` ES-first,
+  redirect `/s/<file_id>` al CDN.
 - **M3U propio** — `m3u_path` → catálogo tv «Mis canales» + streams directos.
-- **Streams ES** — badge `ES` y boost de orden para latino/castellano/VOSE.
+- **Streams ES** — badge `ES` y boost de orden para `stream_langs` (configurable).
 - **Salud de streams** — HEAD async a URLs http: las confirmadas caídas
   (4xx o 2 timeouts) salen de la lista 30min.
+
+## Otros despliegues
+
+```bash
+docker compose up -d         # Dockerfile mínimo, puerto 9700
+```
+
+Rutas documentadas en `openapi.yaml`.
 
 ## Test
 
