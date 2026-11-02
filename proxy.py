@@ -13,9 +13,28 @@ from conflux.state import CFG, SOURCES, manifests
 from conflux.stream import handle_stream
 from conflux.text import RANK, _id_prefix, _spam, norm_stream, parse_seeds
 
-__all__ = ['CFG', 'H', 'RANK', 'SOURCES', '_UTYPE', '_db_resolve', '_id_prefix', '_idmap',
-           '_resolve_sid', '_spam', 'build_manifest', 'fetch', 'handle_stream', 'main',
-           'manifests', 'norm_stream', 'parse_seeds', 'refresh_manifests', 'res_of', 'res_types']
+__all__ = [
+    'CFG',
+    'RANK',
+    'SOURCES',
+    '_UTYPE',
+    'H',
+    '_db_resolve',
+    '_id_prefix',
+    '_idmap',
+    '_resolve_sid',
+    '_spam',
+    'build_manifest',
+    'fetch',
+    'handle_stream',
+    'main',
+    'manifests',
+    'norm_stream',
+    'parse_seeds',
+    'refresh_manifests',
+    'res_of',
+    'res_types',
+]
 
 
 if __name__ == '__main__':

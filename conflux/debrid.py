@@ -106,13 +106,18 @@ def _debrid_mark(streams):
         return
     ok = _db_avail(hashes)
     for s in streams:
-        h = s.get('infoHash')
-        if h and h in ok:
-            s['cached'] = True
-            s['name'] = '⚡ ' + (s.get('name') or '')
-            s['url'] = f'http://127.0.0.1:{PORT}/r/{p}/{h}?fi={s.get("fileIdx", 0)}'
-            s.pop('infoHash', None)
-            s.pop('sources', None)
+        if s.get('infoHash') in ok:
+            _db_mark_one(p, s)
+
+
+def _db_mark_one(p, s):
+    """Stream cacheado -> rayo + url /r/ (infoHash y sources ya no hacen falta)."""
+    h = s['infoHash']
+    s['cached'] = True
+    s['name'] = '⚡ ' + (s.get('name') or '')
+    s['url'] = f'http://127.0.0.1:{PORT}/r/{p}/{h}?fi={s.get("fileIdx", 0)}'
+    s.pop('infoHash', None)
+    s.pop('sources', None)
 
 
 _VIDEO_EXT = ('.mp4', '.mkv', '.avi', '.m4v', '.webm')
@@ -163,13 +168,17 @@ def _db_ad(k, h, fi):
     st = s.get('https://api.alldebrid.com/v4/magnet/status',
                params={**q, 'id': mid}, timeout=10).json()
     m = (st.get('data') or {}).get('magnets') or {}
-    fs = [f for f in m.get('links', []) if str(f.get('filename', '')).lower().endswith(_VIDEO_EXT)]
-    fsel = _pick_file(fs, fi, fs[0] if fs else None)
+    fsel = _pick_file(_video_links(m.get('links', [])), fi)
     if not fsel:
         return None
     d = s.get('https://api.alldebrid.com/v4/link/unlock',
               params={**q, 'link': fsel['link']}, timeout=10).json()
     return ((d.get('data') or {}).get('link'))
+
+def _video_links(links, name_key='filename'):
+    """links/files debrid -> solo los de vídeo (o entries no-dict fuera)."""
+    return [f for f in links if isinstance(f, dict)
+            and str(f.get(name_key) or f.get('name') or '').lower().endswith(_VIDEO_EXT)]
 
 
 def _db_pm(k, h, fi):
@@ -188,8 +197,7 @@ def _db_ed(k, h, fi):
     h_ = {'Authorization': f'Bearer {k}'}
     d = s.post('https://easydebrid.com/api/v1/link/generate',
                json={'url': f'magnet:?xt=urn:btih:{h}'}, headers=h_, timeout=10).json()
-    files = [f for f in (d.get('files') or d.get('data') or [])
-             if isinstance(f, dict) and str(f.get('name', '')).lower().endswith(_VIDEO_EXT)]
+    files = _video_links(d.get('files') or d.get('data') or [])
     if files:
         fsel = files[int(fi)] if int(fi) < len(files) else files[0]
         return fsel.get('url') or fsel.get('link')

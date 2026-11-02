@@ -23,18 +23,23 @@ def _torznab(stype, sid):
     if not url or not key or not imdb.startswith('tt') or _ET is None:
         return []
     try:
-        r = _session(urllib.parse.urlsplit(url).netloc).get(url,
-            params={'t': 'movie' if stype == 'movie' else 'tvsearch',
-                    'imdbid': imdb, 'apikey': key, 'extended': '1'},
-            timeout=10)
-        tz = '{http://torznab.com/schemas/2015/feed}'
-        out = [s for it in _ET.fromstring(r.content).iter('item')
-               if (s := _tz_item(it, attrs={a.get('name'): a.get('value') for a in it.iter(tz + 'attr')}))]
+        out = _tz_query(url, key, stype, imdb)
         _health('Torznab', True, '', len(out))
         return out
     except Exception:                                   # noqa: BLE001 — indexer local: nunca tumbar _collect
         _health('Torznab', False, 'error', 0)
         return []
+
+
+def _tz_query(url, key, stype, imdb):
+    """GET torznab -> streams parseados."""
+    r = _session(urllib.parse.urlsplit(url).netloc).get(url,
+        params={'t': 'movie' if stype == 'movie' else 'tvsearch',
+                'imdbid': imdb, 'apikey': key, 'extended': '1'},
+        timeout=10)
+    tz = '{http://torznab.com/schemas/2015/feed}'
+    return [s for it in _ET.fromstring(r.content).iter('item')
+            if (s := _tz_item(it, attrs={a.get('name'): a.get('value') for a in it.iter(tz + 'attr')}))]
 
 
 def _tz_item(it, attrs):

@@ -6,7 +6,7 @@ import urllib.request
 from concurrent.futures import TimeoutError as FutureTimeout
 from concurrent.futures import as_completed
 
-from .feeds import _fix_metas
+from .metafix import _fix_metas
 from .net import fetch
 from .sources import res_of, res_types
 from .state import _POOL, SOURCES, _cget, _cset, _cstale, _meta_c, manifests
@@ -22,6 +22,11 @@ def _meta_race(futs):
     except FutureTimeout:
         pass
     return None
+
+
+def _meta_try(stype):
+    """Tipos a probar: series cae a movie (estrenos del calendario llegan como series)."""
+    return {stype, 'movie'} if stype == 'series' else {stype}
 
 
 def _meta_one(i, want, mid):
@@ -47,7 +52,7 @@ def handle_meta(stype, mid):
     if stype == 'movie' and ':' not in mid:
         _ensure_collect(key)
     # estrenos del calendario llegan como 'series' aunque sean pelis: fallback
-    for want in ({stype, 'movie'} if stype == 'series' else {stype}):
+    for want in _meta_try(stype):
         futs = [_POOL.submit(_meta_one, i, want, mid) for i in range(len(SOURCES))]
         d = _meta_race(futs)
         if d is not None:

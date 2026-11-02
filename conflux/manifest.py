@@ -111,17 +111,20 @@ def _mf_one_cat(src, c, keep, seen):
     if cid in seen:
         return None                              # upstream repite el mismo catálogo
     seen.add(cid)
-    nc = dict(c)
-    nc['id'] = cid
-    nc['name'] = _cat_name(src.name, c)
+    _UTYPE[cid] = c['type']                            # tipo real upstream
     if req:
         _REQ.add(cid)                            # su selector nativo importa: no agrupar
+    return (_eff_rank(src.name), _mf_nc(src, c, cid))
+
+
+def _mf_nc(src, c, cid):
+    """Catálogo upstream -> nc del manifest (id renombrado, nombre, reclasif anime)."""
+    nc = dict(c, id=cid, name=_cat_name(src.name, c))
     if nc.get('extraRequired'):
         del nc['extraRequired']  # 'genre' opcional: grid sin obligar filtro
-    _UTYPE[cid] = c['type']                            # tipo real upstream
     if c['type'] in ('movie', 'series') and _ANIME_CAT.search(f"{c.get('name', '')} {c['id']}"):
         nc['type'] = 'anime'                           # contenido anime -> Discover anime
-    return (_eff_rank(src.name), nc)
+    return nc
 
 
 def _mf_collect_cats():
@@ -140,9 +143,14 @@ def _mf_year_opts(nc):
     """Si el único extra requerido es genre=año -> sus opciones; si no, None."""
     reqs = {e.get('name') for e in (nc.get('extra') or []) if e.get('isRequired')}
     yopts = next((e.get('options') for e in nc['extra'] if e.get('name') == 'genre'), None)
-    if reqs == {'genre'} and yopts and all(re.fullmatch(r'\d{4}', o) for o in yopts):
+    if reqs == {'genre'} and _year_opts(yopts):
         return yopts
     return None
+
+
+def _year_opts(yopts):
+    """Todas las opciones de genre son años de 4 dígitos."""
+    return bool(yopts) and all(re.fullmatch(r'\d{4}', o) for o in yopts)
 
 
 def _mf_year_fold(members):
@@ -207,28 +215,41 @@ def _mf_group(cats):
 def _mf_synth_cats(cats):
     """Catálogos sintéticos: estrenos, calendario-estrenos, búsqueda global,
     listas externas, 'porque viste' Trakt, canales M3U."""
-    # 'Estrenos' = cinemeta year+genre=año actual (incluye no estrenados aún)
+    _mf_cal_cats(cats)
+    _mf_search_cats(cats)
+    _mf_list_cats(cats)
+    _mf_recom_cats(cats)
+    _mf_m3u_cat(cats)
+
+
+def _mf_cal_cats(cats):
+    """'Estrenos' (cinemeta year+genre) + 'Próximos estrenos' en calendario.
+    Este último va declarado 'series' porque el calendario solo consulta
+    catálogos series — los metas siguen type=movie y la ficha abre bien."""
     ecid = 'scinemeta_movie_estrenos'
     _SYNTH[ecid] = ('movie', 'year', f'genre={_YEARS[0]}')
     cats.append((_eff_rank('Cinemeta'), {'id': ecid, 'type': 'movie',
                  'name': 'Cinemeta · Estrenos',
                  'extra': [{'name': 'genre', 'isRequired': False, 'options': _YEARS}]}))
-    # estrenos de cine EN EL CALENDARIO: metasDetailed con vídeo sintético = fecha
-    # de estreno. Declarado como 'series' porque el calendario solo consulta
-    # catálogos series — los metas siguen type=movie y la ficha abre bien.
     ccid = 'scinemeta_series_estrenoscal'
     _SYNTH[ccid] = ('movie', '_estrenos_cal', None)
     cats.append((_eff_rank('Cinemeta'), {'id': ccid, 'type': 'series',
                  'name': 'Cinemeta · Próximos estrenos',
                  'extra': [{'name': 'calendarVideosIds', 'isRequired': True}]}))
-    # búsqueda global: un catálogo por tipo que hace fan-out a todas las fuentes
+
+
+def _mf_search_cats(cats):
+    """Búsqueda global: un catálogo por tipo que hace fan-out a todas las fuentes."""
     for t in ('movie', 'series', 'anime'):
         gid = f'suniform_{t}_search'
         _SYNTH[gid] = (t, '_busqueda', None)
         cats.append((_eff_rank('Cinemeta'), {'id': gid, 'type': t,
                      'name': 'Buscar todo',
                      'extra': [{'name': 'search', 'isRequired': True}]}))
-    # listas externas como catálogos (4.4): config.catalog_lists
+
+
+def _mf_list_cats(cats):
+    """Listas externas como catálogos (config.catalog_lists)."""
     for i, url in enumerate(_list_defs()):
         lname, items = _list_fetch(url)
         for t in sorted({t for t, _ in items}):
@@ -236,14 +257,21 @@ def _mf_synth_cats(cats):
             _SYNTH[rid] = (t, '_list', url)
             cats.append((_eff_rank('Cinemeta') + 1, {'id': rid, 'type': t,
                          'name': f'☰ {lname}'}))
-    # 'Porque viste X' — solo con cuenta Trakt conectada (/auth/trakt)
-    if CFG.get('trakt_access_token'):
-        for t in ('movie', 'series'):
-            rid = f'suniform_{t}_recom'
-            _SYNTH[rid] = (t, '_recom', None)
-            cats.append((_eff_rank('Cinemeta'), {'id': rid, 'type': t,
-                         'name': 'Recomendados · tu Trakt'}))
-    # canales M3U propios (config.m3u_path)
+
+
+def _mf_recom_cats(cats):
+    """'Porque viste X' — solo con cuenta Trakt conectada (/auth/trakt)."""
+    if not CFG.get('trakt_access_token'):
+        return
+    for t in ('movie', 'series'):
+        rid = f'suniform_{t}_recom'
+        _SYNTH[rid] = (t, '_recom', None)
+        cats.append((_eff_rank('Cinemeta'), {'id': rid, 'type': t,
+                     'name': 'Recomendados · tu Trakt'}))
+
+
+def _mf_m3u_cat(cats):
+    """Canal M3U propio (config.m3u_path)."""
     if CFG.get('m3u_path') and os.path.exists(CFG['m3u_path']):
         mid = 'sm3u_tv_channels'
         _SYNTH[mid] = ('tv', '_m3u', None)

@@ -6,12 +6,13 @@ import urllib.request
 
 from .calendar import _estrenos_cal
 from .cfg import _eff_disabled
-from .feeds import _fix_metas, _recom
 from .lists import _list_metas, _m3u_metas
 from .manifest import _GRP, _LEGACY, _SYNTH, _UTYPE, _YR_OPTS
+from .metafix import _fix_metas
 from .net import fetch
 from .sources import _resolve_sid
 from .state import _POOL, _POOL_BG, SOURCES, _cat_c, _cget, _cset, _cstale, manifests
+from .trakt import _recom
 
 
 def _cat_searchable(src, c, t):
@@ -45,12 +46,17 @@ def _busqueda(utype, extra):
     seen, out = set(), []
     e = urllib.parse.urlencode({'search': q})
     for d in _POOL_BG.map(lambda x: fetch(f"{x[0]}/catalog/{x[1]}/{x[2]}/{e}.json", 8), targets):
-        for m in (d or {}).get('metas') or []:
-            if not m or m.get('id') in seen:
-                continue
-            seen.add(m['id'])
-            out.append(m)
+        _search_merge(d, seen, out)
     return {'metas': out}
+
+
+def _search_merge(d, seen, out):
+    """Metas de una respuesta -> out, dedup por id."""
+    for m in (d or {}).get('metas') or []:
+        if not m or m.get('id') in seen:
+            continue
+        seen.add(m['id'])
+        out.append(m)
 
 
 def _cat_route(cid, stype):
@@ -81,26 +87,34 @@ def _cat_grp_extra(cid, extra):
     return utype, real, urllib.parse.urlencode(kv, safe=',')
 
 
+def _synth_recom(utype, extra, _defx, _key):
+    """recomendaciones trakt (cache en _cat_c: related es caro)."""
+    hit2 = _cget(_cat_c, ('recom', utype))
+    if hit2 is None:
+        hit2 = _recom(utype)
+        _cset(_cat_c, ('recom', utype), hit2)
+    return hit2, utype, extra
+
+def _synth_cal(utype, extra, _defx, key):
+    """estrenos del calendario (extra=ids pedidos; respuesta cacheada)."""
+    hit2 = _estrenos_cal(extra)
+    if hit2 is not None:
+        _cset(_cat_c, key, hit2)
+    return hit2 or {'metas': []}, utype, extra
+
+_SYNTH_H = {'_busqueda': lambda utype, extra, defx, key: (_busqueda(utype, extra), utype, extra),
+            '_recom': _synth_recom,
+            '_list': lambda utype, extra, defx, key: (_list_metas(defx, utype), utype, extra),
+            '_m3u': lambda utype, extra, defx, key: ({'metas': _m3u_metas()}, utype, extra),
+            '_estrenos_cal': _synth_cal}
+
 def _cat_synth(cid, utype, extra, key):
     """Sintéticos con handler propio -> respuesta; None si sigue el flujo normal."""
     utype, real, defx = _SYNTH[cid]
-    if real == '_busqueda':
-        return _busqueda(utype, extra), utype, real, extra
-    if real == '_recom':
-        hit2 = _cget(_cat_c, ('recom', utype))         # related es caro: cache normal
-        if hit2 is None:
-            hit2 = _recom(utype)
-            _cset(_cat_c, ('recom', utype), hit2)
-        return hit2, utype, real, extra
-    if real == '_list':
-        return _list_metas(defx, utype), utype, real, extra  # defx = url de la lista
-    if real == '_m3u':
-        return {'metas': _m3u_metas()}, utype, real, extra
-    if real == '_estrenos_cal':
-        hit2 = _estrenos_cal(extra)                   # extra=ids pedidos (test filtro)
-        if hit2 is not None:
-            _cset(_cat_c, key, hit2)
-        return hit2 or {'metas': []}, utype, real, extra
+    h = _SYNTH_H.get(real)
+    if h:
+        resp, utype2, extra2 = h(utype, extra, defx, key)
+        return resp, utype2, real, extra2
     return None, utype, real, extra if extra else defx
 
 
@@ -114,6 +128,21 @@ def _cat_xlate_ids(utype, extra):
     return urllib.parse.urlencode(kv, safe=',')   # comas literales: sin ellas upstream ve 1 id mutilado
 
 
+def _cat_resolve(cid, stype, extra, key):
+    """cid -> (base, utype, real, extra) aplicando agrupados/sintéticos/rewrite.
+    Devuelve dict-respuesta si un sintético respondió directo."""
+    base, utype, real = _cat_route(cid, stype)
+    if cid in _GRP:                                       # agrupado: genre -> catálogo upstream
+        utype, real, extra = _cat_grp_extra(cid, extra)
+    elif cid in _SYNTH:                                   # sintético: ruta upstream predefinida
+        resp, utype, real, extra = _cat_synth(cid, utype, extra, key)
+        if resp is not None:
+            return resp
+    if extra:                                            # ids no-tt -> tt p/ Cinemeta (calendario/biblioteca)
+        extra = _cat_xlate_ids(utype, extra)
+    return base, utype, real, extra
+
+
 def handle_catalog(stype, cid, extra):
     """GET /catalog — routing: sintéticos, listas externas, rewrite anime y upstream."""
     key = (stype, cid, extra)
@@ -121,17 +150,12 @@ def handle_catalog(stype, cid, extra):
     if hit is not None:
         return hit
     try:
-        base, utype, real = _cat_route(cid, stype)
-        if cid in _GRP:                                       # agrupado: genre -> catálogo upstream
-            utype, real, extra = _cat_grp_extra(cid, extra)
-        elif cid in _SYNTH:                                   # sintético: ruta upstream predefinida
-            resp, utype, real, extra = _cat_synth(cid, utype, extra, key)
-            if resp is not None:
-                return resp
-        if extra:                                            # ids no-tt -> tt p/ Cinemeta (calendario/biblioteca)
-            extra = _cat_xlate_ids(utype, extra)
+        resolved = _cat_resolve(cid, stype, extra, key)
     except (ValueError, StopIteration, IndexError):
         return {'metas': []}
+    if isinstance(resolved, dict):                            # sintético respondió directo
+        return resolved
+    base, utype, real, extra = resolved
     tail = f"/{urllib.parse.quote(extra, safe='=&,:')}" if extra else ''
     d = fetch(f"{base}/catalog/{utype}/{urllib.parse.quote(real, safe='')}{tail}.json", 7)
     if d:

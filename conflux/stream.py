@@ -77,11 +77,15 @@ def _collect_one(i, stype, sid):
         COOLDOWN[name] = (time.time() + COOLDOWN_T, 'cuota')       # disyuntor 12h
         _health(name, True, 'cuota agotada → espera 12h', 0)
         return i, [], 0
+    _collect_health(name, d, ss)
+    return i, ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+
+def _collect_health(name, d, ss):
+    """Health + cooldown por racha de fallos (o nada si responde bien)."""
     usable = sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
     _health(name, d is not None, '' if d is not None else 'timeout/error', usable)
     if d is None and HEALTH[name]['streak'] >= FAIL_STREAK:        # racha de fallos: descanso
         COOLDOWN[name] = (time.time() + FAIL_CD_T, 'fallos')
-    return i, ss, usable
 
 
 def _collect_fetch(i, stype, sid):

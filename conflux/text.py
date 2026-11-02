@@ -97,11 +97,22 @@ def _ef_audio(text):
 
 def _ef_dur(bh, text):
     durm = RE_DUR.search(text)
-    dur = f"{durm.group(1)}h{durm.group(2)}m" if durm and durm.group(1) else (f"{durm.group(3)}:{durm.group(4)}" if durm and durm.group(3) else (f"{durm.group(5)}m" if durm else ''))
+    dur = _ef_dur_txt(durm)
     if not dur and isinstance(bh.get('duration'), (int, float)) and bh['duration'] > 60:
         ds = int(bh['duration'])
         dur = f"{ds//3600}h{ds%3600//60}m"   # Meteor: duración real
     return dur
+
+
+def _ef_dur_txt(durm):
+    """RE_DUR match -> 'HhMMm' / 'H:MM' / 'MMm' segun la alternativa."""
+    if not durm:
+        return ''
+    if durm.group(1):
+        return f"{durm.group(1)}h{durm.group(2)}m"
+    if durm.group(3):
+        return f"{durm.group(3)}:{durm.group(4)}"
+    return f"{durm.group(5)}m"
 
 
 def _ef_res(text):
@@ -195,9 +206,11 @@ def _display_t2(f, short, idx):
 
 
 def _display_name(f):
-    name1 = '☁️ ' + ' · '.join(x for x in [f['disp'], f['hdr']] if x)
-    name2 = '🔊 ' + ' · '.join(x for x in [f['lang'], f['audio']] if x) if (f['lang'] or f['audio']) else ''
-    return '\n'.join(x for x in [name1, name2] if x)
+    l1 = ' · '.join(x for x in [f['lang'], f['audio']] if x)
+    rows = ['☁️ ' + ' · '.join(x for x in [f['disp'], f['hdr']] if x)]
+    if l1:
+        rows.append('🔊 ' + l1)
+    return '\n'.join(rows)
 
 
 def build_display(f, short):

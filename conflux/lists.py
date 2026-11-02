@@ -1,14 +1,15 @@
 """Catálogos externos (Trakt/IMDb/MDBList) y M3U local."""
 # pylint: disable=broad-exception-caught,line-too-long
+
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import re
 from contextlib import suppress
 
 import requests
 
-from .feeds import _trakt_h
 from .net import _session, fetch
-from .state import _POOL_BG, CFG, SOURCES, _cat_c, _cget, _cset, _open
+from .state import _POOL_BG, _YEARS, CFG, SOURCES, _cat_c, _cget, _cset, _open
+from .trakt import _trakt_h
 
 _LLIST = {}
 
@@ -26,9 +27,13 @@ def _list_trakt(url):
                  headers=_trakt_h(), timeout=8).json()
     rows = s.get(f'https://api.trakt.tv/users/{m[1]}/lists/{m[2]}/items?extended=full&limit=200',
                  headers=_trakt_h(), timeout=10).json()
-    items = [('movie' if e.get('movie') else 'series', 'tt' + str(ids['imdb']).lstrip('t'))
-             for e in rows if (ids := (e.get('movie') or e.get('show') or {}).get('ids') or {}).get('imdb')]
-    return meta.get('name') or 'Lista Trakt', items
+    return meta.get('name') or 'Lista Trakt', _trakt_items(rows)
+
+
+def _trakt_items(rows):
+    """items trakt -> [(type, tt_id)]."""
+    return [('movie' if e.get('movie') else 'series', 'tt' + str(ids['imdb']).lstrip('t'))
+            for e in rows if (ids := (e.get('movie') or e.get('show') or {}).get('ids') or {}).get('imdb')]
 
 
 def _list_imdb(url):
@@ -50,10 +55,14 @@ def _list_mdblist(url):
         raise ValueError('mdblist sin id o key')
     d = _session('api.mdblist.com').get(
         f'https://api.mdblist.com/lists/{lid}/items?apikey={key}&limit=200', timeout=10).json()
-    items = [('series' if it.get('mediatype') == 'show' else 'movie',
-              'tt' + str(it['imdb_id']).lstrip('t'))
-             for it in (d.get('items') or []) if it.get('imdb_id')]
-    return d.get('name') or f'MDBList {lid}', items
+    return d.get('name') or f'MDBList {lid}', _mdblist_items(d)
+
+
+def _mdblist_items(d):
+    """items mdblist -> [(type, tt_id)]."""
+    return [('series' if it.get('mediatype') == 'show' else 'movie',
+             'tt' + str(it['imdb_id']).lstrip('t'))
+            for it in (d.get('items') or []) if it.get('imdb_id')]
 
 
 def _list_fetch(url):
@@ -98,23 +107,30 @@ def _m3u_metas():
         return []
     metas = []
     _M3U.clear()
-    name = logo = group = ''
-    n = 0
+    cur = {'name': '', 'logo': '', 'group': ''}
     for raw in txt.splitlines():
         ln = raw.strip()
         if ln.startswith('#EXTINF'):
-            name = ln.rsplit(',', 1)[-1].strip() or 'Canal'
-            lm = re.search(r'tvg-logo="([^"]*)"', ln)
-            logo = lm.group(1) if lm else ''
-            gm = re.search(r'group-title="([^"]*)"', ln)
-            group = gm.group(1) if gm else ''
+            cur = _m3u_extinf(ln)
         elif ln and not ln.startswith('#'):
-            n += 1
-            cid = f'm3u:{n}'
+            cid = f'm3u:{len(metas) + 1}'
             _M3U[cid] = ln
-            metas.append({'id': cid, 'type': 'tv', 'name': name,
-                          'poster': logo or 'https://i.imgur.com/tTCuczU.png',
+            metas.append({'id': cid, 'type': 'tv', 'name': cur['name'],
+                          'poster': cur['logo'] or 'https://i.imgur.com/tTCuczU.png',
                           'posterShape': 'square',
-                          'description': group})
-            name = logo = group = ''
+                          'description': cur['group']})
+            cur = {'name': '', 'logo': '', 'group': ''}
     return metas
+
+def _m3u_extinf(ln):
+    """Línea #EXTINF -> {name, logo, group}."""
+    return {'name': ln.rsplit(',', 1)[-1].strip() or 'Canal',
+            'logo': (m.group(1) if (m := re.search(r'tvg-logo="([^"]*)"', ln)) else ''),
+            'group': (m.group(1) if (m := re.search(r'group-title="([^"]*)"', ln)) else '')}
+
+
+
+def tmdb_year():
+    """Año actual (etiqueta/picker de los catálogos de estrenos)."""
+    tmdb = next(b for n, b in SOURCES if n == 'TMDB')
+    return f"{tmdb}/catalog/movie/tmdb.year/genre={_YEARS[0]}.json"

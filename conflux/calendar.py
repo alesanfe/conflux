@@ -5,10 +5,12 @@ import time
 import urllib.parse
 import urllib.request
 
-from .feeds import _anilist_airing, _trakt_movies, _trakt_my, tmdb_year
+from .anilist import _anilist_airing
+from .lists import tmdb_year
 from .net import fetch
 from .sources import _resolve_sid
 from .state import _POOL_BG, _YEARS, CFG, SOURCES
+from .trakt import _trakt_movies, _trakt_my
 
 
 def _cal_add_film(m, hoy, seen, out):
@@ -31,6 +33,11 @@ def _cal_add_film(m, hoy, seen, out):
     out.append(m)
 
 
+def _base(name):
+    """Base URL de una fuente por nombre."""
+    return next(b for n, b in SOURCES if n == name)
+
+
 def _cal_seed_ids(cine, kitsu, anise):
     """Series populares en emisión: top cinemeta + temporada AniSeason (ya tt)
     + long-runners kitsu airing resueltos a tt. Devuelve también los futures
@@ -43,12 +50,17 @@ def _cal_seed_ids(cine, kitsu, anise):
                        f"{'&skip='+str(s) if s else ''}.json", 10)
           for y in (_YEARS[0], str(int(_YEARS[0]) + 1)) for s in (0, 50, 100)]
     td = fetch(tmdb_year(), 10) or {}
+    return _cal_top_ids(fs_top, fs_sea, fs_air), fs, fs_amv, td
+
+
+def _cal_top_ids(fs_top, fs_sea, fs_air):
+    """top cinemeta + temporada + kitsu airing -> ids tt deduplicados."""
     top_ids = _cat_ids(fs_top, 'tt')[:30]
     top_ids += [i for i in _cat_ids(fs_sea, 'tt') if i not in top_ids]
     kids = _cat_ids(fs_air)[:20]
     top_ids += [r for r in _POOL_BG.map(lambda i: _resolve_sid('series', i), kids)
                 if r.startswith('tt') and r not in top_ids]
-    return top_ids, fs, fs_amv, td
+    return top_ids
 
 
 def _cat_ids(fut, prefix=''):
@@ -91,10 +103,13 @@ def _cal_films(tmdb, fs, fs_amv, td, hoy, seen, out):  # pylint: disable=too-man
     vía TMDB."""
     _cal_year_films(fs, hoy, seen, out)
     _cal_meta_films(tmdb, [m['id'] for m in td.get('metas') or []], hoy, seen, out)
-    amv_ids = _cat_ids(fs_amv, 'tt')
+    _cal_meta_films(tmdb, _cal_bare_ids(fs, fs_amv), hoy, seen, out)
+
+def _cal_bare_ids(fs, fs_amv):
+    """ids tt sin fecha de estreno (anime temporada + cinemeta year sin released)."""
     bare = [m['id'] for f in fs for m in (f.result() or {}).get('metas') or []
             if not (m.get('released') or '')[:10] and m.get('id', '').startswith('tt')][:40]
-    _cal_meta_films(tmdb, amv_ids + bare, hoy, seen, out)
+    return _cat_ids(fs_amv, 'tt') + bare
 
 
 def _cal_anime_video(tt, a, m):
@@ -139,13 +154,17 @@ def _cal_anime_eps(cine, days, seen, out):
     metas_tt = {m['id']: m for m in out}
     fmeta = [_POOL_BG.submit(fetch, f"{cine}/meta/series/{i}.json", 10) for i in eps_by_tt]
     for (tt, eps), f in zip(eps_by_tt.items(), fmeta, strict=True):
-        m = _cal_ensure_meta(tt, metas_tt.get(tt) or (f.result() or {}).get('meta'),
-                             metas_tt, seen, out)
-        if not m:
-            continue
-        have = {v['id'] for v in m.get('videos', [])}
-        m['videos'] += [_cal_anime_video(tt, a, m) for a in eps
-                        if f"{tt}:1:{a['ep']}" not in have]
+        _cal_anime_fill(tt, eps, metas_tt.get(tt) or (f.result() or {}).get('meta'),
+                        metas_tt, seen, out)
+
+def _cal_anime_fill(tt, eps, meta_raw, metas_tt, seen, out):  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    """Un anime: asegura meta en out y añade los episodios que falten."""
+    m = _cal_ensure_meta(tt, meta_raw, metas_tt, seen, out)
+    if not m:
+        return
+    have = {v['id'] for v in m.get('videos', [])}
+    m['videos'] += [_cal_anime_video(tt, a, m) for a in eps
+                    if f"{tt}:1:{a['ep']}" not in have]
 
 
 def _cal_trakt(cine, days, hoy, seen, out):
@@ -163,12 +182,16 @@ def _cal_my_eps(cine, my_eps, seen, out):
     """Episodios personales Trakt -> metas (cinemeta o show-meta de fallback)."""
     metas_tt = {m['id']: m for m in out}                    # reindexed tras add_film
     new_tt = sorted({tt for tt, *_ in my_eps if tt not in metas_tt})
-    fmy = [_POOL_BG.submit(fetch, f"{cine}/meta/series/{i}.json", 10) for i in new_tt]
+    _cal_my_fill(cine, new_tt, my_eps, metas_tt, seen, out)
+    _my_eps_videos(metas_tt, my_eps)
+
+def _cal_my_fill(cine, new_tt, my_eps, metas_tt, seen, out):  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    """Resuelve (paralelo) el meta de cada serie nueva; fallback al show-meta de Trakt."""
     fallback = {tt: sm for tt, _, _, _, sm in my_eps}
+    fmy = [_POOL_BG.submit(fetch, f"{cine}/meta/series/{i}.json", 10) for i in new_tt]
     for tt, f in zip(new_tt, fmy, strict=True):
         _cal_ensure_meta(tt, (f.result() or {}).get('meta') or fallback.get(tt),
                          metas_tt, seen, out)
-    _my_eps_videos(metas_tt, my_eps)
 
 
 def _my_eps_videos(metas_tt, my_eps):
@@ -191,10 +214,8 @@ def _estrenos_cal(_extra=None):
     estrenadas (vídeo sintético = fecha de estreno).
     extra se ignora a propósito: el cliente pide sus ids de biblioteca y el
     calendario inyecta el feed completo — filtrar rompería el auto-poblado."""
-    cine = next(b for n, b in SOURCES if n == 'Cinemeta')
-    tmdb = next(b for n, b in SOURCES if n == 'TMDB')
-    kitsu = next(b for n, b in SOURCES if n == 'Kitsu')
-    anise = next(b for n, b in SOURCES if n == 'AniSeason')
+    cine, tmdb, kitsu, anise = (_base('Cinemeta'), _base('TMDB'),
+                                _base('Kitsu'), _base('AniSeason'))
     hoy, seen, out = time.strftime('%Y-%m-%d'), set(), []
     # ids semilla: se regenera cada petición — temporada nueva = ids nuevos
     top_ids, fs, fs_amv, td = _cal_seed_ids(cine, kitsu, anise)

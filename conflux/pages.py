@@ -6,7 +6,6 @@ import time
 
 from .bg import _prefetch_catalogs
 from .cfg import _PROF, _save_cfg, load_config
-from .feeds import _TRAKT_DEV, _trakt_device_start
 from .manifest import build_manifest
 from .state import (
     _DISABLED,
@@ -24,6 +23,7 @@ from .state import (
     _rts,
     manifests,
 )
+from .trakt import _TRAKT_DEV, _trakt_device_start
 
 
 # ---- servidor ----
