@@ -17,8 +17,8 @@ class TestReglas(unittest.TestCase):
         px.manifests[:] = [{'resources': ['catalog'], 'catalogs': [
             {'type': 'movie', 'id': 'a', 'name': 'A'},
             {'type': 'series', 'id': 'a', 'name': 'A'},
-            {'type': 'series', 'id': 'animes_filter', 'name': 'Anime Filter'},
-            {'type': 'series', 'id': 'animes_filter', 'name': 'Anime Filter'},
+            {'type': 'series', 'id': 'animes_top', 'name': 'Anime Top'},
+            {'type': 'series', 'id': 'animes_top', 'name': 'Anime Top'},
         ]}] * len(px.SOURCES[:1])
         try:
             return px.build_manifest()
@@ -43,7 +43,7 @@ class TestReglas(unittest.TestCase):
 
     def test_anime_remap_conserva_utype(self):
         man = self._manifest_sintetico()
-        anime = [c for c in man['catalogs'] if 'animes_filter' in c['id']]
+        anime = [c for c in man['catalogs'] if 'animes_top' in c['id']]
         self.assertTrue(anime and all(c['type'] == 'anime' for c in anime),
                         'catálogo anime debe servirse como tipo anime')
         self.assertTrue(all(px._UTYPE[c['id']] == 'series' for c in anime),
@@ -58,7 +58,7 @@ class TestReglas(unittest.TestCase):
     def test_catalog_dupes_upstream_fuera(self):
         man = self._manifest_sintetico()
         self.assertEqual(
-            sum(1 for c in man['catalogs'] if 'animes_filter' in c['id']), 1)
+            sum(1 for c in man['catalogs'] if 'animes_top' in c['id']), 1)
 
 
 if __name__ == '__main__':
@@ -193,3 +193,40 @@ class TestMfDedupNames(unittest.TestCase):
         self.assertEqual(cats[1]['name'], 'Top (Series)')
         self.assertEqual(cats[2]['name'], 'Top (Series 2)')
         self.assertEqual(cats[3]['name'], 'Otro')
+
+
+class TestBrowseablesSolo(unittest.TestCase):
+    """Feed-app (lastVideosIds/calendarVideosIds) y filtros upstream no son
+    opciones navegables — los feed los sirven los sintéticos."""
+
+    def _cats(self):
+        old = list(px.manifests)
+        px.manifests[:] = [{'resources': ['catalog'], 'catalogs': [
+            {'type': 'series', 'id': 'top', 'name': 'Top'},
+            {'type': 'series', 'id': 'pop', 'name': 'Pop'},
+            {'type': 'series', 'id': 'last-videos', 'name': 'Last videos',
+             'extra': [{'name': 'lastVideosIds', 'isRequired': True}]},
+            {'type': 'series', 'id': 'calendar-videos', 'name': 'Calendar videos',
+             'extra': [{'name': 'calendarVideosIds', 'isRequired': True}]},
+            {'type': 'series', 'id': 'series_filter', 'name': 'Series Filter',
+             'extra': [{'name': 'genre', 'isRequired': False}]},
+        ]}] * len(px.SOURCES[:1])
+        try:
+            return px.build_manifest()
+        finally:
+            px.manifests[:] = old
+
+    def test_feed_y_filter_fuera_de_opciones(self):
+        man = self._cats()
+        cine = next(c for c in man['catalogs'] if c['id'].endswith('_grp')
+                    and c['type'] == 'series')
+        opts = next(e['options'] for e in cine['extra'] if e['name'] == 'genre')
+        for bad in ('Last videos', 'Calendar videos', 'Series Filter'):
+            self.assertNotIn(bad, opts)
+        self.assertEqual(opts, ['Top', 'Pop'])
+
+    def test_lastvids_sintetico_cubre_continue_watching(self):
+        man = self._cats()
+        lv = next((c for c in man['catalogs'] if 'lastvids' in c['id']), None)
+        self.assertIsNotNone(lv)
+        self.assertEqual([e['name'] for e in lv['extra']], ['lastVideosIds'])

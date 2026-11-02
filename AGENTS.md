@@ -125,6 +125,15 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   movie con `videos` sintéticos cuyo `released` = fecha de estreno (Cinemeta
   year×5 páginas + TMDB meta→imdb_id, filtrado >hoy). El feed upstream es
   escaso (~1-5 títulos) — crece al acercarse estrenos.
+- `scinemeta_series_lastvids`: Continue Watching — `lastVideosIds` requerido;
+  la app envía los ids de la biblioteca, `_cat_xlate_ids` traduce no-tt→tt y
+  se reenvía a Cinemeta `last-videos`. Los catálogos upstream de feed
+  (`last-videos`, `calendar-videos`, `kitsu-anime-last-videos`) NUNCA se emiten
+  como listas navegables: sin ids caen al mismo feed por defecto (duplicado
+  entre sí y ruido en el picker) y como opción de `_GRP` no pueden recibir los
+  extras. Lo mismo con `*_filter` upstream (StravoII): endpoint de filtro sin
+  args = lista genérica redundante con las opciones del propio grupo.
+  Regla en `_mf_one_cat`: `req ∩ _FEED_EXTRA` o `id endswith '_filter'` -> None.
 - Cinemeta standalone NO se re-añade solo: su reaparición fue por editar el
   perfil SQLite con la app abierta (ésta lo persistía de vuelta al salir).
   **Siempre `flatpak kill com.stremio.Stremio` antes de tocar localstorage.**

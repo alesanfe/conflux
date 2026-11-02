@@ -41,6 +41,8 @@ _YR_OPTS = {}                                  # cid agrupado -> [años] del 2º
 
 _REQ     = set()                               # cids con extras requeridos upstream: quedan planos
 
+_FEED_EXTRA = frozenset({'lastVideosIds', 'calendarVideosIds'})   # endpoints de app-feed: solo vía sintéticos
+
 _TYPE_ES = {'movie': 'Películas', 'series': 'Series', 'anime': 'Anime',
             'tv': 'TV', 'channel': 'Canales'}
 
@@ -105,8 +107,8 @@ def _mf_one_cat(src, c, keep, seen):
     if keep and not keep.search(c['id']):
         return None
     req = _mf_cat_req(c)
-    if req is None:
-        return None
+    if req is None or _FEED_EXTRA & set(req) or c['id'].endswith('_filter'):
+        return None                     # feed-app/filtro: no es lista navegable
     cid = f"s{src.name.lower()}_{c['type']}_{c['id']}"  # tipo upstream en slug: único
     if cid in seen:
         return None                              # upstream repite el mismo catálogo
@@ -236,6 +238,11 @@ def _mf_cal_cats(cats):
     cats.append((_eff_rank('Cinemeta'), {'id': ccid, 'type': 'series',
                  'name': 'Cinemeta · Próximos estrenos',
                  'extra': [{'name': 'calendarVideosIds', 'isRequired': True}]}))
+    lvid = 'scinemeta_series_lastvids'             # Continue Watching: ids biblio -> tt -> cinemeta
+    _SYNTH[lvid] = ('series', 'last-videos', None)
+    cats.append((_eff_rank('Cinemeta'), {'id': lvid, 'type': 'series',
+                 'name': 'Cinemeta · Últimos vídeos',
+                 'extra': [{'name': 'lastVideosIds', 'isRequired': True}]}))
 
 
 def _mf_search_cats(cats):
