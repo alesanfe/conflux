@@ -2,7 +2,7 @@
 """installer.py — instalador gráfico de conflux (wizard tkinter, sin deps extra).
 
 Pasos: entorno Python -> Prowlarr+indexers -> .env/config -> proxy+autostart ->
-addon en Stremio -> login Trakt (muestra el código). Re-ejecutable.
+addon en Stremio -> login Trakt (muestra el código). También DESINSTALAR.
 Lanzar con:  python scripts/installer.py   (o conflux-setup.bat -> pythonw)
 """
 # pylint: disable=broad-exception-caught,too-many-locals,too-many-statements
@@ -33,9 +33,14 @@ M3U_URL=https://iptv-org.github.io/iptv/countries/es.m3u
 
 try:
     import tkinter as tk
-    from tkinter import ttk, scrolledtext
+    from tkinter import ttk, scrolledtext, font as tkfont
 except ImportError:
     sys.exit('tkinter no disponible — instala Python completo o usa scripts/setup_win.ps1')
+
+# paleta (misma accent de las páginas web del proxy)
+BG, BG2, BG3 = '#141416', '#1e1e23', '#26262b'
+FG, DIM, ACC, OK, BAD = '#e8e8ea', '#8a8a93', '#7c5ce0', '#4caf50', '#e05555'
+BORD = '#33333c'
 
 
 def _sh(cmd, timeout=300, shell=False):
@@ -49,92 +54,120 @@ def _sh(cmd, timeout=300, shell=False):
 
 
 class Installer(tk.Tk):
-    """Wizard: panel de pasos a la izquierda, contenido + log a la derecha."""
+    """Wizard estilo instalador moderno: banner, sidebar, progreso, log plegable."""
 
     STEPS = ['Entorno', 'Prowlarr', 'Configuración', 'Proxy + autostart',
              'Addon Stremio', 'Trakt (opcional)', 'Fin']
     USTEPS = ['Detener procesos', 'Autostart + addon', 'Borrar runtime',
               'Prowlarr', 'Fin']
+    ICONS = ['⚙', '◈', '✎', '▶', '⬇', '✱', '✓']
+    U_ICONS = ['⏻', '✕', '🗑', '◈', '✓']
 
     def __init__(self):
         super().__init__()
-        self.title('conflux — instalador')
-        self.geometry('820x520')
-        self.configure(bg='#1b1b1f')
+        self.title('conflux — Setup')
+        self.geometry('880x560')
+        self.configure(bg=BG)
+        self.resizable(False, False)
         self.q = queue.Queue()
         self.cur = -1                     # -1 = pantalla de modo (instalar/desinstalar)
         self.done_flags = {}
         self.mode = 'install'
         self.steps = []
+        self.icons = []
+        self.log_visible = False
 
-        fg, bg2, acc = '#e8e8ea', '#26262b', '#7c5ce0'
-        style = ttk.Style(self)
-        style.theme_use('clam')
-        style.configure('TFrame', background=bg2)
-        style.configure('TLabel', background=bg2, foreground=fg, font=('Segoe UI', 10))
-        style.configure('Title.TLabel', font=('Segoe UI', 15, 'bold'))
-        style.configure('Step.TLabel', font=('Segoe UI', 10), padding=6)
-        style.configure('On.TLabel', foreground=acc, font=('Segoe UI', 10, 'bold'), padding=6)
-        style.configure('Ok.TLabel', foreground='#4caf50', padding=6)
-        style.configure('Code.TLabel', font=('Consolas', 30, 'bold'), foreground=acc)
-        style.configure('TButton', padding=8, font=('Segoe UI', 10))
-        style.configure('Acc.TButton', padding=10)
+        # fuentes
+        self.f_h1 = tkfont.Font(family='Segoe UI', size=16, weight='bold')
+        self.f_step = tkfont.Font(family='Segoe UI', size=10)
+        self.f_step_b = tkfont.Font(family='Segoe UI', size=10, weight='bold')
+        self.f_txt = tkfont.Font(family='Segoe UI', size=10)
+        self.f_code = tkfont.Font(family='Consolas', size=32, weight='bold')
 
-        left = ttk.Frame(self, width=190)
-        left.pack(side='left', fill='y')
-        self.left = left
-        self.lbl_steps = []
-
-        right = ttk.Frame(self)
-        right.pack(side='right', fill='both', expand=True)
-        self.title_lbl = ttk.Label(right, text='', style='Title.TLabel')
-        self.title_lbl.pack(anchor='w', padx=20, pady=(18, 4))
-        self.body = ttk.Frame(right)
-        self.body.pack(fill='both', expand=True, padx=20, pady=6)
-        self.log = scrolledtext.ScrolledText(right, height=9, bg='#101014', fg='#9cdcfe',
-                                           font=('Consolas', 9), state='disabled',
-                                           relief='flat')
-        self.log.pack(fill='x', padx=20, pady=(0, 6))
-        nav = ttk.Frame(right)
-        nav.pack(fill='x', padx=20, pady=(0, 14))
-        self.btn_next = ttk.Button(nav, text='Siguiente →', style='Acc.TButton',
-                                   command=self.next_step)
-        self.btn_next.pack(side='right')
-        self.btn_skip = ttk.Button(nav, text='Saltar paso', command=self.next_step)
-        self.btn_skip.pack(side='right', padx=8)
-
+        self._build_chrome()
         self.after(150, self._pump)
         self._mode_screen()
 
-    # ---------- pantalla de modo ----------
-    def _mode_screen(self):
-        self.title_lbl.config(text='conflux — ¿qué quieres hacer?')
-        self._clear_body()
-        self._lbl('Instalar monta todo el entorno (venv, Prowlarr, indexers,\n'
-                  'proxy, autostart, addon). Desinstalar lo quita todo.')
-        row = ttk.Frame(self.body)
-        row.pack(pady=18)
-        ttk.Button(row, text='⬇  Instalar', style='Acc.TButton',
-                   command=lambda: self._set_mode('install')).pack(side='left', padx=10)
-        ttk.Button(row, text='🗑  Desinstalar',
-                   command=lambda: self._set_mode('uninstall')).pack(side='left', padx=10)
-        self.btn_next.pack_forget()
-        self.btn_skip.pack_forget()
+    # ==================== CHROME (layout fijo) ====================
+    def _build_chrome(self):
+        # --- banner superior ---
+        banner = tk.Frame(self, bg=ACC, height=64)
+        banner.pack(fill='x')
+        banner.pack_propagate(False)
+        tk.Label(banner, text=' conflux ', bg=ACC, fg='white',
+                 font=tkfont.Font(family='Segoe UI', size=18, weight='bold')).pack(
+                     side='left', padx=(22, 8), pady=14)
+        self.banner_sub = tk.Label(banner, text='Setup', bg=ACC, fg='#d9d2f7',
+                                   font=self.f_txt)
+        self.banner_sub.pack(side='left', pady=18)
+        tk.Label(banner, text='⬢', bg=ACC, fg='#cabcf5',
+                 font=tkfont.Font(size=22)).pack(side='right', padx=20)
 
-    def _set_mode(self, mode):
-        self.mode = mode
-        self.steps = self.STEPS if mode == 'install' else self.USTEPS
-        for w in self.left.winfo_children():
-            w.destroy()
+        mid = tk.Frame(self, bg=BG)
+        mid.pack(fill='both', expand=True)
+
+        # --- sidebar pasos ---
+        self.side = tk.Frame(mid, bg=BG2, width=210)
+        self.side.pack(side='left', fill='y')
+        self.side.pack_propagate(False)
+        tk.Frame(self.side, bg=BG2, height=10).pack()
         self.lbl_steps = []
-        for i, s in enumerate(self.steps):
-            lb = ttk.Label(self.left, text=f'{i + 1}. {s}', style='Step.TLabel')
-            lb.pack(anchor='w', padx=12, pady=2)
-            self.lbl_steps.append(lb)
-        self.btn_next.pack(side='right')
+
+        # --- contenido ---
+        right = tk.Frame(mid, bg=BG)
+        right.pack(side='right', fill='both', expand=True)
+        self.title_lbl = tk.Label(right, text='', bg=BG, fg=FG, font=self.f_h1)
+        self.title_lbl.pack(anchor='w', padx=26, pady=(20, 2))
+        self.sub_lbl = tk.Label(right, text='', bg=BG, fg=DIM, font=self.f_txt)
+        self.sub_lbl.pack(anchor='w', padx=26)
+        self.body = tk.Frame(right, bg=BG)
+        self.body.pack(fill='both', expand=True, padx=26, pady=10)
+
+        # --- log plegable ---
+        self.log_frame = tk.Frame(right, bg=BG)
+        self.log = scrolledtext.ScrolledText(
+            self.log_frame, height=8, bg='#0d0d10', fg='#9cdcfe',
+            font=('Consolas', 9), state='disabled', relief='flat',
+            insertbackground='#9cdcfe')
+        self.log.pack(fill='both', expand=True)
+
+        # --- footer: progreso + nav ---
+        foot = tk.Frame(self, bg=BG2, height=58)
+        foot.pack(fill='x', side='bottom')
+        foot.pack_propagate(False)
+        self.pbar = ttk.Progressbar(foot, maximum=len(self.STEPS) - 1)
+        self.pbar.pack(fill='x', padx=1, side='top')
+        inner = tk.Frame(foot, bg=BG2)
+        inner.pack(fill='x', expand=True, pady=8)
+        self.btn_log = tk.Button(inner, text='Detalles ▾', command=self._toggle_log,
+                                 bg=BG2, fg=DIM, relief='flat', bd=0, font=self.f_txt,
+                                 activebackground=BG2, activeforeground=FG,
+                                 cursor='hand2')
+        self.btn_log.pack(side='left', padx=18)
+        self.btn_skip = self._mkbtn(inner, 'Saltar paso', self.next_step, ghost=True)
         self.btn_skip.pack(side='right', padx=8)
-        self.cur = 0
-        self._show_step()
+        self.btn_next = self._mkbtn(inner, 'Siguiente →', self.next_step)
+        self.btn_next.pack(side='right', padx=(8, 18))
+
+        # separador fino sobre el footer
+        tk.Frame(self, bg=BORD, height=1).pack(fill='x', side='bottom')
+
+    def _mkbtn(self, parent, text, cmd, ghost=False, width=0):
+        """Botón estilo moderno: sólido accent o 'ghost' oscuro."""
+        b = tk.Button(parent, text=text, command=cmd, relief='flat', bd=0,
+                      bg=(BG3 if ghost else ACC), fg='white', padx=16, pady=7,
+                      font=self.f_step_b, activebackground=(BORD if ghost else '#8d6ff0'),
+                      activeforeground='white', cursor='hand2', width=width or None)
+        return b
+
+    def _toggle_log(self):
+        self.log_visible = not self.log_visible
+        if self.log_visible:
+            self.log_frame.pack(fill='both', expand=True, padx=26, pady=(0, 8))
+            self.btn_log.config(text='Detalles ▴')
+        else:
+            self.log_frame.pack_forget()
+            self.btn_log.config(text='Detalles ▾')
 
     # ---------- utilidades UI ----------
     def _pump(self):
@@ -157,8 +190,8 @@ class Installer(tk.Tk):
 
     def _mark_done(self, note=''):
         self.done_flags[self.cur] = True
-        self.lbl_steps[self.cur].config(style='Ok.TLabel',
-                                        text=f'✓ {self.steps[self.cur]} {note}')
+        self._paint_steps()
+        self.pbar.config(value=self.cur + 1)
         self.btn_next.config(state='normal')
         self.btn_skip.config(state='normal')
 
@@ -170,24 +203,32 @@ class Installer(tk.Tk):
         for w in self.body.winfo_children():
             w.destroy()
 
-    def _lbl(self, text, style='TLabel', **kw):
-        lb = ttk.Label(self.body, text=text, style=style, wraplength=560,
-                       justify='left', **kw)
+    def _lbl(self, text, size=10, color=FG, bold=False, mono=False, **kw):
+        f = self.f_code if mono else (
+            tkfont.Font(family='Segoe UI', size=size, weight='bold' if bold else 'normal'))
+        lb = tk.Label(self.body, text=text, bg=BG, fg=color, font=f,
+                      wraplength=580, justify='left', **kw)
         lb.pack(anchor='w', pady=3)
         return lb
+
+    def _paint_steps(self):
+        for i, (lb, ic) in enumerate(self.lbl_steps):
+            done = self.done_flags.get(i)
+            cur = i == self.cur
+            ic.config(text='✓' if done else self.icons[i],
+                      fg=OK if done else (ACC if cur else DIM))
+            lb.config(fg=ACC if cur else (OK if done else FG if self.mode == 'install' else FG),
+                      font=self.f_step_b if cur else self.f_step)
 
     def next_step(self):
         self.cur = min(self.cur + 1, len(self.steps) - 1)
         self._show_step()
 
     def _show_step(self):
-        for i, lb in enumerate(self.lbl_steps):
-            lb.config(style='On.TLabel' if i == self.cur else
-                          ('Ok.TLabel' if self.done_flags.get(i) else 'Step.TLabel'),
-                      text=('' if self.done_flags.get(i) else f'{i + 1}. ') +
-                      ('✓ ' if self.done_flags.get(i) else '') + self.steps[i])
+        self._paint_steps()
         self._clear_body()
         self.title_lbl.config(text=self.steps[self.cur])
+        self.sub_lbl.config(text='')
         prefix = '_step' if self.mode == 'install' else '_ustep'
         getattr(self, f'{prefix}{self.cur}')()
 
@@ -195,7 +236,60 @@ class Installer(tk.Tk):
         self._busy()
         threading.Thread(target=fn, daemon=True).start()
 
-    # ---------- paso 0: entorno ----------
+    # ---------- pantalla de modo ----------
+    def _mode_screen(self):
+        self.banner_sub.config(text='Setup')
+        self.title_lbl.config(text='¿Qué quieres hacer?')
+        self.sub_lbl.config(text='Instalación o desinstalación completa del entorno')
+        self._clear_body()
+        self.btn_next.pack_forget()
+        self.btn_skip.pack_forget()
+
+        def card(txt, sub, cmd):
+            c = tk.Frame(self.body, bg=BG2, highlightbackground=BORD,
+                         highlightthickness=1, cursor='hand2')
+            c.pack(side='left', padx=12, pady=16, ipadx=22, ipady=18)
+            for w in (tk.Label(c, text=txt, bg=BG2, fg=FG,
+                               font=tkfont.Font(family='Segoe UI', size=13, weight='bold')),
+                      tk.Label(c, text=sub, bg=BG2, fg=DIM, font=self.f_txt,
+                               justify='left', wraplength=200)):
+                w.pack(anchor='w', pady=3)
+            for w in (c, *c.winfo_children()):
+                w.bind('<Button-1>', lambda e, f=cmd: f())
+            return c
+
+        card('⬇  Instalar', 'Monta todo el entorno:\nvenv · Prowlarr · indexers\n'
+                            'proxy · autostart · addon\nlogin Trakt opcional',
+             lambda: self._set_mode('install'))
+        card('🗑  Desinstalar', 'Quita todo lo instalado:\nprocesos · autostart · runtime\n'
+                              'Prowlarr · (opcional) claves\ny la propia carpeta',
+             lambda: self._set_mode('uninstall'))
+
+    def _set_mode(self, mode):
+        self.mode = mode
+        self.steps = self.STEPS if mode == 'install' else self.USTEPS
+        self.icons = self.ICONS if mode == 'install' else self.U_ICONS
+        self.banner_sub.config(text='Setup — instalación' if mode == 'install'
+                               else 'Setup — desinstalación')
+        self.pbar.config(maximum=len(self.steps) - 1, value=0)
+        for w in self.side.winfo_children()[1:]:
+            w.destroy()
+        self.lbl_steps = []
+        for i, s in enumerate(self.steps):
+            row = tk.Frame(self.side, bg=BG2)
+            row.pack(anchor='w', fill='x', padx=(16, 8), pady=4)
+            ic = tk.Label(row, text=self.icons[i], bg=BG2, fg=DIM,
+                          font=self.f_step_b, width=2)
+            ic.pack(side='left')
+            lb = tk.Label(row, text=s, bg=BG2, fg=FG, font=self.f_step)
+            lb.pack(side='left')
+            self.lbl_steps.append((lb, ic))
+        self.btn_next.pack(side='right', padx=(8, 18))
+        self.btn_skip.pack(side='right', padx=8)
+        self.cur = 0
+        self._show_step()
+
+    # ==================== INSTALAR ====================
     def _step0(self):
         self._lbl('Prepara el entorno Python: crea .venv e instala dependencias '
                   '(requirements.txt con hashes).')
@@ -219,7 +313,6 @@ class Installer(tk.Tk):
         self.say('deps: ' + ('OK' if rc == 0 else out[-200:]))
         self.q.put(('done', 'OK' if rc == 0 else 'FALLO'))
 
-    # ---------- paso 1: prowlarr ----------
     def _step1(self):
         self._lbl('Instala Prowlarr (winget), conecta Torznab y siembra los '
                   'indexers públicos por API. Puede pedir UAC.')
@@ -259,7 +352,6 @@ class Installer(tk.Tk):
             py = os.path.join(ROOT, '.venv', 'Scripts', 'python.exe')
             if not os.path.exists(py):
                 py = sys.executable
-            # asegurar torznab en config antes de sembrar
             _sh([py, 'scripts/apply_env.py'], 60)
             rc, out = _sh([py, 'scripts/prowlarr_indexers.py'], 600)
             self.say(out or 'indexers listos')
@@ -268,7 +360,6 @@ class Installer(tk.Tk):
             self.say('sin ApiKey — Prowlarr no arrancó; siembra manual en :9696')
             self.q.put(('done', 'FALLO'))
 
-    # ---------- paso 2: config ----------
     def _step2(self):
         self._lbl('Crea/actualiza .env con las integraciones gratuitas '
                   '(Trakt, OpenSubtitles, IPTV, Torznab) y lo aplica a config.json.')
@@ -287,7 +378,6 @@ class Installer(tk.Tk):
         self.say(out or 'config aplicada')
         self.q.put(('done', 'OK' if rc == 0 else 'FALLO'))
 
-    # ---------- paso 3: proxy + autostart ----------
     def _step3(self):
         self._lbl('Crea el lanzador, registra el autostart en la carpeta Inicio '
                   'y arranca el proxy en 127.0.0.1:9700.')
@@ -308,7 +398,7 @@ class Installer(tk.Tk):
                  f"$l.TargetPath='{bat}'; $l.WindowStyle=7; "
                  f"$l.WorkingDirectory='{ROOT}'; $l.Save()"], 30)
             self.say('autostart registrado')
-        rc, _ = _sh(f'cmd /c "{bat}"', shell=True, timeout=20)
+        _sh(f'cmd /c "{bat}"', shell=True, timeout=20)
         for _ in range(30):
             try:
                 urllib.request.urlopen(f'{PROXY}/health', timeout=3)
@@ -320,28 +410,26 @@ class Installer(tk.Tk):
         self.say('el proxy no responde — revisa conflux.log')
         self.q.put(('done', 'FALLO'))
 
-    # ---------- paso 4: addon ----------
     def _step4(self):
         self._lbl('Abre el diálogo de instalación del addon dentro de Stremio. '
                   'Pulsa el botón y confirma «Instalar» en la app.')
-        b = ttk.Button(self.body, text='Instalar addon en Stremio',
-                       style='Acc.TButton',
-                       command=lambda: (webbrowser.open('stremio://127.0.0.1:9700/manifest.json'),
-                                        self.say('diálogo de instalación abierto'),
-                                        self._mark_done()))
+        b = self._mkbtn(self.body, 'Instalar addon en Stremio',
+                        lambda: (webbrowser.open('stremio://127.0.0.1:9700/manifest.json'),
+                                 self.say('diálogo de instalación abierto'),
+                                 self._mark_done()))
         b.pack(pady=16)
         self.btn_skip.config(state='normal')
         self.btn_next.config(state='normal')
 
-    # ---------- paso 5: trakt ----------
     def _step5(self):
         self._lbl('Conecta tu cuenta trakt.tv (gratis): pulsa abrir, inicia sesión '
                   'y escribe el código. Se detecta solo.')
-        self.code_lbl = ttk.Label(self.body, text='········', style='Code.TLabel')
+        self.code_lbl = tk.Label(self.body, text='········', bg=BG, fg=ACC,
+                                 font=self.f_code)
         self.code_lbl.pack(pady=10)
-        ttk.Button(self.body, text='Abrir trakt.tv/activate',
-                   command=lambda: webbrowser.open('https://trakt.tv/activate')).pack()
-        self.status_lbl = self._lbl('…')
+        self._mkbtn(self.body, 'Abrir trakt.tv/activate',
+                    lambda: webbrowser.open('https://trakt.tv/activate')).pack()
+        self.status_lbl = self._lbl('…', color=DIM)
         self.btn_skip.config(state='normal')
         self.btn_next.config(state='normal')
         self._run(self._do_trakt)
@@ -367,17 +455,16 @@ class Installer(tk.Tk):
             try:
                 cfg = json.load(open(os.path.join(ROOT, 'config.json'), encoding='utf-8'))
                 if cfg.get('trakt_access_token'):
-                    self.status_lbl.config(text='Conectado — token guardado')
+                    self.status_lbl.config(text='Conectado — token guardado', fg=OK)
                     self.q.put(('log', 'trakt conectado'))
                     self.q.put(('done', 'conectado'))
                     return
             except Exception:
                 pass
-        self.status_lbl.config(text='expirado — puedes reintentar con '
-                                  'python scripts/trakt_auth.py')
+        self.status_lbl.config(text='expirado — reintenta con '
+                                    'python scripts/trakt_auth.py')
         self.q.put(('done', 'expirado'))
 
-    # ---------- paso 6: fin ----------
     def _step6(self):
         ok = sum(self.done_flags.get(i, False) for i in range(len(self.steps) - 1))
         self._lbl(f'{ok} de {len(self.steps) - 1} pasos completados.\n\n'
@@ -395,7 +482,6 @@ class Installer(tk.Tk):
     def _do_kill(self):
         killed = 0
         if sys.platform == 'win32':
-            # proceso(s) escuchando :9700
             rc, out = _sh('netstat -ano | findstr :9700 | findstr LISTENING',
                           shell=True, timeout=15)
             for ln in out.splitlines():
@@ -403,7 +489,6 @@ class Installer(tk.Tk):
                 if pid.isdigit():
                     _sh(f'taskkill /PID {pid} /F', shell=True, timeout=15)
                     killed += 1
-            # cualquier python corriendo proxy.py
             rc, out = _sh(['powershell', '-NoProfile', '-Command',
                            "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" "
                            "| Where-Object {$_.CommandLine -match 'proxy\\.py'} "
@@ -434,14 +519,17 @@ class Installer(tk.Tk):
 
     def _ustep2(self):
         self._lbl('Borra el entorno generado: .venv, cachés, log y listas m3u.\n'
-                  'Marca la casilla para borrar TAMBIÉN .env y config.json '
-                  '(tus claves).')
+                  'Marca la casilla para conservar .env y config.json (tus claves).')
         self.keep_cfg = tk.BooleanVar(value=True)
-        tk.Checkbutton(self.body, text='Conservar .env y config.json',
-                       variable=self.keep_cfg, bg='#26262b', fg='#e8e8ea',
-                       selectcolor='#26262b', activebackground='#26262b',
-                       font=('Segoe UI', 10)).pack(anchor='w', pady=6)
+        self._check(self.body, 'Conservar .env y config.json', self.keep_cfg)
         self._run(self._do_rm_runtime)
+
+    def _check(self, parent, text, var):
+        cb = tk.Checkbutton(parent, text=text, variable=var, bg=BG, fg=FG,
+                            selectcolor=BG3, activebackground=BG,
+                            activeforeground=FG, font=self.f_txt)
+        cb.pack(anchor='w', pady=6)
+        return cb
 
     def _do_rm_runtime(self):
         import shutil
@@ -472,10 +560,7 @@ class Installer(tk.Tk):
     def _ustep3(self):
         self._lbl('Opcional: desinstala Prowlarr (servicio + programa).')
         self.rm_prowlarr = tk.BooleanVar(value=False)
-        tk.Checkbutton(self.body, text='Desinstalar Prowlarr también',
-                       variable=self.rm_prowlarr, bg='#26262b', fg='#e8e8ea',
-                       selectcolor='#26262b', activebackground='#26262b',
-                       font=('Segoe UI', 10)).pack(anchor='w', pady=6)
+        self._check(self.body, 'Desinstalar Prowlarr también', self.rm_prowlarr)
         self._run(self._do_prowlarr_rm)
 
     def _do_prowlarr_rm(self):
@@ -495,8 +580,8 @@ class Installer(tk.Tk):
     def _ustep4(self):
         self._lbl('Hecho. Opcionalmente puedes borrar la propia carpeta del '
                   'proyecto — el instalador programa su eliminación al cerrar.')
-        ttk.Button(self.body, text='Eliminar también la carpeta conflux',
-                   command=self._self_destruct).pack(pady=12)
+        self._mkbtn(self.body, 'Eliminar también la carpeta conflux',
+                    self._self_destruct, ghost=True).pack(pady=12)
         self.btn_next.config(text='Cerrar', command=self.destroy)
         self.btn_skip.config(state='disabled')
 
