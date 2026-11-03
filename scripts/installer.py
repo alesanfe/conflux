@@ -451,7 +451,12 @@ class Installer(tk.Tk):
                  f"$l.TargetPath='{bat}'; $l.WindowStyle=7; "
                  f"$l.WorkingDirectory='{ROOT}'; $l.Save()"], 30)
             self.say('autostart registrado')
-        _sh(f'cmd /c "{bat}"', shell=True, timeout=20)
+        # arranque desacoplado: sin pipes heredados (capture_output haria que el
+        # pythonw hijo retuviera el pipe y communicate() se bloqueara siempre)
+        subprocess.Popen(f'cmd /c "{bat}"', shell=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL,
+                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         for _ in range(30):
             try:
                 urllib.request.urlopen(f'{PROXY}/health', timeout=3)
