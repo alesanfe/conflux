@@ -2,6 +2,7 @@
 # pylint: disable=broad-exception-caught,line-too-long
 import requests
 
+from conflux.core.cfg import _cfgget
 from conflux.core.state import _POOL
 from conflux.infra.net import _session
 from conflux.infra.wikidata import _wikidata
@@ -117,6 +118,24 @@ def _fix_meta_deep(m, yt):
     _fix_meta_wd(m, fw.result())
     if fd:
         _fix_meta_vids(m, vids, fd.result())
+
+
+
+def _rpdb(d):
+    """Posters con ratings (RatingPosterDB — la feature de MediaFusion): si hay
+    rpdb_key configurada, los metas tt:* sirven su poster vía api.ratingposterdb.com.
+    Sin key (default) no toca nada."""
+    key = _cfgget('rpdb_key')
+    if not key or not isinstance(d, dict):
+        return d
+    ms = (d.get('metas') or d.get('metasDetailed')
+          or ([d['meta']] if isinstance(d.get('meta'), dict) else []))
+    for m in ms:
+        if isinstance(m, dict):
+            i = str(m.get('id') or '')
+            if i.startswith('tt'):
+                m['poster'] = f'https://api.ratingposterdb.com/{key}/imdb/poster-default/{i}.jpg'
+    return d
 
 
 

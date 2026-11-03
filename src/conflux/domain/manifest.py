@@ -324,6 +324,7 @@ def build_manifest():
         'catalogs': cats,
         'idPrefixes': ['tt', 'kitsu', 'mal', 'anilist', 'anidb', 'tmdb', 'tvdb', 'ia', 'tpb', 'pluto', 'pd', 'yt', 'yt_id', 'iptv', 'local', 'mx', '_onepace', 'onepace', 'm3u'],
         'behaviorHints': {'newEpisodeNotifications': True,
+                          'configurable': True,               # engranaje -> abre <base>/configure
                           # Native EPG: solo si el catálogo guía existe (spec SDK)
                           **({'epgProvider': True}
                              if any(c['id'] == 'sm3u_tv_channels' for c in cats) else {})},

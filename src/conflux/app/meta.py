@@ -8,7 +8,7 @@ from concurrent.futures import as_completed
 
 from conflux.app.stream import _ensure_collect
 from conflux.core.state import _POOL, SOURCES, _cget, _cset, _cstale, _meta_c, manifests
-from conflux.domain.metafix import _fix_metas
+from conflux.domain.metafix import _fix_metas, _rpdb
 from conflux.domain.sources import res_of, res_types
 from conflux.infra.net import fetch
 
@@ -67,6 +67,7 @@ def handle_meta(stype, mid):
         d = _meta_race(futs)
         if d is not None:
             _fix_metas(d, deep=True)
+            _rpdb(d)
             _cset(_meta_c, key, d)
             return d
     return _cstale(_meta_c, key) or {'meta': {}}

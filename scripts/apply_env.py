@@ -39,8 +39,11 @@ ENV2CFG = {
     'CATALOGS_DISABLED': 'catalogs_disabled',
     'SOURCE_ORDER': 'source_order',
     'STREAM_LANGS': 'stream_langs',
+    'STREAM_EXCLUDE': 'stream_exclude',
+    'RPDB_KEY': 'rpdb_key',
 }
-LIST_KEYS = {'sources_disabled', 'catalogs_disabled', 'source_order', 'stream_langs'}
+LIST_KEYS = {'sources_disabled', 'catalogs_disabled', 'source_order', 'stream_langs',
+             'stream_exclude'}
 INT_KEYS = {'calendar_months_ahead', 'horizon_days', 'trakt_expires'}
 
 

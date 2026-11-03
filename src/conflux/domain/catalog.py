@@ -20,7 +20,7 @@ from conflux.domain.calendar import _estrenos_cal
 from conflux.domain.lists import _list_metas, _m3u_metas
 from conflux.infra.epg import epg_metas
 from conflux.domain.manifest import _GRP, _LEGACY, _SYNTH, _UTYPE, _YR_OPTS
-from conflux.domain.metafix import _fix_metas
+from conflux.domain.metafix import _fix_metas, _rpdb
 from conflux.domain.sources import _PREFIX_SRC, _resolve_sid
 from conflux.domain.text import _id_prefix
 from conflux.infra.net import fetch
@@ -202,13 +202,14 @@ def handle_catalog(stype, cid, extra):
     except (ValueError, StopIteration, IndexError):
         return {'metas': []}
     if isinstance(resolved, dict):                            # sintético respondió directo
-        return resolved
+        return _rpdb(resolved)
     base, utype, real, extra = resolved
     tail = f"/{urllib.parse.quote(extra, safe='=&,:')}" if extra else ''
     d = fetch(f"{base}/catalog/{utype}/{urllib.parse.quote(real, safe='')}{tail}.json", 7)
     if isinstance(d, dict):
         _cat_norm(d)
         _fix_metas(d)
+        _rpdb(d)
         _cset(_cat_c, key, d)
         return d
     return _cstale(_cat_c, key) or {'metas': []}   # upstream caído: sirve stale

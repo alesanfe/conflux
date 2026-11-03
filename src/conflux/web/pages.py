@@ -63,11 +63,12 @@ def _cfg_form_fields(form, cfg):
     cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
     for k in ('torznab_url', 'catalog_lists', 'opensubtitles_key'):
         cfg[k] = form.get(k, [''])[0].strip()
-    for k in ('torznab_key', 'mdblist_key'):
+    for k in ('torznab_key', 'mdblist_key', 'rpdb_key'):
         if form.get(k, [''])[0].strip():
             cfg[k] = form[k][0].strip()
     cfg['source_order'] = _csv_list(form, 'source_order')
     cfg['catalogs_disabled'] = _csv_list(form, 'catalogs_disabled')
+    cfg['stream_exclude'] = _csv_list(form, 'stream_exclude')
     enabled = set(form.get('src', []))
     cfg['sources_disabled'] = [s.name for s in SOURCES if s.name not in enabled]
 
@@ -191,6 +192,9 @@ def _configure_page():
             f"<input name='opensubtitles_key' value='' placeholder='api key — vacío = off'></p>"
             f"<p>Horizonte calendario (días) <input name='horizon_days' value='{CFG.get('horizon_days',45)}' style='width:80px'>"
             f" · idiomas streams <input name='stream_langs' value='{langs}' style='width:200px'></p>"
+            f"<p>Filtros de stream <span class='dim'>(términos a excluir, coma — p.ej. cam,screener,ts,720p)</span><br>"
+            f"<input name='stream_exclude' value='{','.join(CFG.get('stream_exclude') or [])}' placeholder='cam, hdcam, screener, telesync'>"
+            f"<input name='rpdb_key' value='' placeholder='rpdb apikey — posters con rating (ratingposterdb.com)'></p>"
             f"<h2>Catálogos</h2>"
             f"<p>Listas externas <span class='dim'>(URLs Trakt /lists/, IMDb /list/ o mdblist:ID — separadas por coma)</span><br>"
             f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://trakt.tv/users/me/lists/mis-favs, https://www.imdb.com/list/ls123456/'>"

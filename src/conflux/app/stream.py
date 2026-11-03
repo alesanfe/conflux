@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import as_completed
 
+from conflux.core import cfg
 from conflux.core.cfg import _eff_disabled
 from conflux.core.state import (
     _POOL,
@@ -173,6 +174,15 @@ def _ensure_collect(key):
         return state
 
 
+def _ex_out(streams):
+    """Filtro stream_exclude (estilo AIOStreams): fuera lo que matchee el regex
+    en name/title/description — p.ej. 'cam,screener,ts' para no ver rips de cine."""
+    if not streams:
+        return streams
+    return [s for s in streams if not cfg.RE_EX.search(
+        ' '.join(str(s.get(k) or '') for k in ('name', 'title', 'description')))]
+
+
 def handle_stream(stype, sid):
     """GET /stream — agrega fuentes (pool), dedup, ordena, marca debrid y filtra urls muertas."""
     if sid.startswith('m3u:'):                              # canales M3U propios
@@ -183,12 +193,13 @@ def handle_stream(stype, sid):
     key = (stype, sid)
     hit = _cget(_cache, key)
     if hit is not None:
-        return {'streams': hit}
+        return {'streams': _ex_out(hit)}
     state = _ensure_collect(key)
     state['done'].wait(STREAM_BUDGET)
     with state['lock']:
         rows = sorted(state['rows'], key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[2], -r[3]))
     out = [r[0] for r in rows]
+    out = _ex_out(out)                                       # filtro usuario tras dedup/rank
     _debrid_mark(out)                                        # si hay key: cache + resolve /r/
     _url_health(out)                                         # HEAD async a streams http
     return {'streams': out}

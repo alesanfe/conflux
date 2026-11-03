@@ -25,11 +25,13 @@ def load_config():
         CFG.update({k: v for k, v in json.load(_open(_CFG_FILE)).items() if k in CFG})
     except (OSError, ValueError) as e:
         _log.warning('config.json ilegible (%s) — defaults', e)
-    global RE_ES                                                      # pylint: disable=global-statement
+    global RE_ES, RE_EX                                             # pylint: disable=global-statement
     _DISABLED.clear()
     _DISABLED.update(CFG.get('sources_disabled') or [])
     langs = '|'.join(re.escape(x) for x in CFG.get('stream_langs') or ['es'])
     RE_ES = re.compile(rf'\b({langs})\b', re.IGNORECASE)              # langs configurables en vivo
+    excl = '|'.join(re.escape(x) for x in CFG.get('stream_exclude') or [])
+    RE_EX = re.compile(rf'({excl})', re.IGNORECASE) if excl else re.compile(r'(?!)')
 
 def _save_cfg():
     try:
@@ -43,8 +45,12 @@ load_config()
 
 RE_ES = re.compile(r'\b(es)\b', re.IGNORECASE)
 
-# RE_ES lo re-asigna load_config() desde stream_langs (no estático aquí: el orden
-# de módulo es CFG->load_config->regexes; un compile fijo aquí lo pisaría)
+_RE_NEVER = re.compile(r'(?!)')                 # sin filtro: nunca matchea
+RE_EX = _RE_NEVER                               # stream_exclude vacío = off
+
+# RE_ES/RE_EX los re-asigna load_config() desde stream_langs/stream_exclude (no
+# estáticos aquí: el orden de módulo es CFG->load_config->regexes; un compile
+# fijo aquí lo pisaría)
 
 # ---- perfiles (2.4): /p/<nombre>/... usa config.<nombre>.json sobre CFG ----
 _PROF = threading.local()
