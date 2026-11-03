@@ -111,8 +111,8 @@ def _mf_one_cat(src, c, keep, seen):
     if req is None or _FEED_EXTRA & set(req) or c['id'].endswith('_filter'):
         return None                     # feed-app/filtro: no es lista navegable
     cid = f"s{src.name.lower()}_{c['type']}_{c['id']}"  # tipo upstream en slug: único
-    if cid in seen:
-        return None                              # upstream repite el mismo catálogo
+    if cid in seen or (cid, '') in _DEAD_OPT:
+        return None                 # upstream repite el id, o su base ya dio vacío
     seen.add(cid)
     _UTYPE[cid] = c['type']                            # tipo real upstream
     if req:
@@ -224,6 +224,12 @@ def _mf_group(cats):
             continue
         opts = _mf_grp_opts(members_in)
         gid = f"s{src}_{dtype}_grp"
+        if (gid, '') in _DEAD_OPT:                    # base del grupo muerta -> oculto
+            continue
+        opts = collections.OrderedDict(
+            (k, v) for k, v in opts.items() if (gid, k.lower()) not in _DEAD_OPT)
+        if not opts:
+            continue
         _GRP[gid] = opts
         _YR_OPTS[gid] = sorted(year_opts, reverse=True)
         out.append((members[0][0], {'id': gid, 'type': dtype,

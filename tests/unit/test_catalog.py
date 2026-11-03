@@ -1,5 +1,6 @@
 # pylint: disable=missing-docstring,protected-access,import-outside-toplevel,multiple-statements,unused-argument,invalid-name,redefined-outer-name,expression-not-assigned,too-many-public-methods,duplicate-code,non-ascii-name,wrong-import-position
 """Unit tests conflux.domain.catalog — routing + dispatch sintéticos."""
+import collections
 import unittest
 from unittest.mock import patch
 
@@ -113,3 +114,42 @@ class TestCatFixExtra(unittest.TestCase):
         import conflux.core.state as st
         self.assertEqual(C._cat_fix_extra(st.SOURCES[0].base, 'tv', 'iptv-all',
                                           'genre=SPORTS'), 'genre=SPORTS')
+
+
+class TestDeadOptGrp(unittest.TestCase):
+    """Opciones muertas en grupos: label muerta -> base; base muerta -> oculto."""
+
+    def setUp(self):
+        import conflux.core.state as st
+        self._dead = set(st._DEAD_OPT)
+        self._grp = dict(C._GRP)
+        C._GRP['sg_tst_grp'] = collections.OrderedDict(
+            [('Vivo', ('movie', 'real1', False, None)),
+             ('Muerto', ('movie', 'real2', False, 'x'))])
+
+    def tearDown(self):
+        import conflux.core.state as st
+        st._DEAD_OPT.clear()
+        st._DEAD_OPT.update(self._dead)
+        C._GRP.clear()
+        C._GRP.update(self._grp)
+
+    def test_label_muerta_cae_a_base(self):
+        import conflux.core.state as st
+        st._DEAD_OPT.add(('sg_tst_grp', 'muerto'))
+        ut, real, extra = C._cat_grp_extra('sg_tst_grp', 'genre=Muerto')
+        self.assertEqual(real, 'real1')          # fallback: primer miembro
+        self.assertNotIn('genre=', extra)
+
+    def test_label_viva_intacta(self):
+        ut, real, extra = C._cat_grp_extra('sg_tst_grp', 'genre=Muerto')
+        self.assertEqual(real, 'real2')
+        self.assertIn('genre=x', extra)
+
+    def test_base_muerta_oculta_catalogo(self):
+        import conflux.core.state as st
+        st._DEAD_OPT.add(('sfoo_movie_bar', ''))
+        src = type('S', (), {'name': 'Foo', 'base': 'http://x'})()
+        r = mf._mf_one_cat(src, {'id': 'bar', 'type': 'movie', 'name': 'Bar'},
+                           None, set())
+        self.assertIsNone(r)

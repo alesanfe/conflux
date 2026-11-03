@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import conflux.domain.manifest as MF
+import conflux.core.state as st
 from tests import cfg_swap, px
 
 
@@ -201,6 +202,8 @@ class TestBrowseablesSolo(unittest.TestCase):
 
     def _cats(self):
         old = list(px.manifests)
+        old_dead = set(st._DEAD_OPT)
+        st._DEAD_OPT.clear()                    # marcas de otros tests no ocultan aquí
         px.manifests[:] = [{'resources': ['catalog'], 'catalogs': [
             {'type': 'series', 'id': 'top', 'name': 'Top'},
             {'type': 'series', 'id': 'pop', 'name': 'Pop'},
@@ -215,6 +218,8 @@ class TestBrowseablesSolo(unittest.TestCase):
             return px.build_manifest()
         finally:
             px.manifests[:] = old
+            st._DEAD_OPT.clear()
+            st._DEAD_OPT.update(old_dead)
 
     def test_feed_y_filter_fuera_de_opciones(self):
         man = self._cats()

@@ -105,6 +105,8 @@ def _cat_grp_extra(cid, extra):
     """Agrupado: genre -> catálogo upstream elegido + picker año -> genre=año."""
     kv = dict(urllib.parse.parse_qsl(extra or ''))
     g = kv.pop('genre', None)
+    if g and (cid, g.lower()) in _DEAD_OPT:           # label muerta -> base del grupo
+        g = None
     y = kv.pop('year', None)                          # picker año (members con genre=año)
     utype, real, wants, forced = _GRP[cid].get(g) or next(iter(_GRP[cid].values()))
     if wants:
@@ -229,6 +231,7 @@ def _cat_norm(d):
 def handle_catalog(stype, cid, extra):
     """GET /catalog — routing: sintéticos, listas externas, rewrite anime y upstream."""
     key = (stype, cid, extra)
+    req_g = dict(urllib.parse.parse_qsl(extra or '')).get('genre')  # label pedida
     hit = _cget(_cat_c, key)
     if hit is not None:
         return _rpdb(hit)                                # rpdb es por perfil: fuera del caché
@@ -246,9 +249,11 @@ def handle_catalog(stype, cid, extra):
         _cat_norm(d)
         dead_g = None
         if not d.get('metas') and not d.get('metasDetailed'):   # opción vacía -> muerta
-            dead_g = dict(urllib.parse.parse_qsl(extra or '')).get('genre')
-            if dead_g:
-                _DEAD_OPT.add((cid, dead_g.lower()))
+            dead_g = req_g or True
+            if req_g:
+                _DEAD_OPT.add((cid, req_g.lower()))  # label pedida (grp y directos)
+            if not dict(urllib.parse.parse_qsl(extra or '')).get('genre'):
+                _DEAD_OPT.add((cid, ''))             # servido sin genre = base muerto
         _fix_metas(d)
         if not dead_g:
             _cset(_cat_c, key, d)                    # vacío por opción muerta: no cachear
