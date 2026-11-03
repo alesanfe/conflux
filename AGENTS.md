@@ -259,3 +259,17 @@ curl -s '127.0.0.1:9700/stream/series/kitsu%3A49847%3A2.json'   # kitsu abs-ep �
 curl -s '127.0.0.1:9700/stream/movie/tt0137523.json'            # película → >200
 curl -s '127.0.0.1:9700/meta/series/mx%3A6429078990673560656%3Akagewani-gG7FoWufVE7.json'
 ```
+
+## MediaFusion auto-provisionado
+
+`mediafusion: true` (default) -> `infra/mediafusion.provision()` cifra una
+config de catálogos regionales vía `POST {host}/encrypt-user-data` de la
+instancia pública ElfHosted (sin cuenta — el secret_str va en la URL). Se
+llama sync dentro de `refresh_manifests()` (ya background) ANTES de enumerar
+SOURCES, y async desde `load_config` (maybe_provision) — R5: si se hiciera
+solo async, `_load_manifests_cache` en main() puede pisar manifests[] tras
+el append y la fuente queda en SOURCES sin manifest alineado. La instancia
+pública NO sirve streams sin cuenta propia (0 aun con timeout largo):
+aporta catálogos/metas regionales (tamil/hindi/telugu/kannada/malayalam/
+bangla/punjabi + live TV, agrupados en 3 cats con ~700 géneros); streams
+regionales reales los aporta DesiFlix.

@@ -141,9 +141,14 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   addon Stremio de la comunidad (base o `.../manifest.json`) — entran como
   fuentes completas (streams+catálogos+meta) y aparecen en `/configure` como
   desactivables. Quitarlos los elimina al siguiente `/reload`.
-- **Regional** — IndiaStreams (OTT India), DesiFlix (seriales/cine indio) y
-  LatinMovies (cine en español) integrados como fuentes; MediaFusion/AIOStreams
-  y cualquier addon con `/configure` propio entra generando su URL y
+- **Regional** — IndiaStreams (OTT India), DesiFlix (seriales/cine indio),
+  LatinMovies (cine en español) y **MediaFusion** integrados como fuentes.
+  MediaFusion se **auto-provisiona** al arrancar (`mediafusion: true` por
+  defecto): el proxy cifra una config con sus catálogos regionales vía
+  `/encrypt-user-data` de la instancia pública ElfHosted — 21 catálogos
+  (tamil/hindi/malayalam/kannada/telugu/bangla/punjabi/english + live TV +
+  búsqueda) sin cuenta ni pasos manuales. Cualquier otro addon con
+  `/configure` propio (AIOStreams, Comet…) entra generando su URL y
   pegándola en `extra_sources`.
 - **Preferidos** — `stream_preferred`: boost +300 en ranking (no filtro —
   cierra el trío exclude/required/preferred de AIOStreams); `source_timeout`

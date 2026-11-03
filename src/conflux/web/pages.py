@@ -77,6 +77,8 @@ def _cfg_form_fields(form, cfg):
         cfg['debrid_proxy'] = form['debrid_proxy'][-1] == '1'
     if 'parental' in form:
         cfg['parental'] = form['parental'][-1] == '1'
+    if 'mediafusion' in form:
+        cfg['mediafusion'] = form['mediafusion'][-1] == '1'
     if 'stream_langs' in form:
         cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
     for k in ('torznab_url', 'zilean_url', 'newznab_url', 'catalog_lists',
@@ -274,7 +276,11 @@ def _configure_page():
             f"parental <input type='hidden' name='parental' value='0'>"
             f"<input type='checkbox' name='parental' value='1'"
             f"{' checked' if CFG.get('parental') else ''} style='width:auto'>"
-            f" <span class='dim'>(fuera contenido adulto: streams + canales M3U)</span></p>"
+            f" <span class='dim'>(fuera contenido adulto: streams + canales M3U)</span> · "
+            f"mediafusion <input type='hidden' name='mediafusion' value='0'>"
+            f"<input type='checkbox' name='mediafusion' value='1'"
+            f"{' checked' if CFG.get('mediafusion') else ''} style='width:auto'>"
+            f" <span class='dim'>(regional India/Asia + live TV vía ElfHosted — perfil auto-provisionado)</span></p>"
             f"<h2>Catálogos</h2>"
             f"<p>Listas externas <span class='dim'>(URLs Trakt /lists/, IMDb /list/ o mdblist:ID — separadas por coma)</span><br>"
             f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://trakt.tv/users/me/lists/mis-favs, https://www.imdb.com/list/ls123456/'>"
@@ -320,6 +326,8 @@ def _configure_page():
             f"if(dx.length&&dx[dx.length-1].checked)o.debrid_proxy=true;"
             f"var px=document.querySelectorAll('[name=parental]');"
             f"if(px.length&&px[px.length-1].checked)o.parental=true;"
+            f"var mf=document.querySelectorAll('[name=mediafusion]');"
+            f"if(mf.length&&mf[mf.length-1].checked===false)o.mediafusion=false;"
             f"var sf=document.querySelector('[name=stream_format]');if(sf&&sf.value)o.stream_format=sf.value;"
             f"var sd=[];document.querySelectorAll('[name=src]').forEach(c=>{{if(!c.checked)sd.push(c.value);}});"
             f"if(sd.length)o.sources_disabled=sd;"

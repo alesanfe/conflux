@@ -109,14 +109,15 @@ class H(BaseHTTPRequestHandler):
         'debrid_provider', 'debrid_key', 'calendar_months_ahead',
         'stream_max_gb', 'stream_prefetch', 'stream_required', 'stream_sort',
         'stream_format', 'debrid_proxy', 'parental', 'stream_preferred',
-        'source_timeout',
+        'source_timeout', 'mediafusion',
         'opensubtitles_key', 'opensubtitles_user', 'opensubtitles_pass', 'mdblist_key'})
     _CFG_URL_LIST = frozenset({'stream_langs', 'stream_exclude', 'catalogs_disabled',
                                'sources_disabled', 'source_order', 'stream_required',
                                'stream_sort', 'stream_preferred'})
     _CFG_URL_NUM = {'calendar_months_ahead': (0, 24),      # cota: builds de calendario
                     'stream_max_gb': (0, 100000), 'source_timeout': (0, 30)}
-    _CFG_URL_BOOL = frozenset({'stream_prefetch', 'debrid_proxy', 'parental'})
+    _CFG_URL_BOOL = frozenset({'stream_prefetch', 'debrid_proxy', 'parental',
+                               'mediafusion'})
 
     @classmethod
     def _cfg_url_ok(cls, k, v):

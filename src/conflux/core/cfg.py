@@ -85,6 +85,8 @@ def _apply_extra_sources():
         if host and all(s.base != b for s in _SOURCES_BASE):       # sin duplicar la base
             add.append(Source(host, b))
     SOURCES[:] = _SOURCES_BASE + add                               # mutar in situ (identidad)
+    from conflux.infra.mediafusion import maybe_provision          # local: core->infra
+    maybe_provision()                          # mediafusion: perfil cifrado lazy, sin cuenta
 
 
 def _ex_re(terms):

@@ -60,6 +60,7 @@ ENV2CFG = {
     'STREAM_PREFERRED': 'stream_preferred',
     'SOURCE_TIMEOUT': 'source_timeout',
     'PARENTAL': 'parental',
+    'MEDIAFUSION': 'mediafusion',
     'ADMIN_TOKEN': 'admin_token',
     'TLS_CERT': 'tls_cert',
     'TLS_KEY': 'tls_key',
@@ -74,7 +75,7 @@ ENV2CFG = {
 LIST_KEYS = {'sources_disabled', 'catalogs_disabled', 'source_order', 'stream_langs',
              'stream_exclude', 'stream_required', 'stream_preferred', 'extra_sources'}
 INT_KEYS = {'calendar_months_ahead', 'trakt_expires', 'source_timeout', 'stream_max_gb'}
-BOOL_KEYS = {'parental', 'debrid_proxy', 'stream_prefetch'}
+BOOL_KEYS = {'parental', 'debrid_proxy', 'stream_prefetch', 'mediafusion'}
 
 
 def _atomic_json(path, data):

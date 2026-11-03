@@ -1,0 +1,1 @@
+{"sources": {}, "fetch_fails": {"v3-cinemeta.strem.io": 1}, "streams_served": {}, "latency_ms": {"meta": {"n": 4, "avg": 13.2, "max": 50.1, "p50": 2.1, "p95": 50.1, "p99": 50.1}}}

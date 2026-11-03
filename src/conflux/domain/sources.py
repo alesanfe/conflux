@@ -41,6 +41,11 @@ def _persist_manifests():
 def refresh_manifests():
     """Re-descarga manifests de todas las fuentes (reintenta cold-starts) y persiste."""
     try:
+        from conflux.infra.mediafusion import provision    # local: domain->infra puntual
+        provision()           # sync: mediafusion entra en SOURCES antes de enumerar
+    except ImportError:                                      # módulo ausente: no bloquear
+        pass
+    try:
         fs = [_POOL_BG.submit(fetch, base + '/manifest.json', 10) for _, base in SOURCES]
     except RuntimeError:                     # pool ya cerrado en teardown del intérprete
         return
