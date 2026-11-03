@@ -5,7 +5,7 @@ Proxy unificador de addons Stremio en `http://127.0.0.1:9700` (systemd user `str
 ## Comandos
 
 ```bash
-python3 -m unittest discover -s tests -t .  # 289 tests (~35s): unit+integration+security+contract+property+resilience+regression+performance+e2e
+python3 -m unittest discover -s tests -t .  # 337+ tests: unit+integration+security+contract+property+resilience+regression+performance+e2e
 python3 -m unittest discover -s tests/unit -t .       # solo unit (~1s)
 scripts/check.sh                            # linters + suite + smoke endpoints + fuentes
 python3 -m mypy                             # type-check (config en pyproject)
@@ -76,6 +76,14 @@ Imports internos absolutos (`from conflux.infra.net import fetch`).
 journalctl --user -u stremio-proxy -f    # [done] muestra contrib por fuente + fallos
 curl -s 127.0.0.1:9700/health            # err/usable/streak por fuente
 ```
+
+**R7 · Windows: reiniciar de verdad — varios pythonw pueden convivir.**
+`pythonw proxy.py` no lleva 'conflux' en su CommandLine → los kill por nombre
+no lo alcanzan y el proceso viejo sigue en :9700 sirviendo código stale
+(los nuevos mueren al bind sin rastro). Matar SIEMPRE por cmdline:
+`Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" | ? CommandLine -like '*proxy.py*'`
+y comprobar el dueño del puerto: `Get-NetTCPConnection -LocalPort 9700 -State Listen`.
+Si muere sin log, mirar `bind_fail` en conflux.log.
 
 ## Taxonomía de bugs (de los reales encontrados)
 

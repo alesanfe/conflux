@@ -6,7 +6,7 @@ import urllib.parse
 import urllib.request
 
 from conflux.core.cfg import _cfgget
-from conflux.core.state import _POOL_BG, _YEARS, CFG, SOURCES, as_dict
+from conflux.core.state import _POOL_BG, _YEARS, SOURCES, as_dict
 from conflux.domain.lists import tmdb_year
 from conflux.domain.sources import _resolve_sid
 from conflux.infra.anilist import _anilist_airing

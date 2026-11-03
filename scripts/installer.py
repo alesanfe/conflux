@@ -468,9 +468,14 @@ class Installer(tk.Tk):
     def _do_proxy(self):
         bat = os.path.join(ROOT, 'start-conflux.bat')
         with open(bat, 'w', encoding='ascii') as f:
-            f.write(f'@echo off\ncd /d "{ROOT}"\n'
-                    f'start "" /min "{ROOT}\\.venv\\Scripts\\pythonw.exe" proxy.py '
-                    '>> conflux.log 2>&1\n')
+            # mismo launcher portable que setup_win.ps1: %~dp0, sin >> conflux.log
+            # (el proxy rota el log él solo; la redirección lo duplicaba y crecía)
+            f.write('@echo off\ncd /d "%~dp0"\n'
+                    'if exist .venv\\Scripts\\pythonw.exe (\n'
+                    '  start "" /min "%~dp0.venv\\Scripts\\pythonw.exe" proxy.py\n'
+                    ') else (\n'
+                    '  start "" /min pythonw.exe proxy.py\n'
+                    ')\n')
         if sys.platform == 'win32':
             startup = os.path.join(os.environ['APPDATA'],
                                    'Microsoft\\Windows\\Start Menu\\Programs\\Startup')

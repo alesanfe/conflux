@@ -152,7 +152,7 @@ class TestCfgUrlTypeBugs(unittest.TestCase):
                     {'stream_exclude': 'cam'}, {'stream_exclude': ['a', 1]}):
             cfg._PROF.cfg = bad
             try:
-                self.assertEqual(cfg._es_pat(), cfg.RE_ES.pattern)
+                self.assertIs(cfg._es_pat(), cfg.RE_ES)
                 self.assertIs(cfg._ex_pat(), cfg.RE_EX)
             finally:
                 cfg._PROF.cfg = None

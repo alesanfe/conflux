@@ -28,6 +28,7 @@ _EPG_TTL = 12 * 3600
 
 _LOCK = threading.Lock()
 _STATE = {'fetched': 0.0, 'map': {}, 'days': {}}
+_LOAD_LOCK = threading.Lock()
 _LOADING = [False]
 
 
@@ -144,9 +145,13 @@ def _reload():
 def epg_kick():
     """Dispara una recarga en background si el EPG falta o está viejo."""
     stale = (not _STATE['days']) or time.time() - _STATE['fetched'] > _EPG_TTL
-    if stale and not _LOADING[0]:
+    if not stale:
+        return
+    with _LOAD_LOCK:
+        if _LOADING[0]:
+            return                                   # ya hay una recarga en vuelo
         _LOADING[0] = True
-        _POOL_BG.submit(_reload)
+    _POOL_BG.submit(_reload)
 
 
 def _videos(cid, day):

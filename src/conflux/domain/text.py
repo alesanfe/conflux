@@ -165,7 +165,7 @@ def extract_fields(s):
         'cached': bool(bh.get('cached') or '☁️' in text or 'debrid' in text.lower()),
         'srctype': _prio(RE_SRCT.findall(text), SRCT_ORD),
         'hdr': _prio(RE_HDR.findall(text), HDR_ORD),
-        'es': bool(re.search(_es_pat(), text, re.IGNORECASE)),
+        'es': bool(_es_pat().search(text)),
     }
 
 

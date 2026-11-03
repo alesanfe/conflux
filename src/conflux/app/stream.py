@@ -9,7 +9,7 @@ import urllib.request
 from concurrent.futures import as_completed
 
 from conflux.core import cfg
-from conflux.core.cfg import _eff_disabled, _es_pat, _PROF, _strs
+from conflux.core.cfg import _eff_disabled, _es_pat, _pcfg, _strs
 from conflux.core.state import (
     _POOL,
     _POOL_BG,
@@ -195,7 +195,7 @@ def _lang_rows(rows):
     """rows -> (out,res,seeds,size,cached) con el patrón de idioma EFECTIVO del
     request: un perfil con stream_langs distinto re-puntúa y re-etiqueta la
     entrada cacheada (el flag/seeds horneados son del patrón global)."""
-    pc = getattr(_PROF, 'cfg', None)
+    pc = _pcfg()
     ovr = _strs(pc.get('stream_langs')) if isinstance(pc, dict) else None
     if not ovr:
         return [(r[0], r[1], r[2] + (500 if r[5]['es'] else 0), r[3], r[4])
@@ -207,7 +207,7 @@ def _lang_rows(rows):
             rr.append((r, 'SD', 0, 0, 0))
             continue
         out, res, seeds, size, cached, f, short = r
-        es = bool(re.search(pat, f['text'], re.IGNORECASE))
+        es = bool(pat.search(f['text']))
         if es != f['es']:
             f = dict(f)
             f['es'] = es

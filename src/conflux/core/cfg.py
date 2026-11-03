@@ -17,12 +17,33 @@ from conflux.core.state import (
 )
 
 
+def _coerce(k, v):
+    """Normaliza un valor de config.json al tipo de su default — un int guardado
+    como str (edición a mano / apply_env viejo) rompería aritmética o iteración."""
+    d = _CFG_DEFAULTS.get(k)
+    if v is None or d is None or isinstance(v, type(d)):
+        return v
+    try:
+        if isinstance(d, bool):
+            return v if isinstance(v, bool) else str(v).lower() in ('1', 'true', 'sí', 'si')
+        if isinstance(d, int):
+            return int(v)
+        if isinstance(d, str):
+            return str(v)
+        if isinstance(d, list):
+            return list(v) if isinstance(v, (list, tuple)) else [x.strip() for x in str(v).split(',') if x.strip()]
+    except (TypeError, ValueError):
+        pass
+    return d                                                   # irrecuperable → default
+
+
 def load_config():
     """Carga config.json sobre defaults; re-deriva _DISABLED y RE_ES."""
     CFG.clear()
     CFG.update(_CFG_DEFAULTS)                  # reset: borrar el archivo = defaults
     try:
-        CFG.update({k: v for k, v in json.load(_open(_CFG_FILE)).items() if k in CFG})
+        CFG.update({k: _coerce(k, v) for k, v in
+                    json.load(_open(_CFG_FILE)).items() if k in CFG})
     except (OSError, ValueError) as e:
         _log.warning('config.json ilegible (%s) — defaults', e)
     global RE_ES, RE_EX                                             # pylint: disable=global-statement
@@ -78,10 +99,15 @@ def _profile_load(name):
             _PROFILES[name] = {}
     return _PROFILES[name]
 
+def _pcfg():
+    """Dict de config del perfil activo en este hilo (None si va el global)."""
+    return getattr(_PROF, 'cfg', None)
+
+
 def _cfgget(k, default=None):
     """Valor efectivo: perfil > global, con guardia de tipos — un override con
     tipo distinto al global se ignora (p.ej. lists como str iteraría chars)."""
-    pc = getattr(_PROF, 'cfg', None)
+    pc = _pcfg()
     if pc is not None and k in pc:
         v, gv = pc[k], CFG.get(k, default)
         if gv is None or isinstance(v, type(gv)) or \
@@ -91,7 +117,7 @@ def _cfgget(k, default=None):
     return CFG.get(k, default)
 
 def _eff_disabled():
-    pc = getattr(_PROF, 'cfg', None)
+    pc = _pcfg()
     v = _strs(pc['sources_disabled']) if pc is not None and 'sources_disabled' in pc else None
     return set(v) if v is not None else _DISABLED
 
@@ -103,15 +129,15 @@ def _strs(v):
 
 
 def _es_pat():
-    pc = getattr(_PROF, 'cfg', None)
-    langs = _strs((pc or {}).get('stream_langs')) if pc else None
+    """Regex stream_langs efectivo (compiled, igual que _ex_pat)."""
+    langs = _strs((_pcfg() or {}).get('stream_langs'))
     if not langs:
-        return RE_ES.pattern
-    return r'\b(' + '|'.join(re.escape(x) for x in langs) + r')\b'
+        return RE_ES
+    return re.compile(r'\b(' + '|'.join(re.escape(x) for x in langs) + r')\b',
+                      re.IGNORECASE)
 
 
 def _ex_pat():
     """Regex stream_exclude efectivo: override de perfil si lo tiene, si no el global."""
-    pc = getattr(_PROF, 'cfg', None)
-    terms = _strs((pc or {}).get('stream_exclude')) if pc else None
+    terms = _strs((_pcfg() or {}).get('stream_exclude'))
     return _ex_re(terms) if terms is not None else RE_EX
