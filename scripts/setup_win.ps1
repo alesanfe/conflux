@@ -97,8 +97,12 @@ Write-Host '== lanzador + autostart =='
 $bat = Join-Path $PWD 'start-conflux.bat'
 @"
 @echo off
-cd /d "$PWD"
-start "" /min "$venvPy" proxy.py >> conflux.log 2>&1
+cd /d "%~dp0"
+if exist .venv\Scripts\pythonw.exe (
+  start "" /min "%~dp0.venv\Scripts\pythonw.exe" proxy.py
+) else (
+  start "" /min pythonw.exe proxy.py
+)
 "@ | Set-Content -Encoding ASCII $bat
 $startup = [Environment]::GetFolderPath('Startup')
 $ws = New-Object -ComObject WScript.Shell

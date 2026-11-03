@@ -3,14 +3,29 @@
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import json
 import logging
+import logging.handlers
 import os
+import sys
 import threading
 import time
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))))
+_LOG_FILE = os.path.join(_ROOT, 'conflux.log')
+
+_handlers = []
+if sys.stderr is not None:                            # consola si la hay (pythonw: None)
+    _handlers.append(logging.StreamHandler())
+try:
+    _handlers.append(logging.handlers.RotatingFileHandler(
+        _LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=1, encoding='utf-8'))
+except OSError:                                       # log bloqueado: solo consola
+    pass
+logging.basicConfig(level=logging.INFO, format='%(message)s',
+                    handlers=_handlers or [logging.NullHandler()])
 
 
 
