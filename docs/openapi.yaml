@@ -78,6 +78,12 @@ paths:
         - {name: hash, in: path, required: true, schema: {type: string}}
         - {name: fi, in: query, schema: {type: integer, default: 0}}
       responses: {'200': {description: body=stream + Content-* del upstream}, '404': {description: sin key/fallo}}
+  /nzb/{b64}:
+    get:
+      summary: Usenet (Newznab + TorBox): resuelve el NZB en base64url a URL HTTP cacheada
+      parameters:
+        - {name: b64, in: path, required: true, schema: {type: string}}
+      responses: {'302': {description: Location=URL}, '404': {description: sin torbox/fallo}}
   /health:
     get:
       summary: Salud por fuente + fails por host + latencias p50/p95/p99 + streams servidos

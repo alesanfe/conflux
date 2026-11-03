@@ -33,6 +33,7 @@ from conflux.domain.sources import _resolve_sid
 from conflux.domain.text import RANK, _qscore, _skip_manifest, _spam, build_display, norm_stream
 from conflux.infra.debrid import _debrid_mark
 from conflux.infra.net import _session, fetch
+from conflux.infra.newznab import _newznab
 from conflux.infra.torznab import _torznab
 from conflux.infra.zilean import _zilean
 
@@ -140,6 +141,16 @@ def _collect_zl(stype, sid):
     return 'Zilean', ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
 
 
+def _collect_nz(stype, sid):
+    """Worker Newznab (usenet via TorBox): mismo contrato que _collect_one."""
+    try:
+        ss = _newznab(stype, sid)
+    except Exception as e:                              # noqa: BLE001 — indexer nunca tumba el collect
+        log_ev('src_worker', err=repr(e)[:100])
+        return 'Newznab', [], 0
+    return 'Newznab', ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+
+
 def _collect(key, state):
     stype, sid, dis = key                     # dis: sources_disabled efectivo (perfil)
     sid = _resolve_sid(stype, sid)            # kitsu/mal -> imdb para las fuentes
@@ -148,6 +159,7 @@ def _collect(key, state):
         futs = [_POOL.submit(_collect_one, i, stype, sid, dis) for i in range(len(SOURCES))]
         futs.append(_POOL.submit(_collect_tz, stype, sid))     # indexer en paralelo: no como straggler en finally
         futs.append(_POOL.submit(_collect_zl, stype, sid))     # zilean (DMM cacheados): idem
+        futs.append(_POOL.submit(_collect_nz, stype, sid))     # newznab (usenet/torbox): idem
         pending = len(futs)
 
         def _nearly_done():                                    # ~2s: si solo cuelgan stragglers

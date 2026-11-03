@@ -77,11 +77,11 @@ def _cfg_form_fields(form, cfg):
         cfg['debrid_proxy'] = form['debrid_proxy'][-1] == '1'
     if 'stream_langs' in form:
         cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
-    for k in ('torznab_url', 'zilean_url', 'catalog_lists', 'opensubtitles_key',
-              'opensubtitles_user', 'epg_url', 'stream_format'):
+    for k in ('torznab_url', 'zilean_url', 'newznab_url', 'catalog_lists',
+              'opensubtitles_key', 'opensubtitles_user', 'epg_url', 'stream_format'):
         if k in form:
             cfg[k] = form[k][0].strip()
-    for k in ('torznab_key', 'mdblist_key', 'rpdb_key', 'opensubtitles_pass'):
+    for k in ('torznab_key', 'newznab_key', 'mdblist_key', 'rpdb_key', 'opensubtitles_pass'):
         if k in form and form[k][0].strip():
             cfg[k] = form[k][0].strip()
     for k in ('source_order', 'catalogs_disabled', 'stream_exclude', 'stream_required',
@@ -233,6 +233,9 @@ def _configure_page():
             f"<input name='torznab_key' value='' placeholder='apikey (no se muestra)'></p>"
             f"<p>Zilean <span class='dim'>(self-hosted: hashlists DMM ya cacheadas en debrid — más ⚡ sin coste)</span><br>"
             f"<input name='zilean_url' value='{CFG.get('zilean_url','')}' placeholder='http://localhost:8181 — vacío = off'></p>"
+            f"<p>Newznab / Usenet <span class='dim'>(NZBHydra2, Easynews vía hydra — requiere debrid TorBox)</span><br>"
+            f"<input name='newznab_url' value='{CFG.get('newznab_url','')}' placeholder='https://hydra/api — vacío = off'>"
+            f"<input name='newznab_key' type='password' value='' placeholder='apikey (no se muestra)'></p>"
             f"<p>OpenSubtitles <span class='dim'>(búsqueda con api key; la DESCARGA exige cuenta — "
             f"registro gratis en opensubtitles.com)</span><br>"
             f"<input name='opensubtitles_key' value='' placeholder='api key — vacío = off'>"

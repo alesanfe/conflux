@@ -124,6 +124,10 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
 - **Zilean** — `zilean_url` (self-hosted, docker `ipromknight/zilean`+postgres):
   hashlists DebridMediaManager = torrents **ya cacheados en debrid**; se sirven
   como streams ⚡ sin coste por consulta — más instant-playables gratis.
+- **Usenet / Newznab** — `newznab_url`+`newznab_key` (NZBHydra2, Easynews vía
+  hydra): items NZB servidos vía `/nzb/` → TorBox usenet
+  (`createusenetdownload`→`mylist`→`requestusenetdownload`). Requiere
+  `debrid_provider=torbox` — es el único provider integrado que sirve usenet.
 - **Listas externas** — `catalog_lists`: URLs de listas Trakt, IMDb (`/list/ls*`)
   o `mdblist:ID` (con `mdblist_key`) aparecen como catálogos.
 - **Perfiles** — `/p/<nombre>/manifest.json` usa `config.<nombre>.json`

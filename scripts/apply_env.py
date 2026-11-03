@@ -52,6 +52,8 @@ ENV2CFG = {
     'TORZNAB_URL': 'torznab_url',
     'TORZNAB_KEY': 'torznab_key',
     'ZILEAN_URL': 'zilean_url',
+    'NEWZNAB_URL': 'newznab_url',
+    'NEWZNAB_KEY': 'newznab_key',
     'ADMIN_TOKEN': 'admin_token',
     'TLS_CERT': 'tls_cert',
     'TLS_KEY': 'tls_key',

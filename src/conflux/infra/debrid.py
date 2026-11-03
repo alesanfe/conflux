@@ -245,6 +245,37 @@ def _db_resolve(p, h, fi):
         return None
 
 
+def _db_usenet(k, nzb_url):
+    """TorBox usenet: createusenetdownload -> mylist -> requestusenetdownload.
+    Solo torbox sirve NZB (los demás providers no tienen usenet)."""
+    if CFG.get('debrid_provider') != 'torbox' or not k:
+        return None
+    s = _session('api.torbox.app')
+    h_ = {'Authorization': f'Bearer {k}'}
+    try:
+        t = s.post('https://api.torbox.app/v1/api/usenet/createusenetdownload',
+                   data={'link': nzb_url}, headers=h_, timeout=15).json()
+        uid = (t.get('data') or {}).get('usenetdownload_id')
+        if not uid:
+            return None
+        m = s.get('https://api.torbox.app/v1/api/usenet/mylist',
+                  headers=h_, timeout=10).json()
+        item = next((x for x in (m.get('data') or [])
+                     if x.get('usenetdownload_id') == uid), {})
+        fs = [f for f in item.get('files', [])
+              if str(f.get('name', '')).lower().endswith(_VIDEO_EXT)]
+        fsel = max(fs or item.get('files', []), key=lambda f: f.get('size', 0), default=None)
+        q = {'token': k, 'usenet_id': uid}
+        if fsel is not None and fsel.get('id') is not None:
+            q['file_id'] = fsel['id']
+        lnk = s.get('https://api.torbox.app/v1/api/usenet/requestusenetdownload',
+                    params=q, headers=h_, timeout=10).json()
+        d = lnk.get('data')
+        return d.get('link') if isinstance(d, dict) else d
+    except Exception:                                            # noqa: BLE001 — boundary: None, nunca crash
+        return None
+
+
 def _db_stream(p, h, fi, rq_headers):
     """Resuelve y abre el enlace debrid en modo stream (para /dp/). Reenvía los
     headers de validación del cliente (Range/If-*) — sin ellos el player no

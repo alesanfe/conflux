@@ -130,6 +130,7 @@ _CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '',
                  'stream_max_gb': 0, 'stream_prefetch': True,
                  'stream_sort': [], 'stream_required': [], 'stream_format': '',
                  'zilean_url': '', 'debrid_proxy': False,
+                 'newznab_url': '', 'newznab_key': '',
                  'trakt_access_token': '', 'trakt_refresh_token': '', 'trakt_expires': 0,
                  'epg_url': 'https://epgshare01.online/epgshare01/epg_ripper_ES1.xml.gz'}
 

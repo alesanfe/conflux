@@ -36,7 +36,7 @@ from conflux.core.state import (
 )
 from conflux.domain.catalog import handle_catalog
 from conflux.domain.sources import _load_manifests_cache, _persist_manifests, refresh_manifests
-from conflux.infra.debrid import _db_resolve, _db_stream
+from conflux.infra.debrid import _db_resolve, _db_stream, _db_usenet
 from conflux.web.pages import (
     _admin_page,
     _configure_page,
@@ -203,6 +203,14 @@ class H(BaseHTTPRequestHandler):
             _, _, pvd, h = p.split('/')
             fi = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('fi', ['0'])[0]
             return self._db_proxy(pvd, h, fi)
+        if p.startswith('/nzb/'):                                      # usenet (newznab -> torbox)
+            b = p[5:]
+            try:
+                link = base64.urlsafe_b64decode(b + '=' * (-len(b) % 4)).decode()
+            except (ValueError, UnicodeDecodeError, binascii.Error):
+                link = ''
+            return self._redir(_db_usenet(CFG.get('debrid_key', ''), link)
+                               if link.startswith('http') else None)
         if p.startswith('/s/'):                                        # subtitle redirect
             return self._redir(_sub_download(p.rsplit('/', 1)[-1]))
         return self._timed_route(p)

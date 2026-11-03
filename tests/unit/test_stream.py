@@ -318,6 +318,128 @@ class TestStreamFormat(unittest.TestCase):
             undo()
 
 
+class TestNewznab(unittest.TestCase):
+    """infra.newznab — items NZB -> streams /nzb/<b64>; gate torbox."""
+
+    _XML = ('<rss><channel>'
+            '<item><title>F.2024.1080p</title><link>https://idx/page/1</link>'
+            '<enclosure url="https://idx/getnzb/1?apikey=k" length="1500"/>'
+            '</item>'
+            '<item><title>sin-enclosure</title><link>https://idx/page/2</link></item>'
+            '</channel></rss>')
+
+    def _sess(self, xml):
+        class R:
+            content = xml.encode()
+        class S_:
+            def get(self_, url, **kw):
+                return R()
+        return S_()
+
+    def test_parseo_enclosure(self):
+        import base64
+        from unittest import mock
+        from conflux.infra import newznab
+        from tests import cfg_swap
+        _, undo = cfg_swap(newznab_url='http://nz/api', newznab_key='k',
+                           debrid_provider='torbox', debrid_key='tk')
+        try:
+            with mock.patch.object(newznab, '_session', return_value=self._sess(self._XML)):
+                ss = newznab._newznab('movie', 'tt0137523')
+        finally:
+            undo()
+        self.assertEqual(len(ss), 1)                       # item sin enclosure/link-http: fuera
+        u = ss[0]['url']
+        self.assertIn('/nzb/', u)
+        b = u.rsplit('/nzb/', 1)[-1]
+        self.assertEqual(base64.urlsafe_b64decode(b + '=' * (-len(b) % 4)).decode(),
+                         'https://idx/getnzb/1?apikey=k')
+        self.assertEqual(ss[0]['behaviorHints']['videoSize'], 1500)
+
+    def test_gate_no_torbox(self):
+        from unittest import mock
+        from conflux.infra import newznab
+        from tests import cfg_swap
+        _, undo = cfg_swap(newznab_url='http://nz/api', newznab_key='k',
+                           debrid_provider='real-debrid', debrid_key='tk')
+        try:
+            with mock.patch.object(newznab, '_session', return_value=self._sess(self._XML)):
+                self.assertEqual(newznab._newznab('movie', 'tt0137523'), [])
+        finally:
+            undo()
+
+    def test_episode_params(self):
+        from unittest import mock
+        from conflux.infra import newznab
+        from tests import cfg_swap
+        seen = {}
+
+        class R:
+            content = b'<rss><channel></channel></rss>'
+
+        class S_:
+            def get(self_, url, params=None, **kw):
+                seen.update(params or {})
+                return R()
+        _, undo = cfg_swap(newznab_url='http://nz/api', newznab_key='k',
+                           debrid_provider='torbox', debrid_key='tk')
+        try:
+            with mock.patch.object(newznab, '_session', return_value=S_()):
+                newznab._newznab('series', 'tt0944947:2:5')
+        finally:
+            undo()
+        self.assertEqual(seen['season'], '2')
+        self.assertEqual(seen['ep'], '5')
+
+
+class TestDbUsenet(unittest.TestCase):
+    """_db_usenet — flujo TorBox usenet: create -> mylist -> requestdl."""
+
+    def test_flujo(self):
+        from unittest import mock
+        from conflux.infra import debrid
+        from tests import cfg_swap
+        calls = []
+
+        class S_:
+            def post(self_, url, data=None, **kw):
+                calls.append(('post', url, data))
+                class R:
+                    def json(self_):
+                        return {'data': {'usenetdownload_id': 7}}
+                return R()
+
+            def get(self_, url, params=None, **kw):
+                calls.append(('get', url, params))
+                class R:
+                    def json(self_):
+                        if 'mylist' in url:
+                            return {'data': [{'usenetdownload_id': 7, 'files': [
+                                {'id': 3, 'name': 'f.mkv', 'size': 9},
+                                {'id': 4, 'name': 'nfo.txt', 'size': 1}]}]}
+                        return {'data': 'https://cdn.torbox/x.mkv'}
+                return R()
+        _, undo = cfg_swap(debrid_provider='torbox', debrid_key='tk')
+        try:
+            with mock.patch.object(debrid, '_session', return_value=S_()):
+                out = debrid._db_usenet('tk', 'https://idx/getnzb/1')
+        finally:
+            undo()
+        self.assertEqual(out, 'https://cdn.torbox/x.mkv')
+        self.assertIn('usenet/createusenetdownload', calls[0][1])
+        req = calls[-1][2]
+        self.assertEqual(req['file_id'], 3)            # mayor fichero de vídeo
+
+    def test_gate_provider(self):
+        from conflux.infra import debrid
+        from tests import cfg_swap
+        _, undo = cfg_swap(debrid_provider='real-debrid', debrid_key='k')
+        try:
+            self.assertIsNone(debrid._db_usenet('k', 'http://x/nzb'))
+        finally:
+            undo()
+
+
 class TestStreamMaxGb(unittest.TestCase):
     """stream_max_gb: policy mínima de ranking — un 4K de 80GB no siempre gana."""
 
