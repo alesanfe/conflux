@@ -60,8 +60,8 @@ class Installer(tk.Tk):
              'Addon Stremio', 'Trakt (opcional)', 'Fin']
     USTEPS = ['Detener procesos', 'Autostart + addon', 'Borrar runtime',
               'Prowlarr', 'Fin']
-    ICONS = ['⚙', '◈', '✎', '▶', '⬇', '✱', '✓']
-    U_ICONS = ['⏻', '✕', '🗑', '◈', '✓']
+    ICONS = ['1', '2', '3', '4', '5', '6', '7']
+    U_ICONS = ['1', '2', '3', '4', '5']
 
     def __init__(self):
         super().__init__()
@@ -87,6 +87,9 @@ class Installer(tk.Tk):
         self._build_chrome()
         self.after(150, self._pump)
         self._mode_screen()
+        self.after(80, lambda: (self.lift(), self.focus_force(),
+                                self.attributes('-topmost', True),
+                                self.after(400, lambda: self.attributes('-topmost', False))))
 
     # ==================== CHROME (layout fijo) ====================
     def _build_chrome(self):
@@ -100,8 +103,11 @@ class Installer(tk.Tk):
         self.banner_sub = tk.Label(banner, text='Setup', bg=ACC, fg='#d9d2f7',
                                    font=self.f_txt)
         self.banner_sub.pack(side='left', pady=18)
-        tk.Label(banner, text='⬢', bg=ACC, fg='#cabcf5',
-                 font=tkfont.Font(size=22)).pack(side='right', padx=20)
+        hexico = tk.Canvas(banner, width=30, height=30, bg=ACC,
+                           highlightthickness=0)
+        hexico.create_polygon(15, 3, 26, 9, 26, 21, 15, 27, 4, 21, 4, 9,
+                              fill='', outline='#e6dffc', width=2)
+        hexico.pack(side='right', padx=20, pady=17)
 
         mid = tk.Frame(self, bg=BG)
         mid.pack(fill='both', expand=True)
@@ -135,7 +141,16 @@ class Installer(tk.Tk):
         foot = tk.Frame(self, bg=BG2, height=58)
         foot.pack(fill='x', side='bottom')
         foot.pack_propagate(False)
-        self.pbar = ttk.Progressbar(foot, maximum=len(self.STEPS) - 1)
+        sty = ttk.Style(self)
+        try:
+            sty.theme_use('clam')
+        except tk.TclError:
+            pass
+        sty.configure('conflux.Horizontal.TProgressbar', troughcolor=BG2,
+                      background=ACC, bordercolor=BG2, lightcolor=ACC,
+                      darkcolor=ACC, thickness=4)
+        self.pbar = ttk.Progressbar(foot, maximum=len(self.STEPS) - 1,
+                                    style='conflux.Horizontal.TProgressbar')
         self.pbar.pack(fill='x', padx=1, side='top')
         inner = tk.Frame(foot, bg=BG2)
         inner.pack(fill='x', expand=True, pady=8)
@@ -217,7 +232,7 @@ class Installer(tk.Tk):
             cur = i == self.cur
             ic.config(text='✓' if done else self.icons[i],
                       fg=OK if done else (ACC if cur else DIM))
-            lb.config(fg=ACC if cur else (OK if done else FG if self.mode == 'install' else FG),
+            lb.config(fg=ACC if cur else (OK if done else FG),
                       font=self.f_step_b if cur else self.f_step)
 
     def next_step(self):
@@ -236,6 +251,27 @@ class Installer(tk.Tk):
         self._busy()
         threading.Thread(target=fn, daemon=True).start()
 
+    # ---------- iconos vectoriales (Canvas — nítidos, sin depender de emojis) ----------
+    def _icon_canvas(self, parent, kind, size=28, color='#a48af5', bg=BG2):
+        """Dibuja un icono: 'dl' flecha-descarga | 'trash' papelera."""
+        c = tk.Canvas(parent, width=size, height=size, bg=bg,
+                      highlightthickness=0)
+        s = size / 28.0                     # escala base 28px
+        if kind == 'dl':                    # flecha hacia bandeja
+            c.create_line(14*s, 4*s, 14*s, 17*s, fill=color, width=round(3*s))
+            c.create_line(8*s, 12*s, 14*s, 18*s, fill=color, width=round(3*s))
+            c.create_line(20*s, 12*s, 14*s, 18*s, fill=color, width=round(3*s))
+            c.create_line(5*s, 24*s, 23*s, 24*s, fill=color, width=round(3*s))
+        elif kind == 'trash':               # papelera
+            c.create_line(8*s, 8*s, 20*s, 8*s, fill=color, width=round(2.4*s))
+            c.create_line(12*s, 8*s, 12*s, 5*s, 16*s, 5*s, 16*s, 8*s,
+                          fill=color, width=round(2*s))
+            c.create_line(9*s, 8*s, 10.5*s, 23*s, 17.5*s, 23*s, 19*s, 8*s,
+                          fill=color, width=round(2*s))
+            c.create_line(13*s, 11*s, 13*s, 20*s, fill=color, width=round(1.6*s))
+            c.create_line(15*s, 11*s, 15*s, 20*s, fill=color, width=round(1.6*s))
+        return c
+
     # ---------- pantalla de modo ----------
     def _mode_screen(self):
         self.banner_sub.config(text='Setup')
@@ -244,25 +280,42 @@ class Installer(tk.Tk):
         self._clear_body()
         self.btn_next.pack_forget()
         self.btn_skip.pack_forget()
+        # sidebar = panel de marca (estilo página bienvenida de Inno)
+        for w in self.side.winfo_children()[1:]:
+            w.destroy()
+        self.lbl_steps = []
+        tk.Label(self.side, text='conflux', bg=BG2, fg=ACC,
+                 font=tkfont.Font(family='Segoe UI', size=15, weight='bold')
+                 ).pack(anchor='w', padx=18, pady=(14, 2))
+        tk.Label(self.side, text='Media center\nlocal para Stremio',
+                 bg=BG2, fg=DIM, font=self.f_txt, justify='left'
+                 ).pack(anchor='w', padx=18)
 
-        def card(txt, sub, cmd):
-            c = tk.Frame(self.body, bg=BG2, highlightbackground=BORD,
+        row = tk.Frame(self.body, bg=BG)
+        row.pack(expand=True)
+
+        def card(txt, icon, sub, cmd, accent=ACC):
+            c = tk.Frame(row, bg=BG2, highlightbackground=BORD,
                          highlightthickness=1, cursor='hand2')
-            c.pack(side='left', padx=12, pady=16, ipadx=22, ipady=18)
-            for w in (tk.Label(c, text=txt, bg=BG2, fg=FG,
-                               font=tkfont.Font(family='Segoe UI', size=13, weight='bold')),
-                      tk.Label(c, text=sub, bg=BG2, fg=DIM, font=self.f_txt,
-                               justify='left', wraplength=200)):
-                w.pack(anchor='w', pady=3)
+            c.pack(side='left', padx=14, ipadx=20, ipady=16)
+            ico = self._icon_canvas(c, icon)
+            ico.pack(anchor='w', pady=(0, 8))
+            tk.Label(c, text=txt, bg=BG2, fg=FG,
+                     font=tkfont.Font(family='Segoe UI', size=13, weight='bold')
+                     ).pack(anchor='w')
+            tk.Label(c, text=sub, bg=BG2, fg=DIM, font=self.f_txt,
+                     justify='left', wraplength=200).pack(anchor='w', pady=3)
             for w in (c, *c.winfo_children()):
                 w.bind('<Button-1>', lambda e, f=cmd: f())
+                w.bind('<Enter>', lambda e, fr=c: fr.config(highlightbackground=ACC))
+                w.bind('<Leave>', lambda e, fr=c: fr.config(highlightbackground=BORD))
             return c
 
-        card('⬇  Instalar', 'Monta todo el entorno:\nvenv · Prowlarr · indexers\n'
-                            'proxy · autostart · addon\nlogin Trakt opcional',
+        card('Instalar', 'dl', 'Monta todo el entorno:\nvenv · Prowlarr · indexers\n'
+                               'proxy · autostart · addon\nlogin Trakt opcional',
              lambda: self._set_mode('install'))
-        card('🗑  Desinstalar', 'Quita todo lo instalado:\nprocesos · autostart · runtime\n'
-                              'Prowlarr · (opcional) claves\ny la propia carpeta',
+        card('Desinstalar', 'trash', 'Quita todo lo instalado:\nprocesos · autostart · runtime\n'
+                                     'Prowlarr · (opcional) claves\ny la propia carpeta',
              lambda: self._set_mode('uninstall'))
 
     def _set_mode(self, mode):
