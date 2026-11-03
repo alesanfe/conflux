@@ -5,6 +5,7 @@ import time
 import urllib.parse
 import urllib.request
 
+from conflux.core.cfg import _cfgget
 from conflux.core.state import _POOL_BG, _YEARS, CFG, SOURCES, as_dict
 from conflux.domain.lists import tmdb_year
 from conflux.domain.sources import _resolve_sid
@@ -224,7 +225,7 @@ def _estrenos_cal(_extra=None):
     top_ids, fs, fs_amv, td = _cal_seed_ids(cine, kitsu, anise)
     _cal_series_eps(cine, top_ids, seen, out)
     _cal_films(tmdb, fs, fs_amv, td, hoy, seen, out)
-    days = CFG.get('calendar_months_ahead', 2) * 31
+    days = _cfgget('calendar_months_ahead', 2) * 31        # _cfgget: override de perfil
     _cal_anime_eps(cine, days, seen, out)
     _cal_trakt(cine, days, hoy, seen, out)
     # orden: próximo estreno primero (vista navegable + calendario)

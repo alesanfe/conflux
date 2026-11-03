@@ -30,8 +30,19 @@ def load_config():
     _DISABLED.update(CFG.get('sources_disabled') or [])
     langs = '|'.join(re.escape(x) for x in CFG.get('stream_langs') or ['es'])
     RE_ES = re.compile(rf'\b({langs})\b', re.IGNORECASE)              # langs configurables en vivo
-    excl = '|'.join(re.escape(x) for x in CFG.get('stream_exclude') or [])
-    RE_EX = re.compile(rf'({excl})', re.IGNORECASE) if excl else re.compile(r'(?!)')
+    RE_EX = _ex_re(CFG.get('stream_exclude'))
+
+
+def _ex_re(terms):
+    """stream_exclude -> regex. Términos cortos (<=3: 'ts','cam') van con borde
+    alfanumérico — 'ts' como substring pura mataría CATS/BOOTS/BTS; los largos
+    ('camrip','screener') van substring para enganchar nombres fusionados."""
+    parts = []
+    for x in terms or []:
+        e = re.escape(x)
+        parts.append(e if len(x) > 3 else rf'(?<![a-z0-9]){e}(?![a-z0-9])')
+    return re.compile(r'(?:' + '|'.join(parts) + ')', re.IGNORECASE) if parts \
+        else re.compile(r'(?!)')            # inline: _RE_NEVER aún no existe en init
 
 def _save_cfg():
     try:
@@ -69,18 +80,39 @@ def _profile_load(name):
     return _PROFILES[name]
 
 def _cfgget(k, default=None):
+    """Valor efectivo: perfil > global, con guardia de tipos — un override con
+    tipo distinto al global se ignora (p.ej. lists como str iteraría chars)."""
     pc = getattr(_PROF, 'cfg', None)
     if pc is not None and k in pc:
-        return pc[k]
+        v, gv = pc[k], CFG.get(k, default)
+        if gv is None or isinstance(v, type(gv)) or \
+                (isinstance(gv, (int, float)) and isinstance(v, (int, float))):
+            return v
+        return gv
     return CFG.get(k, default)
 
 def _eff_disabled():
     pc = getattr(_PROF, 'cfg', None)
-    return set(pc['sources_disabled']) if pc is not None and 'sources_disabled' in pc else _DISABLED
+    v = _strs(pc['sources_disabled']) if pc is not None and 'sources_disabled' in pc else None
+    return set(v) if v is not None else _DISABLED
+
+def _strs(v):
+    """Coerce a lista[str]; tipos raros (int, str plano) -> None -> fallback global."""
+    if isinstance(v, (list, tuple)) and all(isinstance(x, str) for x in v):
+        return list(v)
+    return None
+
 
 def _es_pat():
     pc = getattr(_PROF, 'cfg', None)
-    langs = (pc or {}).get('stream_langs') if pc else None
+    langs = _strs((pc or {}).get('stream_langs')) if pc else None
     if not langs:
         return RE_ES.pattern
     return r'\b(' + '|'.join(re.escape(x) for x in langs) + r')\b'
+
+
+def _ex_pat():
+    """Regex stream_exclude efectivo: override de perfil si lo tiene, si no el global."""
+    pc = getattr(_PROF, 'cfg', None)
+    terms = _strs((pc or {}).get('stream_exclude')) if pc else None
+    return _ex_re(terms) if terms is not None else RE_EX

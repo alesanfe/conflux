@@ -59,7 +59,8 @@ def _csv_list(form, k):
 
 def _cfg_form_fields(form, cfg):
     """Campos restantes del form -> cfg (listas CSV, claves opcionales)."""
-    cfg['horizon_days'] = int(form.get('horizon_days', [CFG['horizon_days']])[0] or CFG['horizon_days'])
+    cfg['calendar_months_ahead'] = int(form.get('calendar_months_ahead',
+        [CFG.get('calendar_months_ahead', 2)])[0] or 2)
     cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
     for k in ('torznab_url', 'catalog_lists', 'opensubtitles_key', 'opensubtitles_user'):
         cfg[k] = form.get(k, [''])[0].strip()
@@ -193,10 +194,10 @@ def _configure_page():
             f"<input name='opensubtitles_key' value='' placeholder='api key — vacío = off'>"
             f"<input name='opensubtitles_user' value='{CFG.get('opensubtitles_user','')}' placeholder='usuario (descarga)'>"
             f"<input name='opensubtitles_pass' type='password' value='' placeholder='contraseña (no se muestra)'></p>"
-            f"<p>Horizonte calendario (días) <input name='horizon_days' value='{CFG.get('horizon_days',45)}' style='width:80px'>"
+            f"<p>Meses de calendario hacia adelante <input name='calendar_months_ahead' value='{CFG.get('calendar_months_ahead',2)}' style='width:80px'>"
             f" · idiomas streams <input name='stream_langs' value='{langs}' style='width:200px'></p>"
             f"<p>Filtros de stream <span class='dim'>(términos a excluir, coma — p.ej. cam,screener,ts,720p)</span><br>"
-            f"<input name='stream_exclude' value='{','.join(CFG.get('stream_exclude') or [])}' placeholder='cam, hdcam, screener, telesync'>"
+            f"<input name='stream_exclude' value='{','.join(CFG.get('stream_exclude') or [])}' placeholder='cam, camrip, hdcam, hdts, ts, screener, telesync'>"
             f"<input name='rpdb_key' value='' placeholder='rpdb apikey — posters con rating (ratingposterdb.com)'></p>"
             f"<h2>Catálogos</h2>"
             f"<p>Listas externas <span class='dim'>(URLs Trakt /lists/, IMDb /list/ o mdblist:ID — separadas por coma)</span><br>"

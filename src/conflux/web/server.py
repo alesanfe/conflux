@@ -98,10 +98,25 @@ class H(BaseHTTPRequestHandler):
     # claves permitidas en la cfg de la URL (nada de paths/URLs -> SSRF;
     # nada de trakt_*/admin/tls -> tokens del servidor fuera de scope)
     _CFG_URL_KEYS = frozenset({
-        'stream_langs', 'stream_exclude', 'rpdb_key', 'horizon_days',
+        'stream_langs', 'stream_exclude', 'rpdb_key',
         'catalogs_disabled', 'sources_disabled', 'source_order',
         'debrid_provider', 'debrid_key', 'calendar_months_ahead',
         'opensubtitles_key', 'opensubtitles_user', 'opensubtitles_pass', 'mdblist_key'})
+    _CFG_URL_LIST = frozenset({'stream_langs', 'stream_exclude', 'catalogs_disabled',
+                               'sources_disabled', 'source_order'})
+    _CFG_URL_INT = frozenset({'calendar_months_ahead'})
+
+    @classmethod
+    def _cfg_url_ok(cls, k, v):
+        """Whitelist + tipos: un list-clave como int/str rompe los patrones
+        (itera chars/int); un int-clave como str contamina config."""
+        if k not in cls._CFG_URL_KEYS:
+            return False
+        if k in cls._CFG_URL_LIST:
+            return isinstance(v, list) and all(isinstance(x, str) for x in v)
+        if k in cls._CFG_URL_INT:
+            return type(v) is int
+        return isinstance(v, str)
 
     def _profile(self, p):
         """/p/<nombre>/... o /cfg/<b64json>/... -> carga config y devuelve el path real."""
@@ -116,7 +131,7 @@ class H(BaseHTTPRequestHandler):
                 dc = json.loads(base64.urlsafe_b64decode(seg + '=' * (-len(seg) % 4)))
                 if isinstance(dc, dict):
                     _PROF.name = 'cfg-' + seg[:8]
-                    _PROF.cfg = {k: v for k, v in dc.items() if k in self._CFG_URL_KEYS}
+                    _PROF.cfg = {k: v for k, v in dc.items() if self._cfg_url_ok(k, v)}
                     return cm.group(2)
             except (ValueError, binascii.Error):
                 pass                                                # cfg rota -> perfil normal

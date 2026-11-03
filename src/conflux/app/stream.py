@@ -179,7 +179,8 @@ def _ex_out(streams):
     en name/title/description — p.ej. 'cam,screener,ts' para no ver rips de cine."""
     if not streams:
         return streams
-    return [s for s in streams if not cfg.RE_EX.search(
+    pat = cfg._ex_pat()                                # override de perfil si lo hay
+    return [s for s in streams if not pat.search(
         ' '.join(str(s.get(k) or '') for k in ('name', 'title', 'description')))]
 
 

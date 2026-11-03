@@ -36,7 +36,6 @@ ENV2CFG = {
     'TLS_CERT': 'tls_cert',
     'TLS_KEY': 'tls_key',
     'CALENDAR_MONTHS_AHEAD': 'calendar_months_ahead',
-    'HORIZON_DAYS': 'horizon_days',
     'SOURCES_DISABLED': 'sources_disabled',
     'CATALOGS_DISABLED': 'catalogs_disabled',
     'SOURCE_ORDER': 'source_order',
@@ -46,7 +45,7 @@ ENV2CFG = {
 }
 LIST_KEYS = {'sources_disabled', 'catalogs_disabled', 'source_order', 'stream_langs',
              'stream_exclude'}
-INT_KEYS = {'calendar_months_ahead', 'horizon_days', 'trakt_expires'}
+INT_KEYS = {'calendar_months_ahead', 'trakt_expires'}
 
 
 def _atomic_json(path, data):

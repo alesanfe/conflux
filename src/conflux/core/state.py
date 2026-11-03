@@ -119,7 +119,7 @@ except (OSError, ValueError) as e:
 _CFG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 'config.json')
 
 _CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '',
-                 'm3u_path': '', 'debrid_provider': '', 'debrid_key': '', 'horizon_days': 45,
+                 'm3u_path': '', 'debrid_provider': '', 'debrid_key': '',
                  'stream_langs': ['es', 'latam', 'spanish', 'castellano', 'espanol'],
                  'sources_disabled': [], 'trakt_client_secret': '',
                  'torznab_url': '', 'torznab_key': '', 'mdblist_key': '',

@@ -91,7 +91,7 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   MediaFusion, Comet, AIOStreams… — su `/configure` upstream genera la URL y
   se pega tal cual en `base`.
 - `config.json` — `trakt_client_id`, `debrid_provider`/`debrid_key`, `m3u_path`,
-  `horizon_days`, `stream_langs`, `sources_disabled`, `torznab_url`/`torznab_key`,
+  `stream_langs`, `sources_disabled`, `torznab_url`/`torznab_key`,
   `mdblist_key`, `catalog_lists`, `opensubtitles_key` (todas opcionales).
 - `POST /reload` — aplica `config.json` en caliente y limpia cachés.
 - `/health` — estado por fuente, fails por host y latencia por ruta.
@@ -126,7 +126,7 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
 - **Config en URL** — `/cfg/<b64json>/manifest.json` (estilo Torrentio):
   `/configure` genera la URL con idiomas/filtros/rpdb/debrid incrustados —
   cada URL es un addon distinto sin tocar `config.json`.
-- **Filtros de stream** — `stream_exclude` (términos csv: `cam,screener,ts…`)
+- **Filtros de stream** — `stream_exclude` (términos csv: `cam,camrip,hdts,ts,screener…`; ≤3 chars con borde de palabra, ≥4 substring)
   saca releases malos de la lista, estilo AIOStreams. `rpdb_key` sirve
   posters con rating (ratingposterdb.com, gratis) estilo MediaFusion.
 - **Subtítulos** — con `opensubtitles_key`: recurso `subtitles` ES-first,
