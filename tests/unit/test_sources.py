@@ -85,3 +85,25 @@ class TestAtomicJson(unittest.TestCase):
             self.assertEqual(json.load(fh), {'a': 2})
         self.assertFalse(os.path.exists(path + '.tmp'))
         os.unlink(path)
+
+
+class TestResPrefixesColon(unittest.TestCase):
+    """idPrefixes con ':' final (DesiFlix 'dsx:', MediaFusion 'tmdb:') ->
+    normalizados; _id_prefix nunca devuelve colon (R1)."""
+
+    def test_colon_strip(self):
+        from conflux.domain.sources import res_prefixes
+        m = {'resources': [{'name': 'stream', 'idPrefixes': ['dsx:', 'tt', 'tmdb:']}]}
+        self.assertEqual(res_prefixes(m, 'stream'), {'dsx', 'tt', 'tmdb'})
+
+    def test_sin_colon_intacto(self):
+        from conflux.domain.sources import res_prefixes
+        m = {'resources': [{'name': 'stream', 'idPrefixes': ['tt', 'kitsu']}]}
+        self.assertEqual(res_prefixes(m, 'stream'), {'tt', 'kitsu'})
+
+    def test_skip_manifest_dsx(self):
+        from conflux.domain.text import _skip_manifest
+        m = {'resources': [{'name': 'stream', 'types': ['movie'],
+                            'idPrefixes': ['dsx:', 'tt', 'tmdb:']}]}
+        self.assertIsNone(_skip_manifest(m, 'movie', 'dsx:c:abc123'))
+        self.assertIsNone(_skip_manifest(m, 'movie', 'tt0137523'))

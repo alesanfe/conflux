@@ -78,10 +78,13 @@ def res_types(m, res):
 
 
 def res_prefixes(m, res):
-    """idPrefixes declarados para un recurso; None = sin restricción declarada."""
+    """idPrefixes declarados para un recurso; None = sin restricción declarada.
+    Normaliza quitando ':' final — upstreams inconsistentes: DesiFlix declara
+    'dsx:' y MediaFusion 'tmdb:'/'tvdb:'/'mal:' con colon mientras _id_prefix
+    devuelve 'dsx'/'tmdb' sin él -> el gate los saltaba para sus propios ids."""
     for r in (m or {}).get('resources', []):
         if isinstance(r, dict) and (r.get('name') or r.get('id')) == res:
-            return set(r.get('idPrefixes') or []) or None
+            return {str(p).rstrip(':') for p in (r.get('idPrefixes') or [])} or None
     return None
 
 
