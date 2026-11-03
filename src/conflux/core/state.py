@@ -161,6 +161,8 @@ _cache: dict = {}            # (stype,sid) -> (ts, [streams])
 _meta_c: dict = {}            # meta cacheada
 
 _cat_c: dict = {}            # catálogo cacheado
+_DEAD_OPT: set = set()       # (cid, genre_lower) declaradas upstream pero siempre vacías
+                             # ('xxx' en iptv-all) -> no se emiten; piden = catálogo base
 
 HEALTH: dict = {}            # fuente -> {'ok':n,'fail':n,'last':ts,'err':str,'n':usable,'streak':n}
 

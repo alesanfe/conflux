@@ -7,7 +7,7 @@ import re
 import threading
 
 from conflux.core.cfg import _cfgget, _eff_disabled
-from conflux.core.state import _YEARS, CFG, SOURCES, manifests
+from conflux.core.state import _DEAD_OPT, _YEARS, CFG, SOURCES, manifests
 from conflux.domain.lists import _list_defs, _list_fetch
 
 # ---- manifest/catalgos/meta ----
@@ -123,6 +123,11 @@ def _mf_one_cat(src, c, keep, seen):
 def _mf_nc(src, c, cid):
     """Catálogo upstream -> nc del manifest (id renombrado, nombre, reclasif anime)."""
     nc = dict(c, id=cid, name=_cat_name(src.name, c))
+    if _DEAD_OPT and nc.get('extra'):                        # opciones muertas fuera
+        nc['extra'] = [dict(e, options=[o for o in e['options']
+                                        if (cid, str(o).lower()) not in _DEAD_OPT])
+                       if e.get('name') == 'genre' and e.get('options') else e
+                       for e in nc['extra']]                 # lista nueva: c['extra'] es compartida
     if nc.get('extraRequired'):
         del nc['extraRequired']  # 'genre' opcional: grid sin obligar filtro
     if c['type'] in ('movie', 'series') and _ANIME_CAT.search(f"{c.get('name', '')} {c['id']}"):
