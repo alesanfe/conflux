@@ -180,7 +180,10 @@ def _mf_grp_extra(opts, year_opts, members_in):
 
 
 def _mf_grp_opts(members_in):
-    """label único -> (ut, real_id, wants_year) por miembro del grupo."""
+    """label único -> (ut, real_id, wants_year, genre_forzado) por miembro del
+    grupo. Los miembros con géneros propios (no-año) exponen 'Label · sub' para
+    que sus vistas por género sigan alcanzables plegadas — sin ello el grupo
+    pedía el catálogo pelado y las vistas por género quedaban muertas."""
     opts = collections.OrderedDict()
     for _r, nc, wants in members_in:
         label = _noemoji(nc['name'].split(' · ', 1)[-1] or nc['id'])
@@ -189,7 +192,15 @@ def _mf_grp_opts(members_in):
             label = f"{label} ({ut.title()})"
         while label in opts:
             label += ' ·'
-        opts[label] = (ut, real, wants)
+        opts[label] = (ut, real, wants, None)
+        subs = next((e.get('options') for e in (nc.get('extra') or [])
+                     if e.get('name') == 'genre'), None)
+        if subs and not _year_opts(subs):                # género=año ya lo cubre el picker year
+            for s in subs[:20]:                          # cota: el picker no explota
+                sub = f'{label} · {s}'
+                while sub in opts:
+                    sub += ' ·'
+                opts[sub] = (ut, real, wants, s)
     return opts
 
 

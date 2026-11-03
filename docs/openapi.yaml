@@ -22,6 +22,18 @@ paths:
         - {name: perfil, in: path, required: true, schema: {type: string}}
       responses:
         '200': {description: manifest con id/nombre propios}
+  /cfg/{b64json}/manifest.json:
+    get:
+      summary: Manifest con config incrustada en la URL (estilo Torrentio)
+      description: b64json = base64url de un objeto con claves whitelisted
+        (stream_langs, stream_exclude, rpdb_key, horizon_days, catalogs_disabled,
+        sources_disabled, source_order, debrid_provider, debrid_key,
+        calendar_months_ahead, opensubtitles_key, mdblist_key). La misma
+        convención aplica a cualquier ruta bajo /cfg/{b64json}/...
+      parameters:
+        - {name: b64json, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: manifest con id/nombre propios (cfg-<seg>)}
   /stream/{type}/{id}.json:
     get:
       summary: Streams agregados (dedup + orden calidad/semillas/ES + ⚡debrid)

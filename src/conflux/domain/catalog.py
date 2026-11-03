@@ -105,9 +105,11 @@ def _cat_grp_extra(cid, extra):
     kv = dict(urllib.parse.parse_qsl(extra or ''))
     g = kv.pop('genre', None)
     y = kv.pop('year', None)                          # picker año (members con genre=año)
-    utype, real, wants = _GRP[cid].get(g) or next(iter(_GRP[cid].values()))
+    utype, real, wants, forced = _GRP[cid].get(g) or next(iter(_GRP[cid].values()))
     if wants:
         kv['genre'] = y or _YR_OPTS[cid][0]     # sin año: el más reciente
+    if forced:
+        kv['genre'] = forced                   # 'Label · sub' -> genre=sub upstream
     return utype, real, urllib.parse.urlencode(kv, safe=',')
 
 
