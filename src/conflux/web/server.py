@@ -41,6 +41,7 @@ from conflux.web.pages import (
     _configure_page,
     _configure_save,
     _health_page,
+    _landing_page,
     _manifest_reply,
     _trakt_auth_page,
     _trakt_status,
@@ -121,23 +122,18 @@ class H(BaseHTTPRequestHandler):
         if p in ('/admin', '/configure') and not self._authd():
             self.reply({'err': 'forbidden'}, 403)
             return True
-        if p == '/manifest.json':
-            self.reply(_manifest_reply())
+        if p in ('/manifest.json', '/health', '/auth/trakt/status'):
+            self.reply({'/manifest.json': _manifest_reply,
+                        '/health': _health_page,
+                        '/auth/trakt/status': _trakt_status}[p]())
             return True
-        if p == '/health':
-            self.reply(_health_page())
-            return True
-        if p == '/admin':
-            self._html(_admin_page())
-            return True
-        if p == '/configure':
-            self._html(_configure_page())
-            return True
-        if p == '/auth/trakt':
-            self._html(_trakt_auth_page())
-            return True
-        if p == '/auth/trakt/status':
-            self.reply(_trakt_status())
+        html = {'/': lambda: _landing_page(self.headers.get('Host') or f'127.0.0.1:{PORT}',
+                                           bool(CFG.get('tls_cert'))),
+                '/admin': _admin_page,
+                '/configure': _configure_page,
+                '/auth/trakt': _trakt_auth_page}.get(p)
+        if html:
+            self._html(html())
             return True
         return False
     # dispatcher HTTP: los muchos returns son la forma natural del router

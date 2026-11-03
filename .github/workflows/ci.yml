@@ -15,7 +15,7 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: pip install -r requirements-dev.txt
-      - run: ruff check src tests
+      - run: ruff check src tests scripts
       - run: pylint src/conflux --reports=n --fail-under=9.5
       - run: xenon --max-absolute B --max-modules B --max-average A src/conflux
       - run: mypy

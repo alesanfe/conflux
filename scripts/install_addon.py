@@ -10,7 +10,14 @@
 Requisito: Stremio COMPLETAMENTE cerrado (si corre, persistirá su estado en
 memoria encima de este cambio al salir).
 """
-import glob, json, os, sqlite3, sys, urllib.request
+import glob
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+import time
+import urllib.request
 
 PROXY_MANIFEST = 'http://127.0.0.1:9700/manifest.json'
 DB_GLOB = os.path.expanduser(
@@ -30,7 +37,27 @@ def find_db():
     return None
 
 
+def ensure_stremio_cerrado():
+    """Stremio abierto persistiría su estado encima al salir (R6).
+    Con --kill se le cierra (flatpak kill) y se espera a 0 procesos."""
+    if subprocess.run(['pgrep', '-f', 'com.stremio.Stremio'],
+                      check=False, capture_output=True).returncode != 0:
+        return
+    if '--kill' not in sys.argv:
+        sys.exit('Stremio está abierto — ciérralo, o reejecuta con --kill '
+                 '(flatpak kill com.stremio.Stremio)')
+    print('cerrando Stremio (flatpak kill)…')
+    subprocess.run(['flatpak', 'kill', 'com.stremio.Stremio'], check=False, capture_output=True)
+    for _ in range(50):
+        if subprocess.run(['pgrep', '-f', 'com.stremio.Stremio'],
+                          check=False, capture_output=True).returncode != 0:
+            return
+        time.sleep(.2)
+    sys.exit('Stremio no terminó de cerrarse')
+
+
 def main():
+    ensure_stremio_cerrado()
     db = find_db()
     if not db:
         sys.exit('No se encontró localstorage.sqlite3 — ¿Stremio instalado y abierto alguna vez?')

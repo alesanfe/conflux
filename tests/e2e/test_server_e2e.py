@@ -148,6 +148,13 @@ class ServerE2E(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn(b'<html', b)
 
+    def test_landing_install(self):
+        """/ : landing del addon — deep link stremio:// con el host servido."""
+        code, b = _get(self.port, '/', raw=True)
+        self.assertEqual(code, 200)
+        self.assertIn(f'stremio://127.0.0.1:{self.port}/manifest.json'.encode(), b)
+        self.assertIn(f'http://127.0.0.1:{self.port}/manifest.json'.encode(), b)
+
     def test_configure_200_html(self):
         code, b = _get(self.port, '/configure', raw=True)
         self.assertEqual(code, 200)

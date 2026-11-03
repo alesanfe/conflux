@@ -82,3 +82,20 @@ class TestTraktAuthBranches(unittest.TestCase):
         finally:
             undo()
         self.assertIn('No se pudo iniciar', html)
+
+
+class TestLandingPage(unittest.TestCase):
+    def test_landing_host_loopback(self):
+        h = pg._landing_page('127.0.0.1:9700', tls=False)
+        self.assertIn('stremio://127.0.0.1:9700/manifest.json', h)
+        self.assertIn('http://127.0.0.1:9700/manifest.json', h)
+
+    def test_landing_host_lan(self):
+        """La URL de instalación sigue al Host header: LAN/dominio también."""
+        h = pg._landing_page('192.168.1.50:9700', tls=False)
+        self.assertIn('stremio://192.168.1.50:9700/manifest.json', h)
+
+    def test_landing_tls_https(self):
+        h = pg._landing_page('addon.example.com', tls=True)
+        self.assertIn('https://addon.example.com/manifest.json', h)
+        self.assertNotIn('http://addon', h)

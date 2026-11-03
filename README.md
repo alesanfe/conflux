@@ -8,18 +8,36 @@ ordenados por calidad/semillas, resolución de ids (kitsu/mal/tmdb → imdb), ca
 agrupados con selectores, feed de calendario auto-poblado (series + anime de temporada
 + estrenos de cine) y resiliencia ante upstreams caídos.
 
-## Instalar
+## Instalar como addon
+
+El addon corre en tu máquina — GitHub aloja el código, no el servicio.
+
+**Todo en uno** (Ubuntu + flatpak Stremio):
 
 ```bash
-# dependencia: python3 + requests (apt install python3-requests)
-mkdir -p ~/.config/systemd/user
-cp stremio-proxy.service ~/.config/systemd/user/
-sed -i "s|/home/alesanfe|$HOME|" ~/.config/systemd/user/stremio-proxy.service
-systemctl --user daemon-reload && systemctl --user enable --now stremio-proxy
-curl localhost:9700/health
+./scripts/setup.sh           # deps + servicio systemd + registro en tu perfil Stremio
 ```
 
-En Stremio: añade el addon `http://127.0.0.1:9700/manifest.json`.
+Si Stremio está abierto, `python3 scripts/install_addon.py --kill` lo cierra y
+registra el addon (local SQLite + colección remota si hay sesión).
+
+**Un click** — con el servicio corriendo, abre `http://127.0.0.1:9700/` y pulsa
+«Instalar en Stremio». El deep link `stremio://` usa el Host de la petición:
+funciona igual vía loopback, IP de LAN o dominio público (con `tls_cert`+`tls_key`
+en config.json el link sale https).
+
+**Manual** — Stremio → Addons → pega la URL del manifest:
+
+```
+http://127.0.0.1:9700/manifest.json
+```
+
+**Solo el servicio** (sin tocar el perfil de Stremio):
+
+```bash
+./scripts/setup.sh --no-addon
+docker compose up -d            # alternativa: contenedor, puerto 9700
+```
 
 ## Configuración
 
@@ -60,9 +78,9 @@ En Stremio: añade el addon `http://127.0.0.1:9700/manifest.json`.
 
 ## Otros despliegues
 
-```bash
-docker compose up -d         # Dockerfile mínimo, puerto 9700
-```
+Despliegue público: expón el puerto detrás de TLS (`tls_cert`/`tls_key` en
+`config.json`) y fija `admin_token` — las páginas admin quedan protegidas y el
+landing sirve el deep link https automáticamente.
 
 Rutas documentadas en `docs/openapi.yaml`.
 

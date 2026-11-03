@@ -12,10 +12,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'src'))
 sys.path.insert(0, ROOT)
 
-import proxy as px  # noqa: E402
-from conflux.app.meta import handle_meta  # noqa: E402
-from conflux.domain.catalog import handle_catalog  # noqa: E402
-from tests import patch_fetch  # noqa: E402  (tests/__init__ pone sys.path)
+import proxy as px
+from tests import patch_fetch  # (tests/__init__ pone sys.path)
+
+from conflux.app.meta import handle_meta
+from conflux.domain.catalog import handle_catalog
 
 REC = {}
 
@@ -26,8 +27,6 @@ def _norm(url):
 
 
 def _rec(url, timeout=None):
-    global REC
-    import conflux.infra.net as net
     d = _REAL(url, timeout)
     if d is not None:
         REC[_norm(url)] = d
@@ -35,8 +34,8 @@ def _rec(url, timeout=None):
 
 
 def main():
-    global _REAL
-    import conflux.infra.net as net
+    global _REAL                                    # pylint: disable=global-variable-undefined
+    from conflux.infra import net
     _REAL = net.fetch
 
     undo = patch_fetch(_rec)

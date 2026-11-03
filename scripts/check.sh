@@ -10,7 +10,7 @@ t() { # t <nombre> <condición>
 }
 echo "== linters =="
 if python3 -c 'import ruff' 2>/dev/null || python3 -m ruff --version >/dev/null 2>&1; then
-  python3 -m ruff check src tests >/dev/null 2>&1 && echo "  ok  ruff" || { echo " FAIL ruff"; fail=1; }
+  python3 -m ruff check src tests scripts >/dev/null 2>&1 && echo "  ok  ruff" || { echo " FAIL ruff"; fail=1; }
   python3 -m mypy >/dev/null 2>&1 && echo "  ok  mypy" || { echo " FAIL mypy"; fail=1; }
   python3 -m pylint src/conflux --reports=n --fail-under=9.5 >/dev/null 2>&1 && echo "  ok  pylint" || { echo " FAIL pylint"; fail=1; }
   python3 -m xenon --max-absolute B --max-modules B --max-average A src/conflux >/dev/null 2>&1 && echo "  ok  xenon" || { echo " FAIL xenon"; fail=1; }

@@ -104,6 +104,27 @@ _PAGE_CSS = ('<style>body{font:15px/1.5 system-ui;background:#0f0f14;color:#e8e8
              '.ok{color:#4ade80}.bad{color:#f87171}.dim{color:#8b8ba0;font-size:13px}</style>')
 
 
+def _landing_page(host, tls):
+    """/ : puerta del addon — botón stremio:// host-aware + URL manifest manual.
+    host viene del header HTTP: loopback, LAN o dominio público generan el
+    deep link correcto para dondequiera que se abra la página."""
+    scheme = 'https' if tls else 'http'
+    man = f'{scheme}://{host}/manifest.json'
+    return (f"<html><head><title>conflux</title>{_PAGE_CSS}</head><body>"
+            f"<h1>conflux · streams unificados</h1>"
+            f"<p class='dim'>Addon agregador: catálogos, streams, metas, subtítulos, "
+            f"calendario, Trakt, debrid, torznab y M3U — detrás de un solo manifest.</p>"
+            f"<p><a class='btn' href='stremio://{host}/manifest.json' "
+            f"style='font-size:19px;padding:12px 24px'>Instalar en Stremio</a></p>"
+            f"<p class='dim'>¿No abre la app? Stremio → Addons → pega esta URL en el buscador:<br>"
+            f"<code style='background:#1a1a24;padding:4px 8px;border-radius:6px'>{man}</code></p>"
+            f"<p><a class='btn' href='/configure'>configurar</a> "
+            f"<a class='btn' href='/admin'>admin</a> "
+            f"<a class='btn' href='/health'>health</a> "
+            f"<a class='btn' href='/manifest.json'>manifest</a></p>"
+            f"</body></html>")
+
+
 def _admin_page():
     now = time.time()
     rows = []
