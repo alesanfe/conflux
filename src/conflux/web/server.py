@@ -101,7 +101,7 @@ class H(BaseHTTPRequestHandler):
         'stream_langs', 'stream_exclude', 'rpdb_key', 'horizon_days',
         'catalogs_disabled', 'sources_disabled', 'source_order',
         'debrid_provider', 'debrid_key', 'calendar_months_ahead',
-        'opensubtitles_key', 'mdblist_key'})
+        'opensubtitles_key', 'opensubtitles_user', 'opensubtitles_pass', 'mdblist_key'})
 
     def _profile(self, p):
         """/p/<nombre>/... o /cfg/<b64json>/... -> carga config y devuelve el path real."""

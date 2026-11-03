@@ -53,15 +53,48 @@ def handle_subtitles(stype, sid):
         return {'subtitles': []}
 
 
+_OS_TOK: dict = {}        # token JWT OpenSubtitles + ts (login ~24h)
+
+
+def _os_login():
+    """Login opensubtitles.com -> JWT (Bearer). /download exige cuenta de usuario:
+    la Api-Key pública sirve para /subtitles (búsqueda) pero /download responde
+    503/403 sin Bearer propio. Cache 23h; caduca -> reloguea en el próximo /s/."""
+    key = _cfgget('opensubtitles_key')
+    user, pw = _cfgget('opensubtitles_user'), _cfgget('opensubtitles_pass')
+    if not (key and user and pw):
+        return None
+    import time
+    if _OS_TOK.get('token') and time.time() - _OS_TOK.get('ts', 0) < 23 * 3600:
+        return _OS_TOK['token']
+    try:
+        d = _session('api.opensubtitles.com').post(
+            'https://api.opensubtitles.com/api/v1/login',
+            json={'username': user, 'password': pw},
+            headers={'Api-Key': key, 'User-Agent': 'conflux 1.0'}, timeout=8).json()
+        tok = d.get('token')
+        if tok:
+            _OS_TOK['token'], _OS_TOK['ts'] = tok, time.time()
+        return tok
+    except (requests.RequestException, ValueError):
+        return None
+
+
 def _sub_download(file_id):
-    """file_id -> URL CDN (POST /download) para redirect 302."""
+    """file_id -> URL CDN (POST /download) para redirect 302.
+    Con cuenta: Bearer propio (cuota diaria del usuario). Sin cuenta: Api-Key
+    pública (suele dar 503 — el endpoint realmente exige login)."""
     key = _cfgget('opensubtitles_key')
     if not key:
         return None
+    h = {'Api-Key': key, 'User-Agent': 'conflux 1.0'}
+    tok = _os_login()
+    if tok:
+        h['Authorization'] = f'Bearer {tok}'
     try:
         return (_session('api.opensubtitles.com').post(
             'https://api.opensubtitles.com/api/v1/download', json={'file_id': int(file_id)},
-            headers={'Api-Key': key, 'User-Agent': 'conflux 1.0'}, timeout=8)
+            headers=h, timeout=8)
             .json().get('link'))
     except (requests.RequestException, ValueError):
         return None

@@ -61,9 +61,9 @@ def _cfg_form_fields(form, cfg):
     """Campos restantes del form -> cfg (listas CSV, claves opcionales)."""
     cfg['horizon_days'] = int(form.get('horizon_days', [CFG['horizon_days']])[0] or CFG['horizon_days'])
     cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
-    for k in ('torznab_url', 'catalog_lists', 'opensubtitles_key'):
+    for k in ('torznab_url', 'catalog_lists', 'opensubtitles_key', 'opensubtitles_user'):
         cfg[k] = form.get(k, [''])[0].strip()
-    for k in ('torznab_key', 'mdblist_key', 'rpdb_key'):
+    for k in ('torznab_key', 'mdblist_key', 'rpdb_key', 'opensubtitles_pass'):
         if form.get(k, [''])[0].strip():
             cfg[k] = form[k][0].strip()
     cfg['source_order'] = _csv_list(form, 'source_order')
@@ -188,8 +188,11 @@ def _configure_page():
             f"<p>Torznab <span class='dim'>(Prowlarr/Jackett local — fuente extra de streams)</span><br>"
             f"<input name='torznab_url' value='{CFG.get('torznab_url','')}' placeholder='http://localhost:9696/api/v1.0/indexers/all/results/torznab'>"
             f"<input name='torznab_key' value='' placeholder='apikey (no se muestra)'></p>"
-            f"<p>OpenSubtitles <span class='dim'>(endpoint /subtitles ES-first)</span><br>"
-            f"<input name='opensubtitles_key' value='' placeholder='api key — vacío = off'></p>"
+            f"<p>OpenSubtitles <span class='dim'>(búsqueda con api key; la DESCARGA exige cuenta — "
+            f"registro gratis en opensubtitles.com)</span><br>"
+            f"<input name='opensubtitles_key' value='' placeholder='api key — vacío = off'>"
+            f"<input name='opensubtitles_user' value='{CFG.get('opensubtitles_user','')}' placeholder='usuario (descarga)'>"
+            f"<input name='opensubtitles_pass' type='password' value='' placeholder='contraseña (no se muestra)'></p>"
             f"<p>Horizonte calendario (días) <input name='horizon_days' value='{CFG.get('horizon_days',45)}' style='width:80px'>"
             f" · idiomas streams <input name='stream_langs' value='{langs}' style='width:200px'></p>"
             f"<p>Filtros de stream <span class='dim'>(términos a excluir, coma — p.ej. cam,screener,ts,720p)</span><br>"

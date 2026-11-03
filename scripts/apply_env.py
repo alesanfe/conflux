@@ -24,6 +24,8 @@ ENV2CFG = {
     'TRAKT_CLIENT_ID': 'trakt_client_id',
     'TRAKT_CLIENT_SECRET': 'trakt_client_secret',
     'OPENSUBTITLES_KEY': 'opensubtitles_key',
+    'OPENSUBTITLES_USER': 'opensubtitles_user',
+    'OPENSUBTITLES_PASS': 'opensubtitles_pass',
     'MDBLIST_KEY': 'mdblist_key',
     'CATALOG_LISTS': 'catalog_lists',
     'M3U_PATH': 'm3u_path',                   # M3U_URL descarga la lista a m3u/ y apunta ahí

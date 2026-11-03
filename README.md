@@ -130,7 +130,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   saca releases malos de la lista, estilo AIOStreams. `rpdb_key` sirve
   posters con rating (ratingposterdb.com, gratis) estilo MediaFusion.
 - **Subtítulos** — con `opensubtitles_key`: recurso `subtitles` ES-first,
-  redirect `/s/<file_id>` al CDN.
+  redirect `/s/<file_id>` al CDN. La descarga exige cuenta de usuario
+  (`opensubtitles_user`/`pass` — registro gratis en opensubtitles.com, cuota
+  diaria propia); sin ella `/s/` responde 503/404 (la api key sola no basta).
 - **M3U propio** — `m3u_path` → catálogo tv «Mis canales» + streams directos.
   Con `epg_url` (XMLTV público, default epgshare ES) el catálogo se declara guía
   nativa (`behaviorHints.epgProvider` + extra `date`) y Stremio muestra la
