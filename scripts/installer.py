@@ -29,6 +29,7 @@ TRAKT_CLIENT_ID=bfdd2e032c30c35b368f97ef4ec81587b899bcb028b91a1d4ba5589a4b6a7267
 TRAKT_CLIENT_SECRET=bf9fce37cf45c1de91da009e7ac6fca905a35d7a718bf65a52f92199073a2503
 OPENSUBTITLES_KEY=gUCLWGoAg2PmyseoTM0INFFVPcDCeDlT
 M3U_URL=https://iptv-org.github.io/iptv/countries/es.m3u
+EPG_URL=https://epgshare01.online/epgshare01/epg_ripper_ES1.xml.gz
 """
 
 try:
