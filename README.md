@@ -39,6 +39,21 @@ http://127.0.0.1:9700/manifest.json
 docker compose up -d            # alternativa: contenedor, puerto 9700
 ```
 
+## Replicar este entorno en otra máquina
+
+`config*.json` (claves, listas, M3U) y `sources.json` (fuentes+orden) están
+gitignored — son machine-local. `env_backup.sh` los empaqueta y `setup.sh --env`
+los restaura antes de montar servicio+addon:
+
+```bash
+# máquina origen
+./scripts/env_backup.sh                    # → env-backup-<ts>.tar.gz
+
+# máquina destino
+git clone <repo> && cd conflux
+./scripts/setup.sh --env env-backup-*.tar.gz   # mismo entorno exactamente
+```
+
 ## Configuración
 
 - **`/configure`** — UI web: fuentes on/off, Trakt client_id, debrid (RD/TorBox),

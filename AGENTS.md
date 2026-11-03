@@ -21,6 +21,8 @@ python3 -m mypy                             # type-check (config en pyproject)
 # Regenerar tras tocar routing: python3 scripts/record_e2e.py && gzip -9kf
 # Live real: CONFLUX_E2E_LIVE=1 python3 -m unittest tests.e2e.test_server_e2e
 systemctl --user restart stremio-proxy      # tras editar src/conflux/
+./scripts/env_backup.sh                    # snapshot config*/sources.json → tar.gz
+./scripts/setup.sh --env <tar.gz>          # otra máquina: mismo entorno exacto
 
 ## Estructura (src-layout estándar PyPA)
 
@@ -29,7 +31,7 @@ Repo en `~/apps/conflux`:
 - `src/conflux/`     paquete por capas (imports absolutos `from conflux.* import`)
 - `proxy.py`         entry + fachada compat (inserta src/ en sys.path)
 - `tests/`           unit/ integration/ security/ e2e/ + `fixtures/` (datos reales)
-- `scripts/`         check.sh, setup.sh, install_addon.py, stremio-proxy.service
+- `scripts/`         check.sh, setup.sh (--env restaura backup), install_addon.py, env_backup.sh, record_e2e.py, stremio-proxy.service
 - `docs/`            openapi.yaml
 - `pyproject.toml`   metadata PEP 621 + deps + config herramientas
 - `requirements.in`/`requirements.txt`  deps directas → lock con hashes (pip-compile)

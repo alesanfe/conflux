@@ -17,3 +17,5 @@ config.*.json
 coverage.xml
 htmlcov/
 mutants/
+env-backup*/
+env-backup-*.tar.gz
