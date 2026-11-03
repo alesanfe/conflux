@@ -6,6 +6,7 @@ from concurrent.futures import TimeoutError as FutureTimeout
 from concurrent.futures import as_completed
 
 from conflux.app.stream import _eff_disabled, _ensure_collect
+from conflux.core.cfg import _cfgget
 from conflux.core.state import _POOL, SOURCES, _cget, _cset, _cstale, _meta_c, manifests
 from conflux.domain.metafix import _fix_metas, _rpdb
 from conflux.domain.sources import res_of, res_types
@@ -59,8 +60,10 @@ def handle_meta(stype, mid):
     if hit is not None:
         return _rpdb(hit)                                # rpdb es por perfil: fuera del caché
     # prefetch: en pelis el stream-id coincide con el meta-id — al abrir la
-    # ficha ya se recolecta en background y el stream sale al instante
-    if stype == 'movie' and ':' not in mid:
+    # ficha ya se recolecta en background y el stream sale al instante.
+    # stream_prefetch=False -> opt-out (privacidad/banda): no consulta fuentes
+    # hasta que el usuario pulse reproducir de verdad.
+    if stype == 'movie' and ':' not in mid and _cfgget('stream_prefetch', True):
         _ensure_collect(('movie', mid, tuple(sorted(_eff_disabled()))))  # clave completa del collect
     # estrenos del calendario llegan como 'series' aunque sean pelis: fallback
     for want in _meta_try(stype):

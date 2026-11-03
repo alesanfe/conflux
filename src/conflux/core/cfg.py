@@ -40,15 +40,26 @@ def _coerce(k, v):
     return d                                                   # irrecuperable → default
 
 
+_CFG_ENV_REF: dict = {}        # k -> (var, resuelto): 'env:X' re-emite la ref al guardar
+
+
 def load_config():
     """Carga config.json sobre defaults; re-deriva _DISABLED y RE_ES."""
     CFG.clear()
     CFG.update(_CFG_DEFAULTS)                  # reset: borrar el archivo = defaults
     try:
-        CFG.update({k: _coerce(k, v) for k, v in
-                    json.load(_open(_CFG_FILE)).items() if k in CFG})
+        raw = json.load(_open(_CFG_FILE))
+        unk = sorted(k for k in raw if k not in _CFG_DEFAULTS)
+        if unk:                                       # observabilidad: keys huérfanas/stale
+            _log.info('config.json: claves desconocidas ignoradas: %s', ', '.join(unk))
+        CFG.update({k: _coerce(k, v) for k, v in raw.items() if k in CFG})
     except (OSError, ValueError) as e:
         _log.warning('config.json ilegible (%s) — defaults', e)
+    _CFG_ENV_REF.clear()
+    for k, v in list(CFG.items()):                     # "env:VAR" -> variable de entorno:
+        if isinstance(v, str) and v.startswith('env:'):  # secretos fuera del archivo
+            _CFG_ENV_REF[k] = (v[4:], os.environ.get(v[4:], ''))
+            CFG[k] = _CFG_ENV_REF[k][1]
     global RE_ES, RE_EX                                             # pylint: disable=global-statement
     _DISABLED.clear()
     _DISABLED.update(CFG.get('sources_disabled') or [])
@@ -70,8 +81,14 @@ def _ex_re(terms):
 
 def _save_cfg():
     try:
-        _atomic_json(_CFG_FILE,
-                     {k: v for k, v in CFG.items() if v or isinstance(v, list)})
+        out = {}
+        for k, v in CFG.items():
+            ref = _CFG_ENV_REF.get(k)
+            if ref and v == ref[1]:
+                out[k] = 'env:' + ref[0]               # ref intacta: re-emitir, nunca el secreto
+            elif v or isinstance(v, (list, bool)):
+                out[k] = v                             # bool: stream_prefetch=False debe persistir
+        _atomic_json(_CFG_FILE, out)
     except OSError:
         pass
 

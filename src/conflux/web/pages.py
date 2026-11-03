@@ -66,6 +66,13 @@ def _cfg_form_fields(form, cfg):
             cfg['calendar_months_ahead'] = max(1, min(int(form['calendar_months_ahead'][0]), 24))
         except (TypeError, ValueError):              # 'abc', '', None -> sin tocar
             pass
+    if 'stream_max_gb' in form:
+        try:
+            cfg['stream_max_gb'] = max(0, int(form['stream_max_gb'][0]))
+        except (TypeError, ValueError):
+            pass
+    if 'stream_prefetch' in form:                    # hidden 0 + checkbox 1 -> último gana
+        cfg['stream_prefetch'] = form['stream_prefetch'][-1] == '1'
     if 'stream_langs' in form:
         cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
     for k in ('torznab_url', 'catalog_lists', 'opensubtitles_key', 'opensubtitles_user', 'epg_url'):
@@ -135,6 +142,20 @@ def _landing_page(host, tls):
             f"<a class='btn' href='/admin'>admin</a> "
             f"<a class='btn' href='/health'>health</a> "
             f"<a class='btn' href='/manifest.json'>manifest</a></p>"
+            f"</body></html>")
+
+
+def _login_page(to='/admin', err=''):
+    """Form de acceso cuando admin_token está activo — el token va en una
+    cookie HttpOnly+SameSite=Strict, nunca en la URL (historial/Referer)."""
+    err_h = f"<p class='bad'>{err}</p>" if err else ''
+    return (f"<html><head><title>conflux · acceso</title>{_PAGE_CSS}</head><body>"
+            f"<h1>conflux · acceso</h1>{err_h}"
+            f"<form method='post' action='/login'>"
+            f"<input type='hidden' name='to' value='{to}'>"
+            f"<p>Token de administrador<br>"
+            f"<input type='password' name='token' autofocus style='max-width:320px'></p>"
+            f"<p><button type='submit'>entrar</button></p></form>"
             f"</body></html>")
 
 
@@ -216,6 +237,11 @@ def _configure_page():
             f"<p>Filtros de stream <span class='dim'>(términos a excluir, coma — p.ej. cam,screener,ts,720p)</span><br>"
             f"<input name='stream_exclude' value='{','.join(CFG.get('stream_exclude') or [])}' placeholder='cam, camrip, hdcam, hdts, ts, screener, telesync'>"
             f"<input name='rpdb_key' value='' placeholder='rpdb apikey — posters con rating (ratingposterdb.com)'></p>"
+            f"<p>Tamaño máx. por stream <input name='stream_max_gb' value='{CFG.get('stream_max_gb',0)}' style='width:80px'> GB"
+            f" <span class='dim'>(0 = sin límite — un 4K de 80GB no siempre gana)</span> · "
+            f"precargar streams al abrir ficha <input type='hidden' name='stream_prefetch' value='0'>"
+            f"<input type='checkbox' name='stream_prefetch' value='1'"
+            f"{' checked' if CFG.get('stream_prefetch', True) else ''} style='width:auto'></p>"
             f"<h2>Catálogos</h2>"
             f"<p>Listas externas <span class='dim'>(URLs Trakt /lists/, IMDb /list/ o mdblist:ID — separadas por coma)</span><br>"
             f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://trakt.tv/users/me/lists/mis-favs, https://www.imdb.com/list/ls123456/'>"
@@ -249,6 +275,10 @@ def _configure_page():
             f"if(e&&e.value)o[k]=e.value.split(',').map(x=>x.trim()).filter(Boolean);}});"
             f"var cm=document.querySelector('[name=calendar_months_ahead]').value;"
             f"var ci=parseInt(cm,10);if(!isNaN(ci)&&ci>=1&&ci<=24)o.calendar_months_ahead=ci;"
+            f"var mg=document.querySelector('[name=stream_max_gb]').value;"
+            f"var mi=parseInt(mg,10);if(!isNaN(mi)&&mi>0)o.stream_max_gb=mi;"
+            f"var pf=document.querySelectorAll('[name=stream_prefetch]');"
+            f"if(pf.length&&pf[pf.length-1].checked===false)o.stream_prefetch=false;"
             f"var sd=[];document.querySelectorAll('[name=src]').forEach(c=>{{if(!c.checked)sd.push(c.value);}});"
             f"if(sd.length)o.sources_disabled=sd;"
             f"var b=_b64u(JSON.stringify(o));"

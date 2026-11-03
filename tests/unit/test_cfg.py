@@ -1,7 +1,11 @@
 # pylint: disable=missing-docstring,protected-access,import-outside-toplevel,multiple-statements,unused-argument,invalid-name,redefined-outer-name,expression-not-assigned,too-many-public-methods,duplicate-code,non-ascii-name,wrong-import-position
 """Unit tests conflux.core.cfg — config + perfiles."""
+import io
+import json
+import os
 import re
 import unittest
+from unittest import mock
 
 from conflux.core import cfg
 
@@ -46,6 +50,93 @@ class TestCoerce(unittest.TestCase):
 class TestEffDisabled(unittest.TestCase):
     def test_eff_disabled_lista(self):
         self.assertIsInstance(cfg._eff_disabled(), set)
+
+
+class TestLoadConfigFile(unittest.TestCase):
+    """load_config sobre archivo: 'env:' refs, claves desconocidas, _save_cfg."""
+
+    def _snapshot(self):
+        return dict(cfg.CFG), dict(cfg._CFG_ENV_REF)
+
+    def _restore(self, snap):
+        old, old_ref = snap
+        cfg.CFG.clear()
+        cfg.CFG.update(old)
+        cfg._CFG_ENV_REF.clear()
+        cfg._CFG_ENV_REF.update(old_ref)
+
+    def _load(self, data, env=None):
+        with mock.patch.object(cfg, '_open',
+                               return_value=io.StringIO(json.dumps(data))), \
+                mock.patch.dict(os.environ, env or {}, clear=False):
+            cfg.load_config()
+
+    def test_env_ref_resuelve(self):
+        """'env:VAR' lee el secreto del entorno — nada en claro en el archivo."""
+        snap = self._snapshot()
+        try:
+            self._load({'debrid_key': 'env:DB_KEY'}, {'DB_KEY': 's3cr3t'})
+            self.assertEqual(cfg.CFG['debrid_key'], 's3cr3t')
+            self.assertEqual(cfg._CFG_ENV_REF['debrid_key'], ('DB_KEY', 's3cr3t'))
+        finally:
+            self._restore(snap)
+
+    def test_env_var_ausente_vacio(self):
+        snap = self._snapshot()
+        try:
+            self._load({'debrid_key': 'env:NO_EXISTE_XYZ'})
+            self.assertEqual(cfg.CFG['debrid_key'], '')
+        finally:
+            self._restore(snap)
+
+    def test_claves_desconocidas_log(self):
+        """horizon_days y restos stale: se ignoran pero quedan registradas."""
+        snap = self._snapshot()
+        try:
+            with mock.patch.object(cfg._log, 'info') as lg:
+                self._load({'horizon_days': 9, 'debrid_key': 'k'})
+            self.assertEqual(cfg.CFG['debrid_key'], 'k')
+            logged = ' '.join(str(c) for c in lg.call_args_list)
+            self.assertIn('horizon_days', logged)
+            self.assertNotIn('debrid_key', logged)
+        finally:
+            self._restore(snap)
+
+
+class TestSaveCfg(unittest.TestCase):
+    def _saved(self):
+        out = {}
+        with mock.patch.object(cfg, '_atomic_json',
+                               lambda _p, d: out.update(d)):
+            cfg._save_cfg()
+        return out
+
+    def test_env_ref_reemite_no_secreto(self):
+        snap = dict(cfg.CFG), dict(cfg._CFG_ENV_REF)
+        try:
+            cfg._CFG_ENV_REF['debrid_key'] = ('DB_KEY', 's3cr3t')
+            cfg.CFG['debrid_key'] = 's3cr3t'
+            self.assertEqual(self._saved()['debrid_key'], 'env:DB_KEY')
+            cfg.CFG['debrid_key'] = 'otro'           # valor cambiado -> persiste el nuevo
+            self.assertEqual(self._saved()['debrid_key'], 'otro')
+        finally:
+            self._restore_all(snap)
+
+    def test_bool_false_persiste(self):
+        """stream_prefetch=False es falsy pero debe guardarse (default True)."""
+        snap = dict(cfg.CFG), dict(cfg._CFG_ENV_REF)
+        try:
+            cfg.CFG['stream_prefetch'] = False
+            self.assertIs(self._saved()['stream_prefetch'], False)
+        finally:
+            self._restore_all(snap)
+
+    def _restore_all(self, snap):
+        old, old_ref = snap
+        cfg.CFG.clear()
+        cfg.CFG.update(old)
+        cfg._CFG_ENV_REF.clear()
+        cfg._CFG_ENV_REF.update(old_ref)
 
 
 if __name__ == '__main__':

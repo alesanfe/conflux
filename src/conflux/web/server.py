@@ -43,6 +43,7 @@ from conflux.web.pages import (
     _configure_save,
     _health_page,
     _landing_page,
+    _login_page,
     _manifest_reply,
     _trakt_auth_page,
     _trakt_status,
@@ -86,24 +87,33 @@ class H(BaseHTTPRequestHandler):
         self.send_header('Content-Length', '0')
         self.end_headers()
     def _authd(self):
-        """config.admin_token vacío -> abierto (loopback); si no, exige
-        ?token=... o header X-Admin-Token en las rutas administrativas."""
+        """config.admin_token vacío -> abierto (loopback); si no, exige header
+        X-Admin-Token (API) o cookie conflux_auth (navegador). El token NUNCA va
+        en la URL: ?token= se filtraba a historial/Referer/logs — el login pone
+        cookie HttpOnly+SameSite=Strict y sale del historial."""
         tok = CFG.get('admin_token')
         if not tok:
             return True
-        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        cand = [self.headers.get('X-Admin-Token') or '', *q.get('token', [])]
-        return any(hmac.compare_digest(tok, c) for c in cand)  # timing-safe
+        if hmac.compare_digest(tok, self.headers.get('X-Admin-Token') or ''):
+            return True                                        # timing-safe
+        for c in (self.headers.get('Cookie') or '').split(';'):
+            k, _, v = c.strip().partition('=')
+            if k == 'conflux_auth' and hmac.compare_digest(tok, v):
+                return True
+        return False
     # claves permitidas en la cfg de la URL (nada de paths/URLs -> SSRF;
     # nada de trakt_*/admin/tls -> tokens del servidor fuera de scope)
     _CFG_URL_KEYS = frozenset({
         'stream_langs', 'stream_exclude', 'rpdb_key',
         'catalogs_disabled', 'sources_disabled', 'source_order',
         'debrid_provider', 'debrid_key', 'calendar_months_ahead',
+        'stream_max_gb', 'stream_prefetch',
         'opensubtitles_key', 'opensubtitles_user', 'opensubtitles_pass', 'mdblist_key'})
     _CFG_URL_LIST = frozenset({'stream_langs', 'stream_exclude', 'catalogs_disabled',
                                'sources_disabled', 'source_order'})
-    _CFG_URL_INT = frozenset({'calendar_months_ahead'})
+    _CFG_URL_NUM = {'calendar_months_ahead': (0, 24),      # cota: builds de calendario
+                    'stream_max_gb': (0, 100000)}
+    _CFG_URL_BOOL = frozenset({'stream_prefetch'})
 
     @classmethod
     def _cfg_url_ok(cls, k, v):
@@ -113,8 +123,11 @@ class H(BaseHTTPRequestHandler):
             return False
         if k in cls._CFG_URL_LIST:
             return isinstance(v, list) and all(isinstance(x, str) for x in v)
-        if k in cls._CFG_URL_INT:
-            return type(v) is int and 0 <= v <= 24          # cota: builds de calendario
+        if k in cls._CFG_URL_NUM:
+            lo, hi = cls._CFG_URL_NUM[k]
+            return type(v) is int and lo <= v <= hi
+        if k in cls._CFG_URL_BOOL:
+            return type(v) is bool
         return isinstance(v, str)
 
     def _profile(self, p):
@@ -157,7 +170,7 @@ class H(BaseHTTPRequestHandler):
     def _pages(self, p):
         """Rutas fijas GET (manifest/health/páginas). True si las sirvió."""
         if p in ('/admin', '/configure') and not self._authd():
-            self.reply({'err': 'forbidden'}, 403)
+            self._html(_login_page(p), 401)                     # form login -> cookie HttpOnly
             return True
         if p in ('/manifest.json', '/health', '/auth/trakt/status'):
             self.reply({'/manifest.json': _manifest_reply,
@@ -194,9 +207,9 @@ class H(BaseHTTPRequestHandler):
         self.send_header('Content-Length', '0')
         self.end_headers()
 
-    def _html(self, body):
+    def _html(self, body, code=200):
         b = body.encode()
-        self.send_response(200)
+        self.send_response(code)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
@@ -204,8 +217,10 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
     def do_POST(self):
-        """Router POST: /configure, /reload, /auth."""
+        """Router POST: /login, /configure, /reload, /auth."""
         p = self.path.split('?', 1)[0]
+        if p == '/login':                                        # fuera del gate: es el gate
+            return self._login()
         if p in ('/reload', '/configure') and not self._authd():
             return self.reply({'err': 'forbidden'}, 403)
         if p == '/reload':
@@ -218,15 +233,39 @@ class H(BaseHTTPRequestHandler):
             log_ev('reload', cfg=safe)                            # nunca claves al log
             return self.reply({'ok': True, 'config': safe})       # ni a la respuesta
         if p == '/configure':
-            try:
-                ln = int(self.headers.get('Content-Length') or 0)
-            except ValueError:
-                ln = 0                                            # header corrupto: form vacío
-            form = urllib.parse.parse_qs(
-                self.rfile.read(max(0, min(ln, 65536))).decode())
-            _configure_save(form)
+            _configure_save(self._form())
             return self._redir('/configure', code=303)
         return self.reply({'err': 'not found'}, 404)
+
+    def _form(self):
+        """Body urlencoded acotado (64KB) -> parse_qs."""
+        try:
+            ln = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            ln = 0
+        return urllib.parse.parse_qs(self.rfile.read(max(0, min(ln, 65536))).decode())
+
+    def _login(self):
+        """POST /login: token correcto -> cookie HttpOnly + 302 a destino.
+        El token viaja UNA vez en el body del POST — nunca en URL/historial."""
+        form = self._form()
+        tok = _TOK_SAFE.sub('', form.get('token', [''])[0])[:128]
+        to = form.get('to', ['/admin'])[0]
+        if to not in ('/admin', '/configure'):
+            to = '/admin'                                        # no open-redirect
+        real = CFG.get('admin_token') or ''
+        if not real:
+            return self._redir(to)                             # sin gate: dentro directamente
+        if hmac.compare_digest(real, tok):
+            self.send_response(302)
+            self.send_header('Location', to)
+            sec = '; Secure' if CFG.get('tls_cert') else ''      # https -> cookie solo-tls
+            self.send_header('Set-Cookie',
+                             f'conflux_auth={tok}; HttpOnly; SameSite=Strict; Path=/{sec}')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return None
+        return self._html(_login_page(to, 'token incorrecto'), 401)
 
 
 
@@ -234,6 +273,8 @@ class H(BaseHTTPRequestHandler):
 
 # claves que nunca salen en logs ni respuestas (key/token/secret/pass/admin)
 _SECRET_RX = re.compile(r'key|token|secret|pass|admin', re.IGNORECASE)
+
+_TOK_SAFE = re.compile(r'[^A-Za-z0-9._~+-]')            # cookie/header: solo charset de token
 
 
 def _cfg_public(cfg):

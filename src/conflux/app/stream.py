@@ -219,6 +219,9 @@ def _lang_rows(rows):
 
 def _rows_out(rows):
     rr = _lang_rows(rows)
+    mx = cfg._cfgget('stream_max_gb', 0) or 0              # 0 = sin límite; policy knob
+    if mx:                                               # (un 4K de 80GB no siempre gana)
+        rr = [r for r in rr if not r[3] or r[3] <= mx]   # size desconocido -> no castigar
     rr.sort(key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[2], -r[3]))
     return [r[0] for r in rr]
 

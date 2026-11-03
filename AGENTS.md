@@ -158,6 +158,15 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
 - dicts con crecimiento no acotado prohibidos: `_SESS<=64`, `_fails<=200
   (podados por HOST_CD)`, `_DB_OK<=5000`, `_rtime<=64`, `_URL_*<=2000`,
   `_PROFILES<=32`, `_wd_c<=400`, `_PROFILES_LOCK` para pop+setdefault.
+- auth admin: `?token=` NO existe — `X-Admin-Token` (API) o cookie
+  `conflux_auth` HttpOnly+SameSite=Strict vía POST /login; el token jamás va
+  en URL (historial/Referer/logs).
+- SSRF: URLs remotas configurables (`epg_url`, `M3U_URL`) pasan `_public_url`
+  (http(s); bloquea link-local/metadata, multicast, reserved — RFC1918/loopback
+  OK para Prowlarr/NAS) y los redirects se revalidan (`_ChkRedirect` en epg).
+  Torznab es local por diseño — exento.
+- secretos: `"env:VAR"` en config.json resuelve del entorno en `load_config`;
+  `_CFG_ENV_REF` re-emite la ref en `_save_cfg` (nunca el valor resuelto).
 
 ## Decisiones vigentes
 

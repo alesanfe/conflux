@@ -11,12 +11,31 @@ SOURCES_EXTRA="Nombre|url;Otro|url2" añade o reemplaza entradas en sources.json
 (para fuentes cuya URL lleva token: MediaFusion, Comet, AIOStreams, Orion…).
 Escrituras siempre atómicas (tmp+rename) como el resto del proyecto.
 """
+import ipaddress
 import json
 import os
+import socket
 import sys
 import tempfile
+import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _public_url(url):
+    """Mismo guard SSRF que infra/net.py (copia: este script corre antes del
+    venv, sin imports de conflux). http(s) + nada de link-local/metadata."""
+    try:
+        p = urllib.parse.urlsplit(url)
+        if p.scheme not in ('http', 'https') or not p.hostname:
+            return False
+        port = p.port or (443 if p.scheme == 'https' else 80)
+        infos = socket.getaddrinfo(p.hostname, port, proto=socket.IPPROTO_TCP)
+        return bool(infos) and all(
+            not (ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified)
+            for ip in (ipaddress.ip_address(i[4][0]) for i in infos))
+    except (OSError, ValueError):
+        return False
 
 ENV2CFG = {
     'DEBRID_PROVIDER': 'debrid_provider',       # realdebrid|torbox|alldebrid|premiumize|easydebrid|debridlink
@@ -125,6 +144,9 @@ def main():
         print(f'sources.json: {len(srcs)} fuentes')
 
     m3u_url = env.get('M3U_URL', '')
+    if m3u_url and not _public_url(m3u_url):
+        print(f'm3u: {m3u_url} rechazada (scheme o destino no permitido)')
+        m3u_url = ''
     if m3u_url:
         import urllib.request
         os.makedirs(os.path.join(ROOT, 'm3u'), exist_ok=True)

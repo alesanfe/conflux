@@ -84,5 +84,33 @@ class TestHandleStream(unittest.TestCase):
         self.assertEqual(S.handle_stream('tv', 'm3u:noexiste'), {'streams': []})
 
 
+class TestStreamMaxGb(unittest.TestCase):
+    """stream_max_gb: policy mínima de ranking — un 4K de 80GB no siempre gana."""
+
+    @staticmethod
+    def _row(size):
+        return ({'name': 'n', 'title': 't'}, '4K', 10, size, 0,
+                {'es': False}, 's')                        # (out,res,seeds,gb,cached,f,short)
+
+    def test_max_gb_filtra(self):
+        from tests import cfg_swap
+        rows = [self._row(85.0), self._row(8.0), self._row(0)]
+        _, undo = cfg_swap(stream_max_gb=40)
+        try:
+            out = S._rows_out(rows)
+            self.assertEqual(len(out), 2)              # 85GB fuera; size 0 = desconocido, pasa
+        finally:
+            undo()
+
+    def test_cero_sin_limite(self):
+        from tests import cfg_swap
+        rows = [self._row(85.0), self._row(8.0)]
+        _, undo = cfg_swap(stream_max_gb=0)
+        try:
+            self.assertEqual(len(S._rows_out(rows)), 2)
+        finally:
+            undo()
+
+
 if __name__ == '__main__':
     unittest.main()

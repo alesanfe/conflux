@@ -1,7 +1,9 @@
 """Sesiones HTTP por host + fetch con reintentos/timeout."""
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import ipaddress
 import json
+import socket
 import time
 import urllib.parse
 
@@ -31,6 +33,28 @@ def _strike(host):
         for h, (_n, ts) in list(_fails.items()):            # aleatorios no se acumulan
             if now - ts > HOST_CD:
                 _fails.pop(h, None)
+
+
+def _public_url(url):
+    """Guard SSRF para URLs remotas configurables (epg_url, M3U_URL):
+    scheme http/https y el host no resuelve a link-local (169.254.169.254 =
+    metadata cloud), multicast, reservado ni unspecified. RFC1918/loopback SE
+    permiten — Prowlarr/NAS/xmltv en LAN son uso legitimo en un proxy local."""
+    try:
+        p = urllib.parse.urlsplit(url)
+        if p.scheme not in ('http', 'https') or not p.hostname:
+            return False
+        port = p.port or (443 if p.scheme == 'https' else 80)
+        infos = socket.getaddrinfo(p.hostname, port, proto=socket.IPPROTO_TCP)
+        if not infos:
+            return False
+        for _fam, _t, _pr, _cn, sa in infos:
+            ip = ipaddress.ip_address(sa[0])
+            if ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+                return False
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def fetch(url, timeout=7):

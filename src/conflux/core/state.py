@@ -127,6 +127,7 @@ _CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '',
                  'stream_exclude': [], 'rpdb_key': '',
                  'opensubtitles_key': '', 'opensubtitles_user': '', 'opensubtitles_pass': '',
                  'admin_token': '', 'tls_cert': '', 'tls_key': '',
+                 'stream_max_gb': 0, 'stream_prefetch': True,
                  'trakt_access_token': '', 'trakt_refresh_token': '', 'trakt_expires': 0,
                  'epg_url': 'https://epgshare01.online/epgshare01/epg_ripper_ES1.xml.gz'}
 

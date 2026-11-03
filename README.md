@@ -127,7 +127,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   `/configure` genera la URL con idiomas/filtros/rpdb/debrid incrustados —
   cada URL es un addon distinto sin tocar `config.json`.
 - **Filtros de stream** — `stream_exclude` (términos csv: `cam,camrip,hdts,ts,screener…`; ≤3 chars con borde de palabra, ≥4 substring)
-  saca releases malos de la lista, estilo AIOStreams. `rpdb_key` sirve
+  saca releases malos de la lista, estilo AIOStreams. `stream_max_gb` descarta
+  por tamaño (un 4K de 80GB no siempre gana); `stream_prefetch: false`
+  desactiva la precarga al abrir fichas. `rpdb_key` sirve
   posters con rating (ratingposterdb.com, gratis) estilo MediaFusion.
 - **Subtítulos** — con `opensubtitles_key`: recurso `subtitles` ES-first,
   redirect `/s/<file_id>` al CDN. La descarga exige cuenta de usuario
@@ -144,8 +146,12 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
 ## Otros despliegues
 
 Despliegue público: expón el puerto detrás de TLS (`tls_cert`/`tls_key` en
-`config.json`) y fija `admin_token` — las páginas admin quedan protegidas y el
-landing sirve el deep link https automáticamente.
+`config.json`) y fija `admin_token` — las páginas admin piden login (cookie
+HttpOnly+SameSite=Strict, el token nunca va en la URL) y el landing sirve el
+deep link https automáticamente. Las claves de `config.json` aceptan
+referencias `env:NOMBRE` para no guardar secretos en el archivo, y las URLs
+remotas configurables (`epg_url`, `M3U_URL`) bloquean destinos link-local
+(metadata cloud) — LAN/loopback siguen permitidos para Prowlarr y NAS.
 
 Rutas documentadas en `docs/openapi.yaml`.
 

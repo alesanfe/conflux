@@ -20,9 +20,21 @@ import urllib.request
 import defusedxml.ElementTree as ET   # XML descargado: defused (igual que torznab)
 
 from conflux.core.state import _POOL_BG, _ROOT, _atomic_json, _log, CFG
+from conflux.infra.net import _public_url
 
 _EPG_FILE = os.path.join(_ROOT, 'epg-cache.json')
 _EPG_TTL = 12 * 3600
+
+
+class _ChkRedirect(urllib.request.HTTPRedirectHandler):
+    """Un redirect a link-local/metadata sigue siendo SSRF: revalida cada salto."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _public_url(newurl):
+            return None                                  # urllib -> HTTPError, sin seguirlo
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_ChkRedirect())
 
 _LOCK = threading.Lock()
 _STATE = {'fetched': 0.0, 'map': {}, 'days': {}}
@@ -60,10 +72,10 @@ def _build(m3u_metas):
     """Descarga + parsea el XMLTV -> {'map': {cid: epg_id}, 'days': {dia: {cid: [p]}}}.
     Solo conserva programas de canales mapeados (ventana: ayer -> +2d)."""
     url = CFG.get('epg_url') or ''
-    if not url:
+    if not url or not _public_url(url):                  # SSRF: http(s) + host no link-local
         return None
     req = urllib.request.Request(url, headers={'User-Agent': 'conflux-epg/1.0'})
-    raw = urllib.request.urlopen(req, timeout=60).read(40_000_000)
+    raw = _OPENER.open(req, timeout=60).read(40_000_000)
     if not raw:
         return None
     try:

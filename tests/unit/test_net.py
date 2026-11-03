@@ -89,3 +89,66 @@ class TestDisyuntorHost(unittest.TestCase):
         with patch.object(net, '_session', return_value=s):
             net.fetch('http://h.host/x', 1)
         self.assertNotIn('h.host', net._fails)
+
+
+class TestPublicUrl(unittest.TestCase):
+    """_public_url: guard SSRF de URLs configurables (epg_url, M3U_URL)."""
+
+    @staticmethod
+    def _gai(ips):
+        return [(2, 1, 6, '', (ip, 80)) for ip in ips]
+
+    def _pu(self, url, ips=('93.184.216.34',)):
+        with patch.object(net.socket, 'getaddrinfo', return_value=self._gai(ips)):
+            return net._public_url(url)
+
+    def test_publica_ok(self):
+        self.assertTrue(self._pu('https://epg.example/e.xml.gz'))
+
+    def test_metadata_cloud_bloqueada(self):
+        self.assertFalse(self._pu('http://x.internal/', ('169.254.169.254',)))
+
+    def test_ipv6_linklocal_bloqueada(self):
+        self.assertFalse(self._pu('http://x/', ('fe80::1',)))
+
+    def test_una_ip_mala_basta(self):
+        self.assertFalse(self._pu('http://x/', ('93.184.216.34', '169.254.169.254')))
+
+    def test_multicast_y_reserved_bloqueados(self):
+        self.assertFalse(self._pu('http://x/', ('239.1.1.1',)))
+        self.assertFalse(self._pu('http://x/', ('240.0.0.1',)))
+
+    def test_lan_permitida(self):
+        """RFC1918/loopback sí: Prowlarr, NAS y xmltv local son uso legitimo."""
+        self.assertTrue(self._pu('http://nas.lan/e.xml', ('192.168.1.10',)))
+        self.assertTrue(self._pu('http://prowlarr/api', ('127.0.0.1',)))
+
+    def test_esquema_no_http(self):
+        self.assertFalse(self._pu('file:///etc/passwd'))
+        self.assertFalse(self._pu('ftp://x/f'))
+
+    def test_dns_fallo(self):
+        with patch.object(net.socket, 'getaddrinfo', side_effect=OSError):
+            self.assertFalse(net._public_url('http://noexiste.invalid/'))
+
+    def test_sin_host(self):
+        self.assertFalse(self._pu('http:///path'))
+
+
+class TestEpgSsrf(unittest.TestCase):
+    """epg: la URL configurable pasa por _public_url y los redirects se revalidan."""
+
+    def test_epg_url_no_publica_no_descarga(self):
+        import conflux.infra.epg as E
+        with patch.dict(E.CFG, {'epg_url': 'http://169.254.169.254/'}), \
+                patch.object(E, '_public_url', return_value=False), \
+                patch.object(E, '_OPENER') as op:
+            self.assertIsNone(E._build([]))
+            op.open.assert_not_called()
+
+    def test_redirect_a_interno_rechazado(self):
+        import conflux.infra.epg as E
+        h = E._ChkRedirect()
+        with patch.object(E, '_public_url', return_value=False):
+            self.assertIsNone(h.redirect_request(
+                MagicMock(), None, 302, '', {}, 'http://169.254.169.254/latest'))
