@@ -4,7 +4,7 @@
 import urllib.parse
 import urllib.request
 
-from conflux.core.cfg import _eff_disabled
+from conflux.core.cfg import _cfgget, _eff_disabled
 from conflux.core.state import (
     _POOL,
     _POOL_BG,
@@ -127,11 +127,12 @@ def _synth_cal(utype, extra, _defx, key):
     sin compartir, cada set de ids de biblioteca repetía el build >10s y el
     cliente moría por timeout cada vez). Una build degradada (<20) no se cachea:
     así la siguiente petición reintenta en vez de servir vacío 10 min."""
-    hit2 = _cget(_cat_c, 'estrenoscal')
+    ck = ('estrenoscal', _cfgget('calendar_months_ahead', 2))   # meses varía por perfil
+    hit2 = _cget(_cat_c, ck)
     if hit2 is None:
         hit2 = _estrenos_cal(extra)
         if hit2 and len(hit2.get('metasDetailed') or ()) >= 20:
-            _cset(_cat_c, 'estrenoscal', hit2)
+            _cset(_cat_c, ck, hit2)
     return hit2 or {'metas': []}, utype, extra
 
 def _synth_m3u(extra):

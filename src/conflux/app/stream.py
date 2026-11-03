@@ -45,10 +45,12 @@ _RE_LIMIT  = re.compile(r'daily limit|limit reached|link limit|quota', re.IGNORE
 _SOFT      = ('cuota', 'espera', 'manifest sin stream', 'tipo no soportado', 'prefijo')
 
 
-def _collect_skip(i, stype, sid):
-    """Por qué NO consultar la fuente i (skip blando), o None si toca fetch."""
+def _collect_skip(i, stype, sid, dis):
+    """Por qué NO consultar la fuente i (skip blando), o None si toca fetch.
+    dis viene capturado del hilo del request: _PROF es thread-local y los
+    workers del pool verían siempre el set global."""
     name = SOURCES[i].name
-    if name in _eff_disabled():
+    if name in dis:
         return 'deshabilitada'
     m = manifests[i] if i < len(manifests) else None
     r = _skip_manifest(m, stype, sid)
@@ -65,10 +67,10 @@ def _quota_hit(ss):
     return any(isinstance(s, dict) and _RE_LIMIT.search(str(s.get('title') or '')) for s in ss)
 
 
-def _collect_one(i, stype, sid):
+def _collect_one(i, stype, sid, dis):
     """Fetch de una fuente -> (nombre, streams, usable). Health + disyuntores."""
     name = SOURCES[i].name
-    skip = _collect_skip(i, stype, sid)
+    skip = _collect_skip(i, stype, sid, dis)
     if skip:
         if skip != 'deshabilitada':
             _health(name, True, skip, 0)
@@ -132,10 +134,10 @@ def _collect_tz(stype, sid):
 
 
 def _collect(key, state):
-    stype, sid = key
+    stype, sid, dis = key                     # dis: sources_disabled efectivo (perfil)
     sid = _resolve_sid(stype, sid)            # kitsu/mal -> imdb para las fuentes
     try:
-        futs = [_POOL.submit(_collect_one, i, stype, sid) for i in range(len(SOURCES))]
+        futs = [_POOL.submit(_collect_one, i, stype, sid, dis) for i in range(len(SOURCES))]
         futs.append(_POOL.submit(_collect_tz, stype, sid))     # indexer en paralelo: no como straggler en finally
         pending = len(futs)
 
@@ -228,7 +230,7 @@ def handle_stream(stype, sid):
             _m3u_metas()
         u = _M3U.get(sid)
         return {'streams': [{'name': 'M3U', 'title': 'Canal propio', 'url': u}] if u else []}
-    key = (stype, sid)
+    key = (stype, sid, tuple(sorted(_eff_disabled())))      # fuentes off varía por perfil
     hit = _cget(_cache, key)
     if hit is not None:
         out = _ex_out(_rows_out(hit))

@@ -115,7 +115,7 @@ class H(BaseHTTPRequestHandler):
         if k in cls._CFG_URL_LIST:
             return isinstance(v, list) and all(isinstance(x, str) for x in v)
         if k in cls._CFG_URL_INT:
-            return type(v) is int
+            return type(v) is int and 0 <= v <= 24          # cota: builds de calendario
         return isinstance(v, str)
 
     def _profile(self, p):

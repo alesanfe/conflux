@@ -54,9 +54,23 @@ class TestCollectMerge(unittest.TestCase):
 
 class TestHandleStream(unittest.TestCase):
     def test_cache_hit(self):
-        key = ('movie', 'tt1')
+        key = ('movie', 'tt1', tuple(sorted(S._eff_disabled())))
         st._cset(S._cache, key, [{'name': 'x'}])
         self.assertEqual(S.handle_stream('movie', 'tt1'), {'streams': [{'name': 'x'}]})
+        S._cache.clear()
+
+    def test_cache_clave_discrimina_fuentes_desactivadas(self):
+        """Un perfil con sources_disabled no puede servir el caché del base
+        (ni envenenarlo): las claves difieren por el set efectivo."""
+        from conflux.core.cfg import _PROF
+        st._cset(S._cache, ('movie', 'tt1', ()), [{'name': 'base'}])
+        _PROF.cfg = {'sources_disabled': ['Torrentio']}
+        try:
+            key_prof = ('movie', 'tt1', tuple(sorted(S._eff_disabled())))
+        finally:
+            _PROF.cfg = None
+        self.assertNotEqual(('movie', 'tt1', ()), key_prof)
+        self.assertNotIn('Torrentio', ())
         S._cache.clear()
 
     def test_m3u_channel(self):
