@@ -53,6 +53,8 @@ class Installer(tk.Tk):
 
     STEPS = ['Entorno', 'Prowlarr', 'Configuración', 'Proxy + autostart',
              'Addon Stremio', 'Trakt (opcional)', 'Fin']
+    USTEPS = ['Detener procesos', 'Autostart + addon', 'Borrar runtime',
+              'Prowlarr', 'Fin']
 
     def __init__(self):
         super().__init__()
@@ -60,8 +62,10 @@ class Installer(tk.Tk):
         self.geometry('820x520')
         self.configure(bg='#1b1b1f')
         self.q = queue.Queue()
-        self.cur = 0
+        self.cur = -1                     # -1 = pantalla de modo (instalar/desinstalar)
         self.done_flags = {}
+        self.mode = 'install'
+        self.steps = []
 
         fg, bg2, acc = '#e8e8ea', '#26262b', '#7c5ce0'
         style = ttk.Style(self)
@@ -78,11 +82,8 @@ class Installer(tk.Tk):
 
         left = ttk.Frame(self, width=190)
         left.pack(side='left', fill='y')
+        self.left = left
         self.lbl_steps = []
-        for i, s in enumerate(self.STEPS):
-            lb = ttk.Label(left, text=f'{i + 1}. {s}', style='Step.TLabel')
-            lb.pack(anchor='w', padx=12, pady=2)
-            self.lbl_steps.append(lb)
 
         right = ttk.Frame(self)
         right.pack(side='right', fill='both', expand=True)
@@ -103,6 +104,36 @@ class Installer(tk.Tk):
         self.btn_skip.pack(side='right', padx=8)
 
         self.after(150, self._pump)
+        self._mode_screen()
+
+    # ---------- pantalla de modo ----------
+    def _mode_screen(self):
+        self.title_lbl.config(text='conflux — ¿qué quieres hacer?')
+        self._clear_body()
+        self._lbl('Instalar monta todo el entorno (venv, Prowlarr, indexers,\n'
+                  'proxy, autostart, addon). Desinstalar lo quita todo.')
+        row = ttk.Frame(self.body)
+        row.pack(pady=18)
+        ttk.Button(row, text='⬇  Instalar', style='Acc.TButton',
+                   command=lambda: self._set_mode('install')).pack(side='left', padx=10)
+        ttk.Button(row, text='🗑  Desinstalar',
+                   command=lambda: self._set_mode('uninstall')).pack(side='left', padx=10)
+        self.btn_next.pack_forget()
+        self.btn_skip.pack_forget()
+
+    def _set_mode(self, mode):
+        self.mode = mode
+        self.steps = self.STEPS if mode == 'install' else self.USTEPS
+        for w in self.left.winfo_children():
+            w.destroy()
+        self.lbl_steps = []
+        for i, s in enumerate(self.steps):
+            lb = ttk.Label(self.left, text=f'{i + 1}. {s}', style='Step.TLabel')
+            lb.pack(anchor='w', padx=12, pady=2)
+            self.lbl_steps.append(lb)
+        self.btn_next.pack(side='right')
+        self.btn_skip.pack(side='right', padx=8)
+        self.cur = 0
         self._show_step()
 
     # ---------- utilidades UI ----------
@@ -127,7 +158,7 @@ class Installer(tk.Tk):
     def _mark_done(self, note=''):
         self.done_flags[self.cur] = True
         self.lbl_steps[self.cur].config(style='Ok.TLabel',
-                                        text=f'✓ {self.STEPS[self.cur]} {note}')
+                                        text=f'✓ {self.steps[self.cur]} {note}')
         self.btn_next.config(state='normal')
         self.btn_skip.config(state='normal')
 
@@ -146,7 +177,7 @@ class Installer(tk.Tk):
         return lb
 
     def next_step(self):
-        self.cur = min(self.cur + 1, len(self.STEPS) - 1)
+        self.cur = min(self.cur + 1, len(self.steps) - 1)
         self._show_step()
 
     def _show_step(self):
@@ -154,10 +185,11 @@ class Installer(tk.Tk):
             lb.config(style='On.TLabel' if i == self.cur else
                           ('Ok.TLabel' if self.done_flags.get(i) else 'Step.TLabel'),
                       text=('' if self.done_flags.get(i) else f'{i + 1}. ') +
-                      ('✓ ' if self.done_flags.get(i) else '') + self.STEPS[i])
+                      ('✓ ' if self.done_flags.get(i) else '') + self.steps[i])
         self._clear_body()
-        self.title_lbl.config(text=self.STEPS[self.cur])
-        getattr(self, f'_step{self.cur}')()
+        self.title_lbl.config(text=self.steps[self.cur])
+        prefix = '_step' if self.mode == 'install' else '_ustep'
+        getattr(self, f'{prefix}{self.cur}')()
 
     def _run(self, fn):
         self._busy()
@@ -347,13 +379,134 @@ class Installer(tk.Tk):
 
     # ---------- paso 6: fin ----------
     def _step6(self):
-        ok = sum(self.done_flags.get(i, False) for i in range(len(self.STEPS) - 1))
-        self._lbl(f'{ok} de {len(self.STEPS) - 1} pasos completados.\n\n'
+        ok = sum(self.done_flags.get(i, False) for i in range(len(self.steps) - 1))
+        self._lbl(f'{ok} de {len(self.steps) - 1} pasos completados.\n\n'
                   'El addon corre en http://127.0.0.1:9700 y arranca solo al '
                   'iniciar sesión.\n\n'
                   'Útil: /configure (ajustes) · /admin (salud) · /health')
         self.btn_next.config(text='Cerrar', command=self.destroy)
         self.btn_skip.config(state='disabled')
+
+    # ==================== DESINSTALAR ====================
+    def _ustep0(self):
+        self._lbl('Detiene el proxy conflux y los procesos Python asociados.')
+        self._run(self._do_kill)
+
+    def _do_kill(self):
+        killed = 0
+        if sys.platform == 'win32':
+            # proceso(s) escuchando :9700
+            rc, out = _sh('netstat -ano | findstr :9700 | findstr LISTENING',
+                          shell=True, timeout=15)
+            for ln in out.splitlines():
+                pid = ln.strip().rsplit(None, 1)[-1]
+                if pid.isdigit():
+                    _sh(f'taskkill /PID {pid} /F', shell=True, timeout=15)
+                    killed += 1
+            # cualquier python corriendo proxy.py
+            rc, out = _sh(['powershell', '-NoProfile', '-Command',
+                           "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" "
+                           "| Where-Object {$_.CommandLine -match 'proxy\\.py'} "
+                           '| ForEach-Object {$_.ProcessId}'], 30)
+            for ln in out.splitlines():
+                pid = ln.strip()
+                if pid.isdigit():
+                    _sh(f'taskkill /PID {pid} /F', shell=True, timeout=15)
+                    killed += 1
+        self.say(f'{killed} proceso(s) detenidos')
+        self.q.put(('done', 'OK'))
+
+    def _ustep1(self):
+        self._lbl('Quita el acceso directo de autostart y recuerda quitar el '
+                  'addon dentro de Stremio (Addons → Streams Unificados → Quitar).')
+        self._run(self._do_auto_rm)
+
+    def _do_auto_rm(self):
+        lnk = os.path.join(os.environ.get('APPDATA', ''),
+                           'Microsoft\\Windows\\Start Menu\\Programs\\Startup',
+                           'Conflux.lnk')
+        try:
+            os.unlink(lnk)
+            self.say('autostart eliminado')
+        except OSError:
+            self.say('autostart no existía')
+        self.q.put(('done', 'OK'))
+
+    def _ustep2(self):
+        self._lbl('Borra el entorno generado: .venv, cachés, log y listas m3u.\n'
+                  'Marca la casilla para borrar TAMBIÉN .env y config.json '
+                  '(tus claves).')
+        self.keep_cfg = tk.BooleanVar(value=True)
+        tk.Checkbutton(self.body, text='Conservar .env y config.json',
+                       variable=self.keep_cfg, bg='#26262b', fg='#e8e8ea',
+                       selectcolor='#26262b', activebackground='#26262b',
+                       font=('Segoe UI', 10)).pack(anchor='w', pady=6)
+        self._run(self._do_rm_runtime)
+
+    def _do_rm_runtime(self):
+        import shutil
+        for p in ('.venv', 'm3u', '.manifests-cache.json', 'conflux.log',
+                  'start-conflux.bat', 'post1337.json', 'resp1337.json',
+                  'tz.xml', 'sc.json', 'tu.cs', 'os.json'):
+            fp = os.path.join(ROOT, p)
+            try:
+                if os.path.isdir(fp):
+                    shutil.rmtree(fp, ignore_errors=True)
+                elif os.path.exists(fp):
+                    os.unlink(fp)
+                self.say(f'{p}: eliminado')
+            except OSError as e:
+                self.say(f'{p}: {e}')
+        if not self.keep_cfg.get():
+            for p in ('.env', 'config.json', 'sources.json'):
+                fp = os.path.join(ROOT, p)
+                try:
+                    os.unlink(fp)
+                    self.say(f'{p}: eliminado')
+                except OSError:
+                    self.say(f'{p}: no existía')
+        else:
+            self.say('.env/config.json: conservados')
+        self.q.put(('done', 'OK'))
+
+    def _ustep3(self):
+        self._lbl('Opcional: desinstala Prowlarr (servicio + programa).')
+        self.rm_prowlarr = tk.BooleanVar(value=False)
+        tk.Checkbutton(self.body, text='Desinstalar Prowlarr también',
+                       variable=self.rm_prowlarr, bg='#26262b', fg='#e8e8ea',
+                       selectcolor='#26262b', activebackground='#26262b',
+                       font=('Segoe UI', 10)).pack(anchor='w', pady=6)
+        self._run(self._do_prowlarr_rm)
+
+    def _do_prowlarr_rm(self):
+        if not self.rm_prowlarr.get():
+            self.say('Prowlarr se conserva')
+            self.q.put(('done', 'omitido'))
+            return
+        self.say('deteniendo servicio Prowlarr…')
+        _sh('net stop Prowlarr', shell=True, timeout=30)
+        rc, out = _sh('winget uninstall -e --id TeamProwlarr.Prowlarr '
+                      '--accept-source-agreements', shell=True, timeout=600)
+        self.say('prowlarr: ' + ('desinstalado' if rc == 0 else out[-150:]))
+        pcfg = os.path.join(os.environ.get('ProgramData', ''), 'Prowlarr')
+        self.say(f'config Prowlarr queda en {pcfg} (bórralo a mano si quieres)')
+        self.q.put(('done', 'OK' if rc == 0 else 'FALLO'))
+
+    def _ustep4(self):
+        self._lbl('Hecho. Opcionalmente puedes borrar la propia carpeta del '
+                  'proyecto — el instalador programa su eliminación al cerrar.')
+        ttk.Button(self.body, text='Eliminar también la carpeta conflux',
+                   command=self._self_destruct).pack(pady=12)
+        self.btn_next.config(text='Cerrar', command=self.destroy)
+        self.btn_skip.config(state='disabled')
+
+    def _self_destruct(self):
+        if sys.platform == 'win32':
+            subprocess.Popen(
+                f'cmd /c "ping -n 3 127.0.0.1 >nul & rd /s /q "{ROOT}""',
+                shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        self.say(f'carpeta {ROOT} marcada para borrado al cerrar')
+        self.destroy()
 
 
 if __name__ == '__main__':
