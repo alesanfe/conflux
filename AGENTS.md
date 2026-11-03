@@ -23,6 +23,10 @@ python3 -m mypy                             # type-check (config en pyproject)
 systemctl --user restart stremio-proxy      # tras editar src/conflux/
 ./scripts/env_backup.sh                    # snapshot config*/sources.json → tar.gz
 ./scripts/setup.sh --env <tar.gz>          # otra máquina: mismo entorno exacto
+scripts\setup_win.ps1                      # Windows: venv+deps+autostart (carpeta Inicio)+addon
+python scripts/apply_env.py                # .env → config.json+sources.json (idempotente)
+# .env (gitignored): DEBRID_*, TRAKT_*, TORZNAB_*, OPENSUBTITLES_KEY, MDBLIST_KEY,
+# M3U_PATH, SOURCES_EXTRA="N|url;N2|url2", PROWLARR=1 (instala y autoconecta torznab)
 
 ## Estructura (src-layout estándar PyPA)
 
@@ -31,7 +35,7 @@ Repo en `~/apps/conflux`:
 - `src/conflux/`     paquete por capas (imports absolutos `from conflux.* import`)
 - `proxy.py`         entry + fachada compat (inserta src/ en sys.path)
 - `tests/`           unit/ integration/ security/ e2e/ + `fixtures/` (datos reales)
-- `scripts/`         check.sh, setup.sh (--env restaura backup), install_addon.py, env_backup.sh, record_e2e.py, stremio-proxy.service
+- `scripts/`         check.sh, setup.sh (--env restaura backup), setup_win.ps1 (Windows), apply_env.py (.env→config), install_addon.py, env_backup.sh, record_e2e.py, stremio-proxy.service
 - `docs/`            openapi.yaml
 - `pyproject.toml`   metadata PEP 621 + deps + config herramientas
 - `requirements.in`/`requirements.txt`  deps directas → lock con hashes (pip-compile)

@@ -7,7 +7,8 @@
 # carpeta Inicio del usuario (arranca el proxy al iniciar sesión, sin admin).
 param(
     [switch]$NoAddon,
-    [string]$Env
+    [string]$Env,
+    [switch]$Prowlarr       # instalar Prowlarr y conectar torznab automáticamente
 )
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')          # raíz del repo
@@ -41,6 +42,50 @@ Write-Host '== dependencias =='
 Invoke-Expression "$py -m venv .venv"
 $venvPy = Join-Path $PWD '.venv\Scripts\python.exe'
 & $venvPy -m pip install --disable-pip-version-check -q -r requirements.txt
+
+Write-Host '== integraciones (.env) =='
+$envFile = Join-Path $PWD '.env'
+$envCfg = @{}
+if (Test-Path $envFile) {
+    Get-Content $envFile | ForEach-Object {
+        if ($_ -match '^\s*#' -or $_ -notmatch '=') { return }
+        $k, $v = $_ -split '=', 2
+        $envCfg[$k.Trim().ToUpper()] = $v.Trim().Trim('"').Trim("'")
+    }
+} else {
+    Write-Host 'sin .env — copia .env.example a .env para debrid/trakt/torznab/subs…'
+}
+
+# Prowlarr: instala el indexer manager y saca su ApiKey del config.xml → torznab
+if ($Prowlarr -or $envCfg['PROWLARR'] -eq '1') {
+    Write-Host '== prowlarr (torznab) =='
+    $svc = Get-Service Prowlarr -ErrorAction SilentlyContinue
+    if (-not $svc) {
+        Write-Host 'instalando Prowlarr con winget (puede pedir UAC)…'
+        winget install -e --id TeamProwlarr.Prowlarr --accept-source-agreements --accept-package-agreements
+        Start-Sleep -Seconds 15
+    }
+    foreach ($i in 1..25) {
+        try { Invoke-WebRequest 'http://127.0.0.1:9696/ping' -TimeoutSec 3 -UseBasicParsing | Out-Null; break }
+        catch { Start-Sleep -Seconds 3 }
+    }
+    $pcfg = "$env:ProgramData\Prowlarr\config.xml"
+    if (Test-Path $pcfg) {
+        $ak = ([xml](Get-Content $pcfg)).Config.ApiKey
+        if ($ak -and -not $envCfg['TORZNAB_KEY']) {
+            Write-Host 'ApiKey detectada — conectando torznab'
+            $envCfg['TORZNAB_KEY'] = $ak
+            if (-not (Test-Path $envFile)) { New-Item $envFile -ItemType File | Out-Null }
+            "TORZNAB_URL=http://127.0.0.1:9696/api/v1.0/indexers/all/results/torznab`nTORZNAB_KEY=$ak" |
+                Add-Content $envFile
+        }
+    }
+    Write-Host 'Añade indexers en http://localhost:9696 (Settings -> Indexers -> +)'
+}
+
+if (Test-Path $envFile) {
+    & $venvPy scripts\apply_env.py $envFile
+}
 
 Write-Host '== lanzador + autostart =='
 $bat = Join-Path $PWD 'start-conflux.bat'
