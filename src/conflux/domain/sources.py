@@ -19,12 +19,23 @@ from conflux.infra.net import fetch
 
 def _load_manifests_cache():
     """Manifests persistidos del arranque anterior: el proxy responde al instante
-    y refresh_manifests() en background trae la versión fresca (ventana fría ~0)."""
-    with suppress(OSError, ValueError):
+    y refresh_manifests() en background trae la versión fresca (ventana fría ~0).
+    El caché va por NOMBRE de fuente — alinear por índice rompería el routing si
+    sources.json cambia entre arranques (manifest[i] sería de otra fuente)."""
+    with suppress(OSError, ValueError, AttributeError, TypeError):
         disk = json.load(_open(_MF_CACHE))
-        if len(disk) == len(SOURCES) and sum(1 for m in disk if m) >= len(SOURCES) // 2:
-            return disk
+        if not isinstance(disk, dict):                    # formato viejo (lista posicional): no fiable
+            return None
+        out = [disk.get(s.name) for s in SOURCES]
+        if sum(1 for m in out if m) >= len(SOURCES) // 2:
+            return out
     return None
+
+
+def _persist_manifests():
+    """manifests[] -> {nombre: manifest} para _MF_CACHE (alineado por nombre)."""
+    return {SOURCES[i].name: m for i, m in enumerate(manifests)
+            if i < len(SOURCES) and isinstance(m, dict)}
 
 
 def refresh_manifests():
@@ -44,7 +55,7 @@ def refresh_manifests():
         if m:
             manifests[i] = m                    # cold-start (vercel) al segundo intento
     with suppress(OSError, TypeError, ValueError):
-        _atomic_json(_MF_CACHE, manifests)
+        _atomic_json(_MF_CACHE, _persist_manifests())
 
 
 def res_of(m):

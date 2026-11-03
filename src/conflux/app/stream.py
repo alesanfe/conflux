@@ -5,7 +5,6 @@ import re
 import threading
 import time
 import urllib.parse
-import urllib.request
 from concurrent.futures import as_completed
 
 from conflux.core import cfg
@@ -136,6 +135,7 @@ def _collect_tz(stype, sid):
 def _collect(key, state):
     stype, sid, dis = key                     # dis: sources_disabled efectivo (perfil)
     sid = _resolve_sid(stype, sid)            # kitsu/mal -> imdb para las fuentes
+    t = None
     try:
         futs = [_POOL.submit(_collect_one, i, stype, sid, dis) for i in range(len(SOURCES))]
         futs.append(_POOL.submit(_collect_tz, stype, sid))     # indexer en paralelo: no como straggler en finally
@@ -158,12 +158,15 @@ def _collect(key, state):
             with state['lock']:
                 _collect_merge(state, name, streams)
     finally:
+        if t:                                                   # collect rápido: suelta el timer
+            t.cancel()
         with state['lock']:
             final = sorted(state['rows'], key=_rowkey)      # filas completas: re-score por perfil
         with _slock:
             _cset(_cache, key, final)
             _inflight.pop(key, None)
         state['done'].set()          # despierta a handle_stream antes del budget
+        log_ev('collect_done', sid=key[1], contrib=state['contrib'])
 
 
 def _ensure_collect(key):
@@ -253,10 +256,13 @@ _URL_BAD: dict = {}        # url -> ts marcado muerto (reintento a los 30min)
 _URL_OK: dict = {}        # url -> ts verificado vivo
 
 def _url_todo(streams, now):
-    """urls externas http sin veredicto reciente -> candidatas a HEAD (máx 15)."""
+    """urls externas http sin veredicto reciente -> candidatas a HEAD (máx 15).
+    Las marcadas malas también reentran pasados 30min: un timeout transitorio
+    o un 4xx de CDN caduco no condenan la url para siempre."""
     return [s['url'] for s in streams
             if s.get('url', '').startswith('http') and '127.0.0.1' not in s['url']
-            and s['url'] not in _URL_BAD and now - _URL_OK.get(s['url'], 0) > 1800][:15]
+            and now - _URL_BAD.get(s['url'], (0, 0))[1] > 1800
+            and now - _URL_OK.get(s['url'], 0) > 1800][:15]
 
 
 def _url_head(u):
@@ -288,8 +294,9 @@ def _url_health(streams):
     now = time.time()
     if len(_URL_BAD) + len(_URL_OK) > 2000:
         _url_prune()
+    todo = _url_todo(streams, now)          # antes de filtrar: los muertos también
     dead = {u for u, (st, ts) in _URL_BAD.items() if st >= 2 and now - ts < 1800}
-    if dead:
+    if dead:                                # reintentan su resurrección al HEAD
         streams[:] = [s for s in streams if s.get('url') not in dead]
-    for u in _url_todo(streams, now):
+    for u in todo:
         _POOL_BG.submit(_url_head, u)

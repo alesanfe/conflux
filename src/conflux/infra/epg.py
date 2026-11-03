@@ -19,10 +19,8 @@ import unicodedata
 import urllib.request
 import defusedxml.ElementTree as ET   # XML descargado: defused (igual que torznab)
 
-from conflux.core.state import _POOL_BG, _atomic_json, _log, CFG
+from conflux.core.state import _POOL_BG, _ROOT, _atomic_json, _log, CFG
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__)))))
 _EPG_FILE = os.path.join(_ROOT, 'epg-cache.json')
 _EPG_TTL = 12 * 3600
 

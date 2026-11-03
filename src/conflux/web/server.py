@@ -36,7 +36,7 @@ from conflux.core.state import (
     manifests,
 )
 from conflux.domain.catalog import handle_catalog
-from conflux.domain.sources import _load_manifests_cache, refresh_manifests
+from conflux.domain.sources import _load_manifests_cache, _persist_manifests, refresh_manifests
 from conflux.infra.debrid import _db_resolve
 from conflux.web.pages import (
     _admin_page,
@@ -273,7 +273,7 @@ def main():
         def _bye(*_a):
             """SIGTERM (systemd stop): persiste el caché de manifests y sale limpio."""
             log_ev('shutdown')
-            _atomic_json(_MF_CACHE, manifests)
+            _atomic_json(_MF_CACHE, _persist_manifests())
             raise SystemExit(0)                   # no srv.shutdown(): deadlocked en el hilo principal
         signal.signal(signal.SIGTERM, _bye)
     srv.serve_forever()

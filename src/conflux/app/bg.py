@@ -16,8 +16,8 @@ from conflux.infra.epg import epg_kick
 
 _prefetching = threading.Event()
 
-_SYNC_SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))))), 'scripts', 'trakt_sync.py')
+from conflux.core.state import _ROOT as _R
+_SYNC_SCRIPT = os.path.join(_R, 'scripts', 'trakt_sync.py')
 
 
 def _trakt_sync():

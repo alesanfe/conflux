@@ -4,7 +4,6 @@
 import re
 import time
 import urllib.parse
-import urllib.request
 
 from conflux.core.state import CFG, _POOL, _health
 from conflux.infra.net import _session

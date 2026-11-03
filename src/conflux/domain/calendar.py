@@ -3,7 +3,6 @@
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import time
 import urllib.parse
-import urllib.request
 
 from conflux.core.cfg import _cfgget
 from conflux.core.state import _POOL_BG, _YEARS, SOURCES, as_dict

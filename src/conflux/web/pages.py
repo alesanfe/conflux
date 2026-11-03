@@ -68,7 +68,7 @@ def _cfg_form_fields(form, cfg):
             pass
     if 'stream_langs' in form:
         cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
-    for k in ('torznab_url', 'catalog_lists', 'opensubtitles_key', 'opensubtitles_user'):
+    for k in ('torznab_url', 'catalog_lists', 'opensubtitles_key', 'opensubtitles_user', 'epg_url'):
         if k in form:
             cfg[k] = form[k][0].strip()
     for k in ('torznab_key', 'mdblist_key', 'rpdb_key', 'opensubtitles_pass'):
@@ -146,9 +146,13 @@ def _admin_page():
         cdtxt = f'{max(0,(cd[0]-now))/60:.0f} min · {cd[1]}' if cd[0] > now else '—'
         sv = _SERVED.get(n, {'n': 0, 'res': {}})
         res_txt = ' '.join(f"{r}:{c}" for r, c in sorted(sv['res'].items(), key=lambda kv: -kv[1])[:4])
+        last = h.get('last', 0)
+        last_txt = (f"{(now - last) / 60:.0f}min" if last else '—')
+        if h.get('err'):
+            last_txt += f" · {h['err'][:28]}"
         rows.append(f"<tr><td>{n}</td><td class='ok'>{h.get('ok',0)}</td><td class='bad'>{h.get('fail',0)}</td>"
                     f"<td>{sv['n']}</td><td class='dim'>{res_txt}</td>"
-                    f"<td>{h.get('ultimo','—')}</td><td>{cdtxt}</td></tr>")
+                    f"<td class='dim'>{last_txt}</td><td>{cdtxt}</td></tr>")
     lat = ''.join(f"<tr><td>{k}</td><td>{n2}</td><td>{t/n2:.0f}</td><td>{_pct(list(_rts.get(k,())),.5):.0f}</td>"
                   f"<td>{_pct(list(_rts.get(k,())),.95):.0f}</td><td>{_pct(list(_rts.get(k,())),.99):.0f}</td><td>{x:.0f}</td></tr>"
                   for k, (n2, t, x) in _rtime.items())
@@ -197,6 +201,8 @@ def _configure_page():
             f"<input name='debrid_key' value='' placeholder='API key (no se muestra la guardada)'></p>"
             f"<p>M3U propio <span class='dim'>(ruta local, catálogo tv 'Mis canales')</span><br>"
             f"<input name='m3u_path' value='{CFG.get('m3u_path','')}' placeholder='/home/…/canales.m3u'></p>"
+            f"<p>EPG <span class='dim'>(guía XML/XMLTV .gz para los canales IPTV — vacío = sin guía)</span><br>"
+            f"<input name='epg_url' value='{CFG.get('epg_url','')}' placeholder='https://…/epg_ripper_ES1.xml.gz'></p>"
             f"<p>Torznab <span class='dim'>(Prowlarr/Jackett local — fuente extra de streams)</span><br>"
             f"<input name='torznab_url' value='{CFG.get('torznab_url','')}' placeholder='http://localhost:9696/api/v1.0/indexers/all/results/torznab'>"
             f"<input name='torznab_key' value='' placeholder='apikey (no se muestra)'></p>"

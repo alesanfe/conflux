@@ -10,6 +10,7 @@ from conflux.core.state import (
     _CFG_DEFAULTS,
     _CFG_FILE,
     _DISABLED,
+    _ROOT,
     CFG,
     _atomic_json,
     _log,
@@ -88,16 +89,19 @@ _PROF = threading.local()
 
 _PROFILES: dict = {}
 
+_PROFILES_LOCK = threading.Lock()
+
 def _profile_load(name):
-    if name not in _PROFILES:
-        if len(_PROFILES) >= 32:                            # cota: un perfil no visto desaloja al más viejo
-            _PROFILES.pop(next(iter(_PROFILES)))
-        try:
-            _PROFILES[name] = json.load(_open(os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), f'config.{name}.json')))
-        except (OSError, ValueError):
-            _PROFILES[name] = {}
-    return _PROFILES[name]
+    with _PROFILES_LOCK:                                   # pop(next(iter)) + setdefault
+        if name not in _PROFILES:                          # concurrentes pisarían la cota
+            if len(_PROFILES) >= 32:                        # cota: un perfil no visto desaloja al más viejo
+                _PROFILES.pop(next(iter(_PROFILES)))
+            try:
+                _PROFILES[name] = json.load(_open(os.path.join(
+                    _ROOT, f'config.{name}.json')))
+            except (OSError, ValueError):
+                _PROFILES[name] = {}
+        return _PROFILES[name]
 
 def _pcfg():
     """Dict de config del perfil activo en este hilo (None si va el global)."""

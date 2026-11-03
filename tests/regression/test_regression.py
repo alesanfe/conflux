@@ -285,3 +285,79 @@ class TestConfigureCastBug(unittest.TestCase):
         self._save({'calendar_months_ahead': ['3']},
                    lambda c: (self.assertEqual(c.get('sources_disabled'), []),
                               self.assertNotEqual(c.get('m3u_path'), '') if CFG.get('m3u_path') else None))
+
+
+class TestManifestCacheAlignment(unittest.TestCase):
+    """Bug latente: el manifest-cache se alineaba POSICIONALMENTE — editar
+    sources.json entre arranques dejaba manifests[i] apuntando a otra fuente
+    (routing equivocado hasta el refresh). Ahora va por nombre."""
+
+    def _cache(self, payload):
+        import json, tempfile, os
+        import conflux.domain.sources as SO
+        fd, p = tempfile.mkstemp(suffix='.json')
+        with os.fdopen(fd, 'w') as f:
+            json.dump(payload, f)
+        old = SO._MF_CACHE
+        SO._MF_CACHE = p
+        try:
+            return SO._load_manifests_cache()
+        finally:
+            SO._MF_CACHE = old
+            os.unlink(p)
+
+    def test_alinea_por_nombre_no_posicion(self):
+        import conflux.domain.sources as SO
+        import conflux.core.state as st
+        # disco: orden INVERSO al de SOURCES — por índice saldría cruzado
+        disk = {s.name: {'id': f'id.{s.name}'} for s in reversed(st.SOURCES)}
+        out = self._cache(disk)
+        for i, s in enumerate(st.SOURCES):
+            self.assertEqual(out[i]['id'], f'id.{s.name}')
+
+    def test_formato_viejo_lista_se_descarta(self):
+        self.assertIsNone(self._cache([{'id': 'x'}] * 30))
+
+    def test_fuente_borrada_no_desalinea(self):
+        import conflux.core.state as st
+        disk = {s.name: {'id': f'id.{s.name}'} for s in st.SOURCES[:-1]}
+        out = self._cache(disk)
+        self.assertEqual(out[-1], None)            # nueva fuente: hueco, no cruce
+        for i, s in enumerate(st.SOURCES[:-1]):
+            self.assertEqual(out[i]['id'], f'id.{s.name}')
+
+
+class TestUrlHealthBug(unittest.TestCase):
+    """Bug: _url_todo excluía TODA url presente en _URL_BAD sin mirar su
+    timestamp — el 'reintento a los 30min' del docstring no existía: un
+    timeout transitorio quedaba sin re-verificar para siempre y un 4xx
+    caduco de CDN no podía revivir nunca."""
+
+    def _health(self, bad_entry, url='http://cdn.example/f.mp4'):
+        import time as tm
+        from unittest.mock import patch
+        import conflux.app.stream as S
+        sent = []
+        S._URL_BAD.clear(); S._URL_OK.clear()
+        S._URL_BAD[url] = bad_entry
+        streams = [{'url': url}]
+        with patch.object(S._POOL_BG, 'submit', lambda f, u: sent.append(u)):
+            S._url_health(streams)
+        return streams, sent
+
+    def test_strike_viejo_se_reverifica(self):
+        import time as tm
+        streams, sent = self._health((1, tm.time() - 2000))
+        self.assertEqual(sent, ['http://cdn.example/f.mp4'])   # reintento a los 30min
+
+    def test_muerto_viejo_puede_revivir(self):
+        import time as tm
+        streams, sent = self._health((2, tm.time() - 2000))
+        self.assertEqual(sent, ['http://cdn.example/f.mp4'])
+        self.assertEqual(len(streams), 1)                       # ya no es 'dead' fresco
+
+    def test_muerto_fresco_se_filtra_sin_rehead(self):
+        import time as tm
+        streams, sent = self._health((2, tm.time()))
+        self.assertEqual(sent, [])
+        self.assertEqual(streams, [])                           # filtrado mientras es fresco

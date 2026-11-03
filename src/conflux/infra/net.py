@@ -4,7 +4,6 @@
 import json
 import time
 import urllib.parse
-import urllib.request
 
 import requests
 
