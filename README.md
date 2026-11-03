@@ -23,11 +23,14 @@ El addon corre en tu máquina — GitHub aloja el código, no el servicio.
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1
 # python>=3.10 (o lo instala winget) + venv + deps + autostart en la carpeta
-# Inicio + arranca el proxy + abre el diálogo «Instalar addon» en Stremio
+# Inicio + arranca el proxy + registra el addon en Stremio automáticamente
 ```
 
-Si Stremio está abierto, `python3 scripts/install_addon.py --kill` lo cierra y
-registra el addon (local SQLite + colección remota si hay sesión).
+`python3 scripts/install_addon.py` registra el addon **sin clics**: extrae el
+`authKey` del perfil de Stremio (leveldb en Windows/macOS/Linux, sqlite en
+flatpak) y escribe la colección remota vía `api.strem.io` — aplica al reiniciar
+la app. En flatpak también escribe el perfil local (`--kill` cierra la app).
+Sin sesión/perfil usa el deep-link como fallback; `--remove` lo desinstala.
 
 **Un click** — con el servicio corriendo, abre `http://127.0.0.1:9700/` y pulsa
 «Instalar en Stremio». El deep link `stremio://` usa el Host de la petición:

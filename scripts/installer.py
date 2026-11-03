@@ -44,6 +44,24 @@ FG, DIM, ACC, OK, BAD = '#e8e8ea', '#8a8a93', '#7c5ce0', '#4caf50', '#e05555'
 BORD = '#33333c'
 
 
+def _stremio_exe():
+    """Ruta al ejecutable de Stremio en Windows, o None."""
+    import glob as _g
+    la = os.environ.get('LOCALAPPDATA', '')
+    pats = [
+        os.path.join(la, 'Programs', 'LNV', 'Stremio-4', 'stremio.exe'),
+        os.path.join(la, 'Programs', 'Stremio*', '*tremio*.exe'),
+        r'C:\Program Files\Stremio*\*.exe',
+        r'C:\Program Files (x86)\Stremio*\*.exe',
+        os.path.join(os.environ.get('APPDATA', ''), 'stremio*', '*.exe'),
+    ]
+    for p in pats:
+        hits = _g.glob(p)
+        if hits:
+            return hits[0]
+    return None
+
+
 def _sh(cmd, timeout=300, shell=False):
     """Subproceso -> (rc, salida)."""
     try:
@@ -197,6 +215,16 @@ class Installer(tk.Tk):
                     self.log.config(state='disabled')
                 elif kind == 'done':
                     self._mark_done(msg)
+                elif kind == 'addon_manual':
+                    self.addon_lbl.config(
+                        text='Sin sesión de Stremio accesible — usa el diálogo '
+                             'nativo (un clic):', fg=DIM)
+                    self._mkbtn(self.body, 'Instalar addon en Stremio',
+                                lambda: (webbrowser.open(
+                                    'stremio://127.0.0.1:9700/manifest.json'),
+                                    self.say('diálogo de instalación abierto'),
+                                    self._mark_done())).pack(pady=12)
+                    self.btn_skip.config(state='normal')
         except queue.Empty:
             pass
         self.after(150, self._pump)
@@ -470,15 +498,32 @@ class Installer(tk.Tk):
         self.q.put(('done', 'FALLO'))
 
     def _step4(self):
-        self._lbl('Abre el diálogo de instalación del addon dentro de Stremio. '
-                  'Pulsa el botón y confirma «Instalar» en la app.')
-        b = self._mkbtn(self.body, 'Instalar addon en Stremio',
-                        lambda: (webbrowser.open('stremio://127.0.0.1:9700/manifest.json'),
-                                 self.say('diálogo de instalación abierto'),
-                                 self._mark_done()))
-        b.pack(pady=16)
-        self.btn_skip.config(state='normal')
-        self.btn_next.config(state='normal')
+        self._lbl('Registra el addon «conflux» en Stremio. Se intenta de forma '
+                  'automática (colección remota, sin clics); si no hay sesión '
+                  'disponible se ofrece el diálogo nativo como alternativa.')
+        self.addon_lbl = self._lbl('…', color=DIM)
+        self._run(self._do_addon)
+
+    def _do_addon(self):
+        if sys.platform == 'win32' and not _stremio_exe():
+            self.say('stremio no detectado — instalando (winget)…')
+            rc, out = _sh('winget install -e --id Stremio.Stremio '
+                          '--accept-source-agreements --accept-package-agreements',
+                          shell=True, timeout=900)
+            self.say(out[-160:] or 'stremio instalado')
+        try:
+            import install_addon
+            st, msg = install_addon.install(f'{PROXY}/manifest.json')
+        except Exception as e:
+            st, msg = 'error', str(e)
+        self.say(f'addon stremio: {st} {msg}')
+        if st in ('installed', 'already'):
+            self.addon_lbl.config(
+                text='✔ instalado — aparece al reiniciar Stremio' if st == 'installed'
+                     else '✔ ya estaba instalado', fg=OK)
+            self.q.put(('done', 'OK'))
+        else:
+            self.q.put(('addon_manual',))
 
     def _step5(self):
         self._lbl('Conecta tu cuenta trakt.tv (gratis): pulsa abrir, inicia sesión '
@@ -561,8 +606,8 @@ class Installer(tk.Tk):
         self.q.put(('done', 'OK'))
 
     def _ustep1(self):
-        self._lbl('Quita el acceso directo de autostart y recuerda quitar el '
-                  'addon dentro de Stremio (Addons → Streams Unificados → Quitar).')
+        self._lbl('Quita el acceso directo de autostart y elimina el addon de '
+                  'la colección de Stremio (remoto — aplica al reiniciar la app).')
         self._run(self._do_auto_rm)
 
     def _do_auto_rm(self):
@@ -574,6 +619,13 @@ class Installer(tk.Tk):
             self.say('autostart eliminado')
         except OSError:
             self.say('autostart no existía')
+        try:
+            import install_addon
+            st, msg = install_addon.remove(f'{PROXY}/manifest.json')
+            self.say(f'addon stremio: {st} {msg}'
+                     + ('' if st != 'manual' else ' — quítalo a mano en Addons'))
+        except Exception as e:
+            self.say(f'addon remoto: {e} — quítalo a mano en Stremio')
         self.q.put(('done', 'OK'))
 
     def _ustep2(self):
