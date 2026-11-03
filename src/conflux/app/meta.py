@@ -56,7 +56,7 @@ def handle_meta(stype, mid):
     key = (stype, mid)
     hit = _cget(_meta_c, key)
     if hit is not None:
-        return hit
+        return _rpdb(hit)                                # rpdb es por perfil: fuera del caché
     # prefetch: en pelis el stream-id coincide con el meta-id — al abrir la
     # ficha ya se recolecta en background y el stream sale al instante
     if stype == 'movie' and ':' not in mid:

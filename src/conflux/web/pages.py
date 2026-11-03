@@ -206,7 +206,27 @@ def _configure_page():
             f"<input name='source_order' value='{','.join(CFG.get('source_order') or [])}' placeholder='Cinemeta,TMDB,Kitsu'></p>"
             f"{src_chk}"
             f"<p><button type='submit'>Guardar</button> <a class='btn' href='/admin'>dashboard</a></p>"
-            f"</form></body></html>")
+            f"</form>"
+            f"<h2>Addon con config en URL</h2>"
+            f"<p class='dim'>Estilo Torrentio: instala esta URL en otro perfil/dispositivo y lleva "
+            f"idiomas/filtros/rpdb incrustados (sin tocar config.json):</p>"
+            f"<p><code id='cfgurl' style='word-break:break-all;background:#1a1a24;padding:6px;border-radius:6px'></code></p>"
+            f"<p><a class='btn' id='cfginstall'>instalar este addon</a></p>"
+            f"<script>function _b64u(s){{return btoa(unescape(encodeURIComponent(s)))"
+            f".replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');}}"
+            f"function _gen(){{var o={{}};"
+            f"var sl=document.querySelector('[name=stream_langs]').value;"
+            f"if(sl)o.stream_langs=sl.split(',').map(x=>x.trim()).filter(Boolean);"
+            f"var se=document.querySelector('[name=stream_exclude]').value;"
+            f"if(se)o.stream_exclude=se.split(',').map(x=>x.trim()).filter(Boolean);"
+            f"var rk=document.querySelector('[name=rpdb_key]').value;if(rk)o.rpdb_key=rk;"
+            f"var dp=document.querySelector('[name=debrid_provider]').value;if(dp)o.debrid_provider=dp;"
+            f"var dk=document.querySelector('[name=debrid_key]').value;if(dk)o.debrid_key=dk;"
+            f"var b=_b64u(JSON.stringify(o));"
+            f"document.getElementById('cfgurl').textContent=location.origin+'/cfg/'+b+'/manifest.json';"
+            f"document.getElementById('cfginstall').href='stremio://'+location.host+'/cfg/'+b+'/manifest.json';}}"
+            f"document.querySelectorAll('input,select').forEach(e=>e.addEventListener('input',_gen));_gen();</script>"
+            f"</body></html>")
 
 
 def _trakt_auth_page():

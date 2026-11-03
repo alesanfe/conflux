@@ -196,7 +196,7 @@ def handle_catalog(stype, cid, extra):
     key = (stype, cid, extra)
     hit = _cget(_cat_c, key)
     if hit is not None:
-        return hit
+        return _rpdb(hit)                                # rpdb es por perfil: fuera del caché
     try:
         resolved = _cat_resolve(cid, stype, extra, key)
     except (ValueError, StopIteration, IndexError):

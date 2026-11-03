@@ -124,18 +124,22 @@ def _fix_meta_deep(m, yt):
 def _rpdb(d):
     """Posters con ratings (RatingPosterDB — la feature de MediaFusion): si hay
     rpdb_key configurada, los metas tt:* sirven su poster vía api.ratingposterdb.com.
-    Sin key (default) no toca nada."""
+    Sin key (default) no toca nada. NO destructivo: devuelve copia para no
+    contaminar los caches compartidos entre perfiles (/p/, /cfg/)."""
     key = _cfgget('rpdb_key')
     if not key or not isinstance(d, dict):
         return d
-    ms = (d.get('metas') or d.get('metasDetailed')
-          or ([d['meta']] if isinstance(d.get('meta'), dict) else []))
-    for m in ms:
-        if isinstance(m, dict):
-            i = str(m.get('id') or '')
-            if i.startswith('tt'):
-                m['poster'] = f'https://api.ratingposterdb.com/{key}/imdb/poster-default/{i}.jpg'
-    return d
+    out = dict(d)
+    for fld in ('metas', 'metasDetailed'):
+        ms = out.get(fld)
+        if isinstance(ms, list):
+            out[fld] = [dict(m, poster=f'https://api.ratingposterdb.com/{key}/imdb/poster-default/{m["id"]}.jpg')
+                        if isinstance(m, dict) and str(m.get('id') or '').startswith('tt') else m
+                        for m in ms]
+    m = out.get('meta')
+    if isinstance(m, dict) and str(m.get('id') or '').startswith('tt'):
+        out['meta'] = dict(m, poster=f'https://api.ratingposterdb.com/{key}/imdb/poster-default/{m["id"]}.jpg')
+    return out
 
 
 

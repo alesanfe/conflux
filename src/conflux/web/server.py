@@ -1,6 +1,8 @@
 """Servidor HTTP: handler, ROUTES, refresher/prefetch, main()."""
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import base64
+import binascii
 import gzip
 import hmac
 import json
@@ -93,12 +95,31 @@ class H(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
         cand = [self.headers.get('X-Admin-Token') or '', *q.get('token', [])]
         return any(hmac.compare_digest(tok, c) for c in cand)  # timing-safe
+    # claves permitidas en la cfg de la URL (nada de paths/URLs -> SSRF;
+    # nada de trakt_*/admin/tls -> tokens del servidor fuera de scope)
+    _CFG_URL_KEYS = frozenset({
+        'stream_langs', 'stream_exclude', 'rpdb_key', 'horizon_days',
+        'catalogs_disabled', 'sources_disabled', 'source_order',
+        'debrid_provider', 'debrid_key', 'calendar_months_ahead',
+        'opensubtitles_key', 'mdblist_key'})
+
     def _profile(self, p):
-        """/p/<nombre>/... -> carga su config y devuelve el path real."""
+        """/p/<nombre>/... o /cfg/<b64json>/... -> carga config y devuelve el path real."""
         pm = re.match(r'^/p/([a-zA-Z0-9_-]{1,24})(/.*)$', p)           # perfil: /p/<nombre>/…
         if pm:
             _PROF.name, _PROF.cfg = pm.group(1), _profile_load(pm.group(1))
             return pm.group(2)
+        cm = re.match(r'^/cfg/([A-Za-z0-9_=-]{8,4096})(/.*)$', p)      # cfg en URL (estilo Torrentio)
+        if cm:
+            try:
+                seg = cm.group(1)
+                dc = json.loads(base64.urlsafe_b64decode(seg + '=' * (-len(seg) % 4)))
+                if isinstance(dc, dict):
+                    _PROF.name = 'cfg-' + seg[:8]
+                    _PROF.cfg = {k: v for k, v in dc.items() if k in self._CFG_URL_KEYS}
+                    return cm.group(2)
+            except (ValueError, binascii.Error):
+                pass                                                # cfg rota -> perfil normal
         _PROF.name, _PROF.cfg = None, None
         return p
     def _timed_route(self, p):

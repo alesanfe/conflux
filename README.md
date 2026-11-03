@@ -114,13 +114,21 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   abre el login: cuenta trakt.tv gratuita → calendario personal y
   "continuar viendo" activos. `python scripts/trakt_sync.py` sube lo visto en
   Stremio al historial Trakt (bitmaps `watched` del localStorage →
-  `/sync/history`, idempotente) → siembra las recomendaciones.
+  `/sync/history`, idempotente) → siembra las recomendaciones. **Automático**:
+  el proxy lo lanza al arrancar y cada 30 min (subproceso aislado — sin
+  intervención).
 - **Torznab** — `torznab_url`+`torznab_key`: Prowlarr/Jackett local como fuente
   extra de streams.
 - **Listas externas** — `catalog_lists`: URLs de listas Trakt, IMDb (`/list/ls*`)
   o `mdblist:ID` (con `mdblist_key`) aparecen como catálogos.
 - **Perfiles** — `/p/<nombre>/manifest.json` usa `config.<nombre>.json`
   (fuentes/idiomas propios); cada perfil es un addon instalable.
+- **Config en URL** — `/cfg/<b64json>/manifest.json` (estilo Torrentio):
+  `/configure` genera la URL con idiomas/filtros/rpdb/debrid incrustados —
+  cada URL es un addon distinto sin tocar `config.json`.
+- **Filtros de stream** — `stream_exclude` (términos csv: `cam,screener,ts…`)
+  saca releases malos de la lista, estilo AIOStreams. `rpdb_key` sirve
+  posters con rating (ratingposterdb.com, gratis) estilo MediaFusion.
 - **Subtítulos** — con `opensubtitles_key`: recurso `subtitles` ES-first,
   redirect `/s/<file_id>` al CDN.
 - **M3U propio** — `m3u_path` → catálogo tv «Mis canales» + streams directos.
