@@ -1,6 +1,7 @@
 """Routing /catalog: sintéticos, listas, búsqueda, anime-rewrite."""
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import threading
 import urllib.parse
 import urllib.request
 
@@ -113,6 +114,9 @@ def _cat_grp_extra(cid, extra):
     return utype, real, urllib.parse.urlencode(kv, safe=',')
 
 
+_CAL_LOCK = threading.Lock()   # builds de calendario >10s: un build a la vez
+
+
 def _synth_recom(utype, extra, _defx, _key):
     """recomendaciones trakt (cache en _cat_c: related es caro)."""
     hit2 = _cget(_cat_c, ('recom', utype))
@@ -130,9 +134,12 @@ def _synth_cal(utype, extra, _defx, key):
     ck = ('estrenoscal', _cfgget('calendar_months_ahead', 2))   # meses varía por perfil
     hit2 = _cget(_cat_c, ck)
     if hit2 is None:
-        hit2 = _estrenos_cal(extra)
-        if hit2 and len(hit2.get('metasDetailed') or ()) >= 20:
-            _cset(_cat_c, ck, hit2)
+        with _CAL_LOCK:                                   # build >10s: nada de thundering-herd
+            hit2 = _cget(_cat_c, ck)                      # doble-check: otro request la llenó
+            if hit2 is None:
+                hit2 = _estrenos_cal(extra)
+                if hit2 and len(hit2.get('metasDetailed') or ()) >= 20:
+                    _cset(_cat_c, ck, hit2)
     return hit2 or {'metas': []}, utype, extra
 
 def _synth_m3u(extra):

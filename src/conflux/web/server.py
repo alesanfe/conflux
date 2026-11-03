@@ -256,7 +256,13 @@ def main():
     class Srv(ThreadingHTTPServer):
         """Servidor con hilos daemon (sin zombies al parar)."""
         daemon_threads = True   # sin hilos zombie
-    srv = Srv(('127.0.0.1', PORT), H)
+    try:
+        srv = Srv(('127.0.0.1', PORT), H)
+    except OSError as e:
+        # pythonw muere sin consola: sin esta línea un puerto ocupado no deja
+        # rastro en conflux.log y el proceso viejo sigue sirviendo código stale
+        log_ev('bind_fail', port=PORT, err=str(e))
+        raise SystemExit(f'puerto {PORT} ocupado — ¿otra instancia viva? {e}')
     cert, key = CFG.get('tls_cert'), CFG.get('tls_key')
     if cert and key:                                   # TLS opcional (config.tls_cert/tls_key)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

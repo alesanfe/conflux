@@ -58,33 +58,44 @@ def _csv_list(form, k):
 
 
 def _cfg_form_fields(form, cfg):
-    """Campos restantes del form -> cfg (listas CSV, claves opcionales)."""
-    cfg['calendar_months_ahead'] = int(form.get('calendar_months_ahead',
-        [CFG.get('calendar_months_ahead', 2)])[0] or 2)
-    cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
+    """Campos restantes del form -> cfg. Solo campos PRESENTES pisan (un POST
+    parcial no debe borrar el resto — el checkbox-group 'src' ausente no
+    significa 'desactiva todo')."""
+    if 'calendar_months_ahead' in form:
+        try:
+            cfg['calendar_months_ahead'] = max(1, min(int(form['calendar_months_ahead'][0]), 24))
+        except (TypeError, ValueError):              # 'abc', '', None -> sin tocar
+            pass
+    if 'stream_langs' in form:
+        cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
     for k in ('torznab_url', 'catalog_lists', 'opensubtitles_key', 'opensubtitles_user'):
-        cfg[k] = form.get(k, [''])[0].strip()
-    for k in ('torznab_key', 'mdblist_key', 'rpdb_key', 'opensubtitles_pass'):
-        if form.get(k, [''])[0].strip():
+        if k in form:
             cfg[k] = form[k][0].strip()
-    cfg['source_order'] = _csv_list(form, 'source_order')
-    cfg['catalogs_disabled'] = _csv_list(form, 'catalogs_disabled')
-    cfg['stream_exclude'] = _csv_list(form, 'stream_exclude')
-    enabled = set(form.get('src', []))
-    cfg['sources_disabled'] = [s.name for s in SOURCES if s.name not in enabled]
+    for k in ('torznab_key', 'mdblist_key', 'rpdb_key', 'opensubtitles_pass'):
+        if k in form and form[k][0].strip():
+            cfg[k] = form[k][0].strip()
+    for k in ('source_order', 'catalogs_disabled', 'stream_exclude'):
+        if k in form:
+            cfg[k] = _csv_list(form, k)
+    if 'src' in form:
+        enabled = set(form.get('src', []))
+        cfg['sources_disabled'] = [s.name for s in SOURCES if s.name not in enabled]
 
 
 def _configure_save(form):
     """POST /configure: solo campos presentes pisan; claves vacías conservan el
     valor previo (no se muestran en el form)."""
     cfg = CFG.copy()
-    cfg['trakt_client_id'] = form.get('trakt_client_id', [''])[0].strip()
+    if 'trakt_client_id' in form:
+        cfg['trakt_client_id'] = form['trakt_client_id'][0].strip()
     if form.get('trakt_client_secret', [''])[0].strip():
         cfg['trakt_client_secret'] = form['trakt_client_secret'][0].strip()
-    cfg['debrid_provider'] = form.get('debrid_provider', [''])[0].strip()
+    if 'debrid_provider' in form:
+        cfg['debrid_provider'] = form['debrid_provider'][0].strip()
     if form.get('debrid_key', [''])[0].strip():
         cfg['debrid_key'] = form['debrid_key'][0].strip()
-    cfg['m3u_path'] = form.get('m3u_path', [''])[0].strip()
+    if 'm3u_path' in form:
+        cfg['m3u_path'] = form['m3u_path'][0].strip()
     _cfg_form_fields(form, cfg)
     CFG.clear()
     CFG.update(cfg)

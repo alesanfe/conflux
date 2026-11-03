@@ -244,3 +244,44 @@ class TestRegexLoadOrder(unittest.TestCase):
             self.assertNotEqual(cfg.RE_EX.pattern, '(?!)')
         else:
             self.assertEqual(cfg.RE_EX.pattern, '(?!)')
+
+
+class TestConfigureCastBug(unittest.TestCase):
+    """Bugs: int(form['calendar_months_ahead']) lanzaba ValueError con 'abc'
+    (conexión cortada, no 500); y un POST parcial borraba TODO lo ausente
+    (docstring decía 'solo campos presentes pisan' — no era verdad: 'src'
+    ausente desactivaba las 23 fuentes, torznab_url/trakt_client_id/m3u_path
+    quedaban en '')."""
+
+    def _save(self, form, check):
+        from unittest.mock import patch
+        from conflux.core.state import CFG
+        from conflux.web.pages import _configure_save
+        backup = CFG.copy()
+        try:
+            with patch('conflux.web.pages._save_cfg'),                     patch('conflux.web.pages.load_config'):
+                _configure_save(form)
+            check(CFG)
+        finally:
+            CFG.clear()
+            CFG.update(backup)
+
+    def test_configure_save_no_explotaba_con_texto(self):
+        self._save({'calendar_months_ahead': ['abc']},
+                   lambda c: self.assertIsInstance(c.get('calendar_months_ahead'), int))
+
+    def test_configure_save_acota_meses(self):
+        self._save({'calendar_months_ahead': ['999']},
+                   lambda c: self.assertEqual(c['calendar_months_ahead'], 24))
+        self._save({'calendar_months_ahead': ['-3']},
+                   lambda c: self.assertEqual(c['calendar_months_ahead'], 1))
+
+    def test_post_parcial_no_borra_ni_desactiva(self):
+        from conflux.core.state import CFG
+        def chk(c):
+            self.assertEqual(c.get('sources_disabled'), CFG.get('sources_disabled'))
+            self.assertEqual(c.get('m3u_path'), CFG.get('m3u_path'))
+        # POST solo con 'months': ni sources_disabled (todas) ni m3u_path/torznab cambian
+        self._save({'calendar_months_ahead': ['3']},
+                   lambda c: (self.assertEqual(c.get('sources_disabled'), []),
+                              self.assertNotEqual(c.get('m3u_path'), '') if CFG.get('m3u_path') else None))
