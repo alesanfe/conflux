@@ -141,6 +141,10 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   addon Stremio de la comunidad (base o `.../manifest.json`) — entran como
   fuentes completas (streams+catálogos+meta) y aparecen en `/configure` como
   desactivables. Quitarlos los elimina al siguiente `/reload`.
+- **Regional** — IndiaStreams (OTT India), DesiFlix (seriales/cine indio) y
+  LatinMovies (cine en español) integrados como fuentes; MediaFusion/AIOStreams
+  y cualquier addon con `/configure` propio entra generando su URL y
+  pegándola en `extra_sources`.
 - **Preferidos** — `stream_preferred`: boost +300 en ranking (no filtro —
   cierra el trío exclude/required/preferred de AIOStreams); `source_timeout`
   ajusta el timeout por fuente (0 = 4s).

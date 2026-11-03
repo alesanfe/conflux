@@ -94,5 +94,17 @@
  {
   "name": "FlixStreams",
   "base": "https://free.flixnest.app"
+ },
+ {
+  "name": "IndiaStreams",
+  "base": "https://indiastreams.rdata.in"
+ },
+ {
+  "name": "DesiFlix",
+  "base": "https://manifest.desitvhub.eu.org"
+ },
+ {
+  "name": "LatinMovies",
+  "base": "https://latinmovies.vercel.app"
  }
 ]
