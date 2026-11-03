@@ -82,9 +82,15 @@ class TestRedirects(unittest.TestCase):
 
 class TestSecretos(unittest.TestCase):
     def test_reload_enmascara_keys(self):
-        """POST /reload devuelve config con claves 'key' enmascaradas."""
-        code = _read(os.path.join(SRC, 'web', 'server.py'))
-        self.assertIn("'key' in k", code)   # el masker existe en el código de respuesta
+        """POST /reload devuelve config con secretos enmascarados (key/token/
+        secret/pass/admin — el masker vive en _cfg_public y cubre más que 'key')."""
+        from conflux.web.server import _cfg_public
+        out = _cfg_public({'debrid_key': 'K', 'trakt_access_token': 'T',
+                           'admin_token': 'A', 'stream_langs': ['es']})
+        self.assertEqual(out['debrid_key'], '***')
+        self.assertEqual(out['trakt_access_token'], '***')
+        self.assertEqual(out['admin_token'], '***')
+        self.assertEqual(out['stream_langs'], ['es'])
 
     def test_no_secrets_en_logs(self):
         """Ningún módulo loggea el valor de claves/token del config."""

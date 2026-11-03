@@ -218,7 +218,6 @@ def handle_catalog(stype, cid, extra):
     if isinstance(d, dict):
         _cat_norm(d)
         _fix_metas(d)
-        _rpdb(d)
-        _cset(_cat_c, key, d)
-        return d
+        _cset(_cat_c, key, d)                        # caché limpio: rpdb es por perfil
+        return _rpdb(d)                              # no-destructivo -> hay que usarlo
     return _cstale(_cat_c, key) or {'metas': []}   # upstream caído: sirve stale

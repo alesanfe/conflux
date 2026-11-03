@@ -1,6 +1,8 @@
 """OpenSubtitles REST: query, mapping ES-first y redirect /s/<id>."""
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import threading
+
 import requests
 
 from conflux.core.cfg import _cfgget
@@ -55,6 +57,8 @@ def handle_subtitles(stype, sid):
 
 _OS_TOK: dict = {}        # token JWT OpenSubtitles + ts (login ~24h)
 
+_OS_LOCK = threading.Lock()
+
 
 def _os_login():
     """Login opensubtitles.com -> JWT (Bearer). /download exige cuenta de usuario:
@@ -65,8 +69,15 @@ def _os_login():
     if not (key and user and pw):
         return None
     import time
-    if _OS_TOK.get('token') and time.time() - _OS_TOK.get('ts', 0) < 23 * 3600:
-        return _OS_TOK['token']
+    with _OS_LOCK:                                       # dos /s/ concurrentes:
+        if _OS_TOK.get('token') and time.time() - _OS_TOK.get('ts', 0) < 23 * 3600:
+            return _OS_TOK['token']                      # un login basta
+        return _os_login_now(key, user, pw)
+
+
+def _os_login_now(key, user, pw):
+    """POST /login (ya bajo _OS_LOCK)."""
+    import time
     try:
         d = _session('api.opensubtitles.com').post(
             'https://api.opensubtitles.com/api/v1/login',

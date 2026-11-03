@@ -88,6 +88,8 @@ _DB_CHECK = {'real-debrid': _dbc_rd, 'torbox': _dbc_tb, 'alldebrid': _dbc_ad,
 
 def _db_avail(hashes):
     """Hashes cacheados en el debrid -> set (lote, cacheado en _DB_OK)."""
+    if len(_DB_OK) > 5000:                                # infoHashes ilimitados:
+        _DB_OK.clear()                                    # re-check es barato
     p, k = _db_cfg()
     miss = [h for h in hashes if h not in _DB_OK]
     fn = _DB_CHECK.get(p) if p else None

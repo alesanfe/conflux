@@ -95,7 +95,13 @@ def _list_fetch(url):
 
 
 def _list_metas(url, utype):
-    """Items de lista -> metas (resueltos via Cinemeta por tt)."""
+    """Items de lista -> metas (resueltos via Cinemeta por tt). El resultado
+    compuesto también va a caché: sin ella cada vista de la lista refetcheaba
+    N metas upstream aunque la lista no hubiera cambiado."""
+    ck = ('listmetas', url, utype)
+    hit = _cget(_cat_c, ck)
+    if hit is not None:
+        return hit
     _, items = _list_fetch(url)
     ids = [i for t, i in items if t == utype]
     cine = next(b for n, b in SOURCES if n == 'Cinemeta')
@@ -104,7 +110,10 @@ def _list_metas(url, utype):
         m = as_dict(f).get('meta')
         if m:
             out.append(m)
-    return {'metas': out}
+    res = {'metas': out}
+    if out:                                          # vacío/degradado: no fijar
+        _cset(_cat_c, ck, res)
+    return res
 
 
 
@@ -124,15 +133,15 @@ def _m3u_metas():
     if txt == _M3U_TXT[0]:
         return [{**m} for m in _M3U_METAS]
     metas: list = []
-    _M3U.clear()
-    cur = {'name': '', 'logo': '', 'group': '', 'tvg': ''}
+    idx: dict = {}                         # local + swap: un reader durante el
+    cur = {'name': '', 'logo': '', 'group': '', 'tvg': ''}   # re-parseo no ve el dict a medias
     for raw in txt.splitlines():
         ln = raw.strip()
         if ln.startswith('#EXTINF'):
             cur = _m3u_extinf(ln)
         elif ln and not ln.startswith('#'):
             cid = f'm3u:{len(metas) + 1}'
-            _M3U[cid] = ln
+            idx[cid] = ln
             metas.append({'id': cid, 'type': 'tv', 'name': cur['name'],
                           'poster': cur['logo'] or 'https://i.imgur.com/tTCuczU.png',
                           'posterShape': 'square',
@@ -140,6 +149,8 @@ def _m3u_metas():
                           'tvg': cur['tvg'],
                           'behaviorHints': {'isLive': True}})
             cur = {'name': '', 'logo': '', 'group': '', 'tvg': ''}
+    _M3U.clear()
+    _M3U.update(idx)
     _M3U_TXT[0] = txt
     _M3U_METAS[:] = metas
     return metas

@@ -2,11 +2,10 @@
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import urllib.parse
-import urllib.request
 from concurrent.futures import TimeoutError as FutureTimeout
 from concurrent.futures import as_completed
 
-from conflux.app.stream import _ensure_collect
+from conflux.app.stream import _eff_disabled, _ensure_collect
 from conflux.core.state import _POOL, SOURCES, _cget, _cset, _cstale, _meta_c, manifests
 from conflux.domain.metafix import _fix_metas, _rpdb
 from conflux.domain.sources import res_of, res_types
@@ -60,14 +59,13 @@ def handle_meta(stype, mid):
     # prefetch: en pelis el stream-id coincide con el meta-id — al abrir la
     # ficha ya se recolecta en background y el stream sale al instante
     if stype == 'movie' and ':' not in mid:
-        _ensure_collect(key)
+        _ensure_collect(('movie', mid, tuple(sorted(_eff_disabled()))))  # clave completa del collect
     # estrenos del calendario llegan como 'series' aunque sean pelis: fallback
     for want in _meta_try(stype):
         futs = [_POOL.submit(_meta_one, i, want, mid) for i in range(len(SOURCES))]
         d = _meta_race(futs)
         if d is not None:
             _fix_metas(d, deep=True)
-            _rpdb(d)
-            _cset(_meta_c, key, d)
-            return d
+            _cset(_meta_c, key, d)                    # caché limpio: rpdb es por perfil
+            return _rpdb(d)                           # no-destructivo -> hay que usarlo
     return _cstale(_meta_c, key) or {'meta': {}}

@@ -8,7 +8,7 @@ import threading
 import time
 from contextlib import suppress
 
-from conflux.core.state import _POOL_BG, CFG, log_ev
+from conflux.core.state import _POOL_BG, _ROOT, CFG, log_ev
 from conflux.domain.catalog import handle_catalog
 from conflux.domain.manifest import build_manifest
 from conflux.domain.sources import refresh_manifests
@@ -16,8 +16,7 @@ from conflux.infra.epg import epg_kick
 
 _prefetching = threading.Event()
 
-from conflux.core.state import _ROOT as _R
-_SYNC_SCRIPT = os.path.join(_R, 'scripts', 'trakt_sync.py')
+_SYNC_SCRIPT = os.path.join(_ROOT, 'scripts', 'trakt_sync.py')
 
 
 def _trakt_sync():

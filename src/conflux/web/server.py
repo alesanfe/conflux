@@ -148,6 +148,8 @@ class H(BaseHTTPRequestHandler):
             return self.reply({'err': 'not found'}, 404)
         finally:
             ms = (time.time() - t0) * 1000
+            if seg not in _rtime and len(_rtime) >= 64:     # paths arbitrarios de
+                seg = '_other'                              # crawlers: no clave nueva
             n, tot, mx = _rtime.get(seg, (0, 0, 0))
             _rtime[seg] = (n + 1, tot + ms, max(mx, ms))   # latencia por ruta en /health
             _rts.setdefault(seg, deque(maxlen=512)).append(ms)
@@ -213,18 +215,31 @@ class H(BaseHTTPRequestHandler):
             _meta_c.clear()
             _cat_c.clear()
             threading.Thread(target=refresh_manifests, daemon=True).start()
-            log_ev('reload', cfg=CFG.copy())
-            return self.reply({'ok': True, 'config': {k: ('***' if 'key' in k else v)
-                                                      for k, v in CFG.items()}})
+            safe = _cfg_public(CFG)
+            log_ev('reload', cfg=safe)                            # nunca claves al log
+            return self.reply({'ok': True, 'config': safe})       # ni a la respuesta
         if p == '/configure':
-            ln = int(self.headers.get('Content-Length') or 0)
-            form = urllib.parse.parse_qs(self.rfile.read(min(ln, 65536)).decode())
+            try:
+                ln = int(self.headers.get('Content-Length') or 0)
+            except ValueError:
+                ln = 0                                            # header corrupto: form vacío
+            form = urllib.parse.parse_qs(
+                self.rfile.read(max(0, min(ln, 65536))).decode())
             _configure_save(form)
             return self._redir('/configure', code=303)
         return self.reply({'err': 'not found'}, 404)
 
 
 
+
+
+# claves que nunca salen en logs ni respuestas (key/token/secret/pass/admin)
+_SECRET_RX = re.compile(r'key|token|secret|pass|admin', re.IGNORECASE)
+
+
+def _cfg_public(cfg):
+    """config.json redactada para log/respuesta — tokens y claves se enmascaran."""
+    return {k: ('***' if _SECRET_RX.search(k) else v) for k, v in cfg.items()}
 
 
 ROUTES = [

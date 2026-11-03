@@ -113,12 +113,21 @@ def _trakt_device_poll():
 
 
 
+_TOK_LOCK = threading.Lock()
+
+
 def _trakt_refresh():
     """Renueva el access_token si caduca en <10min (grant refresh_token)."""
     if not CFG.get('trakt_refresh_token'):
         return
-    if time.time() < CFG.get('trakt_expires', 0) - 600:
-        return
+    with _TOK_LOCK:                                   # dos refreshes concurrentes
+        if time.time() < CFG.get('trakt_expires', 0) - 600:
+            return                                    # reusarían el refresh_token
+        _trakt_refresh_now()                          # ya rotado -> invalidaría el grant
+
+
+def _trakt_refresh_now():
+    """POST oauth/token (ya bajo _TOK_LOCK, token fresco verificado)."""
     try:
         d = _session('api.trakt.tv').post('https://api.trakt.tv/oauth/token',
             json={'refresh_token': CFG['trakt_refresh_token'],

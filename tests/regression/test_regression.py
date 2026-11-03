@@ -287,6 +287,61 @@ class TestConfigureCastBug(unittest.TestCase):
                               self.assertNotEqual(c.get('m3u_path'), '') if CFG.get('m3u_path') else None))
 
 
+class TestReloadSecretsBug(unittest.TestCase):
+    """Bug: POST /reload logueaba CFG completo al conflux.log y su respuesta
+    solo enmascaraba claves con 'key' — trakt_access_token, client_secret,
+    opensubtitles_pass y admin_token quedaban en claro en log y JSON."""
+
+    def test_secrets_nunca_en_claro(self):
+        from conflux.web.server import _cfg_public
+        out = _cfg_public({'trakt_access_token': 'AT', 'trakt_refresh_token': 'RT',
+                           'trakt_client_secret': 'CS', 'opensubtitles_pass': 'OP',
+                           'debrid_key': 'DK', 'admin_token': 'AD',
+                           'stream_langs': ['es'], 'm3u_path': '/x'})
+        for s in ('AT', 'RT', 'CS', 'OP', 'DK', 'AD'):
+            self.assertNotIn(s, str(out), s)
+        self.assertEqual(out['stream_langs'], ['es'])           # no-secret intacto
+        self.assertEqual(out['trakt_access_token'], '***')
+
+
+class TestRpdbMissBug(unittest.TestCase):
+    """Bug: _rpdb pasó a no-destructivo pero catalog/meta descartaban su
+    retorno — en cache-miss la respuesta salía SIN poster rpdb; solo los
+    hits lo llevaban. Además el caché no debe guardar la versión marcada
+    (la key es por perfil)."""
+
+    def test_miss_aplica_rpdb_y_cachea_limpio(self):
+        import conflux.app.meta as M
+        import conflux.core.state as st
+        from tests import patch_fetch
+        st._meta_c.clear()
+        key = st.CFG.get('rpdb_key')
+        st.CFG['rpdb_key'] = 'K9'
+        self._m = list(st.manifests)
+        st.manifests[:] = [{'resources': [
+            {'name': 'meta', 'types': ['movie']}]}]
+        try:
+            restore = patch_fetch(lambda *a, **k: {
+                'meta': {'id': 'tt0137523', 'poster': 'http://orig/p.jpg'}})
+            try:
+                from unittest.mock import patch
+                seen = []
+                with patch.object(M, '_ensure_collect', seen.append):  # prefetch: hermético
+                    d = M.handle_meta('movie', 'tt0137523')
+                self.assertEqual(len(seen[0]), 3,            # (stype,sid,dis): la tupla
+                                 'prefetch con clave vieja -> ValueError en _collect')
+                self.assertEqual(seen[0][:2], ('movie', 'tt0137523'))
+            finally:
+                restore()
+            self.assertIn('ratingposterdb.com/K9', d['meta']['poster'])
+            self.assertEqual(st._meta_c[('movie', 'tt0137523')][1]['meta']['poster'],
+                             'http://orig/p.jpg')          # caché limpio
+        finally:
+            st.CFG['rpdb_key'] = key
+            st.manifests[:] = self._m
+            st._meta_c.clear()
+
+
 class TestManifestCacheAlignment(unittest.TestCase):
     """Bug latente: el manifest-cache se alineaba POSICIONALMENTE — editar
     sources.json entre arranques dejaba manifests[i] apuntando a otra fuente
