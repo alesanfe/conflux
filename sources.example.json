@@ -64,10 +64,6 @@
   "base": "https://hyper.stravo.site/local"
  },
  {
-  "name": "Frost",
-  "base": "https://froststream.cloutteam.com"
- },
- {
   "name": "Fenix",
   "base": "https://fenixflix.fenixhub.online"
  },
@@ -81,7 +77,7 @@
  },
  {
   "name": "OnePace",
-  "base": "https://onepaceaddon-zoropogger.koyeb.app"
+  "base": "https://onepace.arl.sh"
  },
  {
   "name": "IMDBCat",

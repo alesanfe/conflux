@@ -71,8 +71,12 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   ruta M3U, horizonte del calendario. Guarda en `config.json`.
 - **`/admin`** — dashboard: salud por fuente, circuitos abiertos, latencia p50/p95/p99.
 - `sources.json` — lista de fuentes `[{"name","base"}]`; sobreescribe la embebida.
+  Aquí van también **fuentes con URL configurada** (token en la URL): Orion,
+  MediaFusion, Comet, AIOStreams… — su `/configure` upstream genera la URL y
+  se pega tal cual en `base`.
 - `config.json` — `trakt_client_id`, `debrid_provider`/`debrid_key`, `m3u_path`,
-  `horizon_days`, `stream_langs`, `sources_disabled` (todas opcionales).
+  `horizon_days`, `stream_langs`, `sources_disabled`, `torznab_url`/`torznab_key`,
+  `mdblist_key`, `catalog_lists`, `opensubtitles_key` (todas opcionales).
 - `POST /reload` — aplica `config.json` en caliente y limpia cachés.
 - `/health` — estado por fuente, fails por host y latencia por ruta.
 
