@@ -72,7 +72,11 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   `SOURCES_EXTRA`) y `setup_win.ps1`/`setup.sh` las vuelca a `config.json` +
   `sources.json` automáticamente. Para re-aplicar sin reinstalar:
   `python scripts/apply_env.py` + `POST /reload`. `.env` está gitignored.
-  Con `PROWLARR=1`, setup_win.ps1 instala Prowlarr, conecta Torznab solo
+  **Vía recomendada — instalador gráfico:** `conflux-setup.bat` lanza un
+  wizard (tkinter, sin deps) que hace TODOS los pasos: entorno, Prowlarr,
+  indexers, config, proxy+autostart, addon en Stremio y login Trakt con el
+  código a pantalla completa. Alternativa headless: `scripts/setup_win.ps1`.
+  Con `PROWLARR=1` se instala Prowlarr, conecta Torznab solo
   (extrae la ApiKey del config.xml) y **siembra indexers públicos por API**
   (`scripts/prowlarr_indexers.py` — lista personalizable con
   `PROWLARR_INDEXERS`; re-ejecutable, omite los existentes).
