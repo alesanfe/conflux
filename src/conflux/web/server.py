@@ -36,7 +36,7 @@ from conflux.core.state import (
 )
 from conflux.domain.catalog import handle_catalog
 from conflux.domain.sources import _load_manifests_cache, _persist_manifests, refresh_manifests
-from conflux.infra.debrid import _db_resolve
+from conflux.infra.debrid import _db_resolve, _db_stream
 from conflux.web.pages import (
     _admin_page,
     _configure_page,
@@ -107,13 +107,15 @@ class H(BaseHTTPRequestHandler):
         'stream_langs', 'stream_exclude', 'rpdb_key',
         'catalogs_disabled', 'sources_disabled', 'source_order',
         'debrid_provider', 'debrid_key', 'calendar_months_ahead',
-        'stream_max_gb', 'stream_prefetch',
+        'stream_max_gb', 'stream_prefetch', 'stream_required', 'stream_sort',
+        'stream_format', 'debrid_proxy',
         'opensubtitles_key', 'opensubtitles_user', 'opensubtitles_pass', 'mdblist_key'})
     _CFG_URL_LIST = frozenset({'stream_langs', 'stream_exclude', 'catalogs_disabled',
-                               'sources_disabled', 'source_order'})
+                               'sources_disabled', 'source_order', 'stream_required',
+                               'stream_sort'})
     _CFG_URL_NUM = {'calendar_months_ahead': (0, 24),      # cota: builds de calendario
                     'stream_max_gb': (0, 100000)}
-    _CFG_URL_BOOL = frozenset({'stream_prefetch'})
+    _CFG_URL_BOOL = frozenset({'stream_prefetch', 'debrid_proxy'})
 
     @classmethod
     def _cfg_url_ok(cls, k, v):
@@ -197,9 +199,35 @@ class H(BaseHTTPRequestHandler):
             _, _, pvd, h = p.split('/')
             fi = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('fi', ['0'])[0]
             return self._redir(_db_resolve(pvd, h, fi))
+        if p.startswith('/dp/'):                                       # debrid proxy (túnel de salida)
+            _, _, pvd, h = p.split('/')
+            fi = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('fi', ['0'])[0]
+            return self._db_proxy(pvd, h, fi)
         if p.startswith('/s/'):                                        # subtitle redirect
             return self._redir(_sub_download(p.rsplit('/', 1)[-1]))
         return self._timed_route(p)
+    def _db_proxy(self, pvd, h, fi):
+        """Túnel de salida debrid (config.debrid_proxy): el player recibe los
+        bytes desde nuestro socket — la IP que ve el debrid es la del servidor.
+        Pasa Content-* del upstream; Range ya viaja en _db_stream."""
+        r = _db_stream(pvd, h, fi, self.headers)
+        if r is None:
+            return self._redir(None)
+        try:
+            self.send_response(r.status_code)
+            for k in ('Content-Type', 'Content-Length', 'Content-Range',
+                      'Accept-Ranges', 'Content-Disposition'):
+                if r.headers.get(k):
+                    self.send_header(k, r.headers[k])
+            self.end_headers()
+            for chunk in r.iter_content(1 << 16):                   # 64KB — sin buffering del fichero
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            pass                                                    # cliente desconectado a mitad
+        finally:
+            r.close()
+        return None
+
     def _redir(self, u, code=302):
         self.send_response(code if u else 404)
         if u:

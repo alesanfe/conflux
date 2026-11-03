@@ -34,6 +34,7 @@ from conflux.domain.text import RANK, _qscore, _skip_manifest, _spam, build_disp
 from conflux.infra.debrid import _debrid_mark
 from conflux.infra.net import _session, fetch
 from conflux.infra.torznab import _torznab
+from conflux.infra.zilean import _zilean
 
 _inflight: dict = {}            # (stype,sid) -> estado compartido
 
@@ -129,6 +130,16 @@ def _collect_tz(stype, sid):
     return 'Torznab', ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
 
 
+def _collect_zl(stype, sid):
+    """Worker Zilean (hashlists DMM ya cacheadas): mismo contrato que _collect_one."""
+    try:
+        ss = _zilean(stype, sid)
+    except Exception as e:                              # noqa: BLE001 — indexer local nunca tumba el collect
+        log_ev('src_worker', err=repr(e)[:100])
+        return 'Zilean', [], 0
+    return 'Zilean', ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+
+
 def _collect(key, state):
     stype, sid, dis = key                     # dis: sources_disabled efectivo (perfil)
     sid = _resolve_sid(stype, sid)            # kitsu/mal -> imdb para las fuentes
@@ -136,6 +147,7 @@ def _collect(key, state):
     try:
         futs = [_POOL.submit(_collect_one, i, stype, sid, dis) for i in range(len(SOURCES))]
         futs.append(_POOL.submit(_collect_tz, stype, sid))     # indexer en paralelo: no como straggler en finally
+        futs.append(_POOL.submit(_collect_zl, stype, sid))     # zilean (DMM cacheados): idem
         pending = len(futs)
 
         def _nearly_done():                                    # ~2s: si solo cuelgan stragglers
@@ -176,6 +188,9 @@ def _ensure_collect(key):
         return state
 
 
+_STREAM_TEXT = ('name', 'title', 'description')
+
+
 def _ex_out(streams):
     """Filtro stream_exclude (estilo AIOStreams): fuera lo que matchee el regex
     en name/title/description — p.ej. 'cam,screener,ts' para no ver rips de cine."""
@@ -183,7 +198,37 @@ def _ex_out(streams):
         return streams
     pat = cfg._ex_pat()                                # override de perfil si lo hay
     return [s for s in streams if not pat.search(
-        ' '.join(str(s.get(k) or '') for k in ('name', 'title', 'description')))]
+        ' '.join(str(s.get(k) or '') for k in _STREAM_TEXT))]
+
+
+def _req_out(streams):
+    """Filtro stream_required: solo sobrevive lo que matchee ALGÚN término
+    (required de AIOStreams — p.ej. ['es','latino'] = solo audio ES)."""
+    terms = _strs((_pcfg() or {}).get('stream_required'))
+    if terms is None:
+        terms = cfg.CFG.get('stream_required')
+    if not streams or not terms:
+        return streams
+    pat = cfg._ex_re(terms)                            # mismas reglas: <=3 borde, >=4 substring
+    return [s for s in streams if pat.search(
+        ' '.join(str(s.get(k) or '') for k in _STREAM_TEXT))]
+
+
+_SORT_FNS = {'res': lambda r: -RANK.get(r[1], 0), 'cached': lambda r: -r[4],
+             'quality': lambda r: -r[5], 'seeds': lambda r: -r[2], 'size': lambda r: -r[3]}
+_SORT_DEF = ('res', 'cached', 'quality', 'seeds', 'size')
+
+
+def _sort_order():
+    """stream_sort efectivo (perfil/global): criterios whitelistados; los no
+    mencionados van detrás en orden por defecto. Vacío/raro -> default."""
+    ov = _strs((_pcfg() or {}).get('stream_sort'))
+    if ov is None:
+        ov = _strs(cfg.CFG.get('stream_sort'))
+    if not ov:
+        return _SORT_DEF
+    order = [x for x in ov if x in _SORT_FNS]
+    return tuple(order + [x for x in _SORT_DEF if x not in order]) or _SORT_DEF
 
 
 def _rowkey(r):
@@ -224,7 +269,8 @@ def _rows_out(rows):
     mx = cfg._cfgget('stream_max_gb', 0) or 0              # 0 = sin límite; policy knob
     if mx:                                               # (un 4K de 80GB no siempre gana)
         rr = [r for r in rr if not r[3] or r[3] <= mx]   # size desconocido -> no castigar
-    rr.sort(key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[5], -r[2], -r[3]))
+    order = _sort_order()
+    rr.sort(key=lambda r: tuple(_SORT_FNS[o](r) for o in order))
     return [r[0] for r in rr]
 
 
@@ -238,14 +284,14 @@ def handle_stream(stype, sid):
     key = (stype, sid, tuple(sorted(_eff_disabled())))      # fuentes off varía por perfil
     hit = _cget(_cache, key)
     if hit is not None:
-        out = _ex_out(_rows_out(hit))
+        out = _req_out(_ex_out(_rows_out(hit)))
         _debrid_mark(out)                          # debrid marca copias: fuera del caché
         return {'streams': out}
     state = _ensure_collect(key)
     state['done'].wait(STREAM_BUDGET)
     with state['lock']:
         out = _rows_out(state['rows'])
-    out = _ex_out(out)                                       # filtro usuario tras dedup/rank
+    out = _req_out(_ex_out(out))                             # filtros usuario tras dedup/rank
     _debrid_mark(out)                                        # si hay key: cache + resolve /r/
     _url_health(out)                                         # HEAD async a streams http
     return {'streams': out}

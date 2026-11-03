@@ -73,15 +73,19 @@ def _cfg_form_fields(form, cfg):
             pass
     if 'stream_prefetch' in form:                    # hidden 0 + checkbox 1 -> último gana
         cfg['stream_prefetch'] = form['stream_prefetch'][-1] == '1'
+    if 'debrid_proxy' in form:
+        cfg['debrid_proxy'] = form['debrid_proxy'][-1] == '1'
     if 'stream_langs' in form:
         cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
-    for k in ('torznab_url', 'catalog_lists', 'opensubtitles_key', 'opensubtitles_user', 'epg_url'):
+    for k in ('torznab_url', 'zilean_url', 'catalog_lists', 'opensubtitles_key',
+              'opensubtitles_user', 'epg_url', 'stream_format'):
         if k in form:
             cfg[k] = form[k][0].strip()
     for k in ('torznab_key', 'mdblist_key', 'rpdb_key', 'opensubtitles_pass'):
         if k in form and form[k][0].strip():
             cfg[k] = form[k][0].strip()
-    for k in ('source_order', 'catalogs_disabled', 'stream_exclude'):
+    for k in ('source_order', 'catalogs_disabled', 'stream_exclude', 'stream_required',
+              'stream_sort'):
         if k in form:
             cfg[k] = _csv_list(form, k)
     if 'src' in form:
@@ -227,6 +231,8 @@ def _configure_page():
             f"<p>Torznab <span class='dim'>(Prowlarr/Jackett local — fuente extra de streams)</span><br>"
             f"<input name='torznab_url' value='{CFG.get('torznab_url','')}' placeholder='http://localhost:9696/api/v1.0/indexers/all/results/torznab'>"
             f"<input name='torznab_key' value='' placeholder='apikey (no se muestra)'></p>"
+            f"<p>Zilean <span class='dim'>(self-hosted: hashlists DMM ya cacheadas en debrid — más ⚡ sin coste)</span><br>"
+            f"<input name='zilean_url' value='{CFG.get('zilean_url','')}' placeholder='http://localhost:8181 — vacío = off'></p>"
             f"<p>OpenSubtitles <span class='dim'>(búsqueda con api key; la DESCARGA exige cuenta — "
             f"registro gratis en opensubtitles.com)</span><br>"
             f"<input name='opensubtitles_key' value='' placeholder='api key — vacío = off'>"
@@ -237,11 +243,20 @@ def _configure_page():
             f"<p>Filtros de stream <span class='dim'>(términos a excluir, coma — p.ej. cam,screener,ts,720p)</span><br>"
             f"<input name='stream_exclude' value='{','.join(CFG.get('stream_exclude') or [])}' placeholder='cam, camrip, hdcam, hdts, ts, screener, telesync'>"
             f"<input name='rpdb_key' value='' placeholder='rpdb apikey — posters con rating (ratingposterdb.com)'></p>"
+            f"<p>Términos requeridos <span class='dim'>(comma — solo pasa lo que contenga alguno: es, latino, remux…)</span><br>"
+            f"<input name='stream_required' value='{','.join(CFG.get('stream_required') or [])}' placeholder='vacío = todo pasa'>"
+            f"<input name='stream_sort' value='{','.join(CFG.get('stream_sort') or [])}' placeholder='orden: res,cached,quality,seeds,size'></p>"
+            f"<p>Formato de stream <span class='dim'>(template con {'{res} {hdr} {codec} {audio} {lang} {rip} {title} {es}'} — vacío = normal)</span><br>"
+            f"<input name='stream_format' value='{CFG.get('stream_format','')}' placeholder='&#123;res&#125; · &#123;hdr&#125; · &#123;codec&#125; · &#123;audio&#125; · &#123;lang&#125;'></p>"
             f"<p>Tamaño máx. por stream <input name='stream_max_gb' value='{CFG.get('stream_max_gb',0)}' style='width:80px'> GB"
             f" <span class='dim'>(0 = sin límite — un 4K de 80GB no siempre gana)</span> · "
             f"precargar streams al abrir ficha <input type='hidden' name='stream_prefetch' value='0'>"
             f"<input type='checkbox' name='stream_prefetch' value='1'"
-            f"{' checked' if CFG.get('stream_prefetch', True) else ''} style='width:auto'></p>"
+            f"{' checked' if CFG.get('stream_prefetch', True) else ''} style='width:auto'> · "
+            f"proxy debrid <input type='hidden' name='debrid_proxy' value='0'>"
+            f"<input type='checkbox' name='debrid_proxy' value='1'"
+            f"{' checked' if CFG.get('debrid_proxy') else ''} style='width:auto'>"
+            f" <span class='dim'>(/dp/: tu IP no toca el debrid — estilo StremThru; consume tu banda)</span></p>"
             f"<h2>Catálogos</h2>"
             f"<p>Listas externas <span class='dim'>(URLs Trakt /lists/, IMDb /list/ o mdblist:ID — separadas por coma)</span><br>"
             f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://trakt.tv/users/me/lists/mis-favs, https://www.imdb.com/list/ls123456/'>"
@@ -271,7 +286,7 @@ def _configure_page():
             f"var dk=document.querySelector('[name=debrid_key]').value;if(dk)o.debrid_key=dk;"
             f"['opensubtitles_key','opensubtitles_user','opensubtitles_pass','mdblist_key']"
             f".forEach(k=>{{var e=document.querySelector('[name='+k+']');if(e&&e.value)o[k]=e.value;}});"
-            f"['source_order','catalogs_disabled'].forEach(k=>{{var e=document.querySelector('[name='+k+']');"
+            f"['source_order','catalogs_disabled','stream_required','stream_sort'].forEach(k=>{{var e=document.querySelector('[name='+k+']');"
             f"if(e&&e.value)o[k]=e.value.split(',').map(x=>x.trim()).filter(Boolean);}});"
             f"var cm=document.querySelector('[name=calendar_months_ahead]').value;"
             f"var ci=parseInt(cm,10);if(!isNaN(ci)&&ci>=1&&ci<=24)o.calendar_months_ahead=ci;"
@@ -279,6 +294,9 @@ def _configure_page():
             f"var mi=parseInt(mg,10);if(!isNaN(mi)&&mi>0)o.stream_max_gb=mi;"
             f"var pf=document.querySelectorAll('[name=stream_prefetch]');"
             f"if(pf.length&&pf[pf.length-1].checked===false)o.stream_prefetch=false;"
+            f"var dx=document.querySelectorAll('[name=debrid_proxy]');"
+            f"if(dx.length&&dx[dx.length-1].checked)o.debrid_proxy=true;"
+            f"var sf=document.querySelector('[name=stream_format]');if(sf&&sf.value)o.stream_format=sf.value;"
             f"var sd=[];document.querySelectorAll('[name=src]').forEach(c=>{{if(!c.checked)sd.push(c.value);}});"
             f"if(sd.length)o.sources_disabled=sd;"
             f"var b=_b64u(JSON.stringify(o));"

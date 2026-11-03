@@ -123,6 +123,201 @@ class TestQScore(unittest.TestCase):
         self.assertLess(_qscore(f2), 40)
 
 
+class TestSortStack(unittest.TestCase):
+    """stream_sort: orden configurable (AIOStreams sort-stacks) — los criterios
+    no mencionados van detrás en orden por defecto."""
+
+    @staticmethod
+    def _row(title, cached=False):
+        s = {'name': 'x', 'title': title}
+        if cached:
+            s['behaviorHints'] = {'cached': True}
+        return S.norm_stream(s, 't')
+
+    def test_seeds_primero(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_sort=['seeds'])
+        try:
+            rr = S._rows_out([self._row('F.2024.1080p.WEBRip.x264 200seeds'),
+                              self._row('F.2024.1080p.REMUX.AV1 5seeds')])
+            self.assertIn('WEBRIP', rr[0]['title'])   # seeds>quality cuando manda seeds
+        finally:
+            undo()
+
+    def test_default_res_cached_quality(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_sort=[])
+        try:
+            rr = S._rows_out([self._row('F.2024.1080p.WEBRip.x264 200seeds'),
+                              self._row('F.2024.1080p.REMUX.AV1 5seeds')])
+            self.assertIn('REMUX', rr[0]['title'])
+        finally:
+            undo()
+
+    def test_perfil_override(self):
+        from conflux.core.cfg import _PROF
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_sort=[])
+        try:
+            _PROF.cfg = {'stream_sort': ['quality']}
+            self.assertEqual(S._sort_order()[0], 'quality')
+            _PROF.cfg = None
+        finally:
+            undo()
+
+    def test_basura_desconocida_ignorada(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_sort=['nonsense', 'seeds'])
+        try:
+            self.assertEqual(S._sort_order()[0], 'seeds')   # whitelist: solo keys válidas
+        finally:
+            undo()
+
+
+class TestStreamRequired(unittest.TestCase):
+    """stream_required: solo pasa lo que contiene algún término (required AIOStreams)."""
+
+    def test_filtra_no_match(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_required=['es', 'latino'])
+        try:
+            out = S._req_out([{'name': 'a', 'title': 'movie spanish es'},
+                              {'name': 'b', 'title': 'movie english'}])
+            self.assertEqual([s['name'] for s in out], ['a'])
+        finally:
+            undo()
+
+    def test_vacio_pasa_todo(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_required=[])
+        try:
+            self.assertEqual(len(S._req_out([{'name': 'a'}, {'name': 'b'}])), 2)
+        finally:
+            undo()
+
+
+class TestZilean(unittest.TestCase):
+    """infra.zilean — hashlists DMM -> streams cached; shape tolerante."""
+
+    def _fake_get(self, payload):
+        class R:
+            def json(self_):
+                return payload
+        class S_:
+            def get(self_, url, **kw):
+                self.assertIn('/dmm/filtered', url)
+                return R()
+        return S_()
+
+    def test_parseo(self):
+        from unittest import mock
+        from conflux.infra import zilean
+        from tests import cfg_swap
+        payload = [{'filename': 'F.2024.1080p', 'infoHash': 'A' * 40, 'filesize': '100'},
+                   {'raw_title': 'x', 'info_hash': 'b' * 40, 'size': 200}]
+        _, undo = cfg_swap(zilean_url='http://z:8181')
+        try:
+            with mock.patch.object(zilean, '_session', return_value=self._fake_get(payload)):
+                ss = zilean._zilean('movie', 'tt0137523')
+        finally:
+            undo()
+        self.assertEqual(len(ss), 2)
+        self.assertEqual(ss[0]['infoHash'], 'a' * 40)
+        self.assertTrue(ss[0]['behaviorHints']['cached'])       # DMM = ya en caché
+        self.assertEqual(ss[0]['behaviorHints']['videoSize'], 100)
+
+    def test_sin_url_vacio(self):
+        from tests import cfg_swap
+        from conflux.infra.zilean import _zilean
+        _, undo = cfg_swap(zilean_url='')
+        try:
+            self.assertEqual(_zilean('movie', 'tt0137523'), [])
+        finally:
+            undo()
+
+    def test_episode_params(self):
+        from unittest import mock
+        from conflux.infra import zilean
+        from tests import cfg_swap
+        seen = {}
+
+        class S_:
+            def get(self_, url, params=None, **kw):
+                seen.update(params or {})
+                class R:
+                    def json(self_):
+                        return []
+                return R()
+        _, undo = cfg_swap(zilean_url='http://z:8181')
+        try:
+            with mock.patch.object(zilean, '_session', return_value=S_()):
+                zilean._zilean('series', 'tt0944947:2:5')
+        finally:
+            undo()
+        self.assertEqual(seen['Season'], '2')
+        self.assertEqual(seen['Episode'], '5')
+
+
+class TestDebridProxy(unittest.TestCase):
+    """debrid_proxy: /dp/ en vez de /r/ — la IP del cliente no toca el debrid."""
+
+    def test_mark_emite_dp(self):
+        from tests import cfg_swap
+        from conflux.infra.debrid import _db_mark_one
+        s = {'infoHash': 'a' * 40, 'name': 'x', 'fileIdx': 2}
+        _, undo = cfg_swap(debrid_proxy=True)
+        try:
+            _db_mark_one('real-debrid', s)
+            self.assertIn('/dp/', s['url'])
+        finally:
+            undo()
+
+    def test_mark_emite_r_por_defecto(self):
+        from tests import cfg_swap
+        from conflux.infra.debrid import _db_mark_one
+        s = {'infoHash': 'a' * 40, 'name': 'x'}
+        _, undo = cfg_swap(debrid_proxy=False)
+        try:
+            _db_mark_one('real-debrid', s)
+            self.assertIn('/r/', s['url'])
+        finally:
+            undo()
+
+
+class TestStreamFormat(unittest.TestCase):
+    """stream_format: template configurable del nombre (formatter AIOStreams)."""
+
+    def test_template_render(self):
+        from tests import cfg_swap
+        from conflux.domain.text import _display_name, extract_fields
+        f = extract_fields({'title': 'F.2024.1080p.BluRay.x265.DV.Atmos'})
+        _, undo = cfg_swap(stream_format='{res} · {codec} · {hdr}')
+        try:
+            self.assertEqual(_display_name(f), '1080p · X265 · DV')
+        finally:
+            undo()
+
+    def test_token_vacio_sin_separadores(self):
+        from tests import cfg_swap
+        from conflux.domain.text import _display_name, extract_fields
+        f = extract_fields({'title': 'F.2024.1080p.WEB-DL'})
+        _, undo = cfg_swap(stream_format='{res} · {hdr} · {audio}')
+        try:
+            self.assertEqual(_display_name(f), '1080p')
+        finally:
+            undo()
+
+    def test_template_roto_cae_default(self):
+        from tests import cfg_swap
+        from conflux.domain.text import _display_name, extract_fields
+        f = extract_fields({'title': 'F.2024.1080p'})
+        _, undo = cfg_swap(stream_format='{{{')
+        try:
+            self.assertIn('1080p', _display_name(f))
+        finally:
+            undo()
+
+
 class TestStreamMaxGb(unittest.TestCase):
     """stream_max_gb: policy mínima de ranking — un 4K de 80GB no siempre gana."""
 

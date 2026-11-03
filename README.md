@@ -108,7 +108,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   «Recomendados · tu Trakt» (history → related). Token auto-renovado.
 - **Debrid** — 6 providers (RD, TorBox, AllDebrid, Premiumize, EasyDebrid,
   Debrid-Link): marca ⚡ los cacheados (instantAvailability) y los sirve vía
-  redirect `/r/<provider>/<hash>` → URL HTTP.
+  redirect `/r/<provider>/<hash>` → URL HTTP. `debrid_proxy: true` los sirve
+  vía `/dp/` — túnel de salida estilo StremThru (el player no toca el debrid:
+  la IP que ve es la del servidor — reenvía Range para seek).
 - **Trakt** — `TRAKT_CLIENT_ID`/`SECRET` en `.env` (par público incluido en
   `.env.example` — listo sin registrar app). `python scripts/trakt_auth.py`
   abre el login: cuenta trakt.tv gratuita → calendario personal y
@@ -119,6 +121,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   intervención).
 - **Torznab** — `torznab_url`+`torznab_key`: Prowlarr/Jackett local como fuente
   extra de streams.
+- **Zilean** — `zilean_url` (self-hosted, docker `ipromknight/zilean`+postgres):
+  hashlists DebridMediaManager = torrents **ya cacheados en debrid**; se sirven
+  como streams ⚡ sin coste por consulta — más instant-playables gratis.
 - **Listas externas** — `catalog_lists`: URLs de listas Trakt, IMDb (`/list/ls*`)
   o `mdblist:ID` (con `mdblist_key`) aparecen como catálogos.
 - **Perfiles** — `/p/<nombre>/manifest.json` usa `config.<nombre>.json`
@@ -127,10 +132,18 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   `/configure` genera la URL con idiomas/filtros/rpdb/debrid incrustados —
   cada URL es un addon distinto sin tocar `config.json`.
 - **Filtros de stream** — `stream_exclude` (términos csv: `cam,camrip,hdts,ts,screener…`; ≤3 chars con borde de palabra, ≥4 substring)
-  saca releases malos de la lista, estilo AIOStreams. `stream_max_gb` descarta
+  saca releases malos de la lista; `stream_required` es su complemento
+  required (solo pasa lo que contiene algún término: `es,latino,remux`),
+  estilo AIOStreams. `stream_max_gb` descarta
   por tamaño (un 4K de 80GB no siempre gana); `stream_prefetch: false`
   desactiva la precarga al abrir fichas. `rpdb_key` sirve
   posters con rating (ratingposterdb.com, gratis) estilo MediaFusion.
+- **Ranking consciente de calidad** — `res>cached>_qscore>seeds(+ES)>size`:
+  `_qscore` pondera rip (REMUX>BluRay>WEB-DL>HDTV), HDR (DV>HDR10+>HLG),
+  codec (AV1>HEVC>AVC) y audio (Atmos>DTS:X>TrueHD). `stream_sort` reordena
+  el stack por perfil (`seeds,quality` pone seeds primero — sort-stacks de
+  AIOStreams); `stream_format` es el formatter (`{res} {hdr} {codec} {audio}
+  {lang} {rip} {title} {es}` → nombre del stream a tu gusto).
 - **Subtítulos** — con `opensubtitles_key`: recurso `subtitles` ES-first,
   redirect `/s/<file_id>` al CDN. La descarga exige cuenta de usuario
   (`opensubtitles_user`/`pass` — registro gratis en opensubtitles.com, cuota

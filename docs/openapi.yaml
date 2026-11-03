@@ -70,6 +70,14 @@ paths:
         - {name: hash, in: path, required: true, schema: {type: string}}
         - {name: fi, in: query, schema: {type: integer, default: 0}}
       responses: {'302': {description: Location=URL}, '404': {description: sin key}}
+  /dp/{provider}/{hash}:
+    get:
+      summary: Túnel de salida debrid (config.debrid_proxy) — el cliente no toca el debrid; reenvía Range
+      parameters:
+        - {name: provider, in: path, required: true, schema: {type: string, enum: [real-debrid, torbox, alldebrid, premiumize, easydebrid, debrid-link]}}
+        - {name: hash, in: path, required: true, schema: {type: string}}
+        - {name: fi, in: query, schema: {type: integer, default: 0}}
+      responses: {'200': {description: body=stream + Content-* del upstream}, '404': {description: sin key/fallo}}
   /health:
     get:
       summary: Salud por fuente + fails por host + latencias p50/p95/p99 + streams servidos

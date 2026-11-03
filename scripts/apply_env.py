@@ -51,6 +51,7 @@ ENV2CFG = {
     'EPG_URL': 'epg_url',                     # XMLTV(.gz) con la parrilla — guía nativa
     'TORZNAB_URL': 'torznab_url',
     'TORZNAB_KEY': 'torznab_key',
+    'ZILEAN_URL': 'zilean_url',
     'ADMIN_TOKEN': 'admin_token',
     'TLS_CERT': 'tls_cert',
     'TLS_KEY': 'tls_key',

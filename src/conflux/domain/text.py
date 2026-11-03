@@ -3,7 +3,7 @@
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import re
 
-from conflux.core.cfg import _es_pat
+from conflux.core.cfg import _cfgget, _es_pat
 from conflux.domain.sources import res_of, res_prefixes, res_types
 
 # ---- normalizacion de streams ----
@@ -231,7 +231,26 @@ def _display_t2(f, short, idx):
     return t2
 
 
+class _FmtSafe(dict):
+    """format_map: clave desconocida -> '' (nunca KeyError con templates raros)."""
+    def __missing__(self, k):
+        return ''
+
+
 def _display_name(f):
+    tmpl = _cfgget('stream_format', '')                  # formatter configurable (estilo AIOStreams)
+    if tmpl:
+        try:
+            out = tmpl.format_map(_FmtSafe(
+                res=f.get('disp', ''), hdr=f.get('hdr', ''), codec=f.get('codec', ''),
+                audio=f.get('audio', ''), lang=f.get('lang', ''),
+                rip=f.get('srctype', ''), title=f.get('text', ''),
+                es='ES' if f.get('es') else ''))
+            out = re.sub(r'( · )?( · )+', ' · ', out).strip(' ·\n')  # tokens vacíos -> separadores sueltos
+            if out:
+                return out
+        except Exception:                                # noqa: BLE001 — template roto -> formato normal
+            pass
     l1 = ' · '.join(x for x in [f['lang'], f['audio']] if x)
     rows = ['☁️ ' + ' · '.join(x for x in [f['disp'], f['hdr']] if x)]
     if l1:

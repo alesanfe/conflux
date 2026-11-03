@@ -63,7 +63,8 @@ Sub-paquetes por capa — cada uno solo depende "hacia abajo":
   nombres compartidos; mutar in situ: `manifests[:] =`, `_M3U.clear()`; solo `cfg.RE_ES`
   se rebindea) + `cfg.py` (config.json + perfiles)
 - `conflux/infra/`  adaptadores externos: `net.py` (sesiones+fetch), `trakt.py`,
-  `anilist.py`, `wikidata.py`, `debrid.py`, `torznab.py` (Prowlarr/Jackett, defusedxml)
+  `anilist.py`, `wikidata.py`, `debrid.py`, `torznab.py` (Prowlarr/Jackett, defusedxml),
+  `zilean.py` (hashlists DMM self-hosted → streams `behaviorHints.cached`)
 - `conflux/domain/` lógica Stremio: `text.py` (parseo streams, RANK), `sources.py`
   (manifests upstream, res_*, impedancia ids R1), `manifest.py` (contrato: `_UTYPE`/
   `_SYNTH`/`_YR_OPTS`/agrupación), `lists.py` (listas ext + M3U), `calendar.py`
@@ -200,6 +201,15 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   extras. Lo mismo con `*_filter` upstream (StravoII): endpoint de filtro sin
   args = lista genérica redundante con las opciones del propio grupo.
   Regla en `_mf_one_cat`: `req ∩ _FEED_EXTRA` o `id endswith '_filter'` -> None.
+- Streams: ranking `res>cached>_qscore>seeds(+500 ES)>size` reordenable por
+  `stream_sort` (whitelist res/cached/quality/seeds/size); filtros
+  `stream_exclude`/`stream_required`; `stream_format` = template del name
+  (`{res} {hdr} {codec} {audio} {lang} {rip} {title} {es}`, `.get` seguro).
+- `debrid_proxy` → `_db_mark_one` emite `/dp/` en vez de `/r/`: `_db_stream`
+  abre requests stream + reenvía Range/If-*; `_db_proxy` copia 64KB y solo
+  headers Content-* — túnel de salida (IP del servidor, no la del cliente).
+- `zilean_url` (self-hosted :8181) → worker `_collect_zl` paralelo en `_collect`
+  (como torznab): `/dmm/filtered?ImdbId=&Season=&Episode=` shape tolerante.
 - Disyuntor por host en `fetch()`: `_fails[host]=(strikes,ts)` cuenta fallos
   CONSECUTIVOS (éxito resetea); ≥HOST_OPEN (4) -> fail-fast HOST_CD (60s) sin
   tocar la red. Los hosts muertos (Fenix/Frost...) no cuestan timeout en

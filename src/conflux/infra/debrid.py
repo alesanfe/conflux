@@ -2,6 +2,7 @@
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import os
+import urllib.parse
 from contextlib import suppress
 
 import requests
@@ -114,11 +115,14 @@ def _debrid_mark(streams):
 
 
 def _db_mark_one(p, s):
-    """Stream cacheado -> rayo + url /r/ (infoHash y sources ya no hacen falta)."""
+    """Stream cacheado -> rayo + url /r/ (o /dp/ con debrid_proxy: tunel de
+    salida estilo StremThru — el cliente no toca el debrid, la IP visible es
+    la del servidor; coste: nuestro ancho de banda)."""
     h = s['infoHash']
     s['cached'] = True
     s['name'] = '⚡ ' + (s.get('name') or '')
-    s['url'] = f'http://127.0.0.1:{PORT}/r/{p}/{h}?fi={s.get("fileIdx", 0)}'
+    route = 'dp' if CFG.get('debrid_proxy') else 'r'
+    s['url'] = f'http://127.0.0.1:{PORT}/{route}/{p}/{h}?fi={s.get("fileIdx", 0)}'
     s.pop('infoHash', None)
     s.pop('sources', None)
 
@@ -238,4 +242,20 @@ def _db_resolve(p, h, fi):
     try:
         return fn(k, h, fi)
     except Exception:                                            # noqa: BLE001 — boundary: debrid devuelve None, nunca crash
+        return None
+
+
+def _db_stream(p, h, fi, rq_headers):
+    """Resuelve y abre el enlace debrid en modo stream (para /dp/). Reenvía los
+    headers de validación del cliente (Range/If-*) — sin ellos el player no
+    puede hacer seek. Devuelve el response requests o None."""
+    u = _db_resolve(p, h, fi)
+    if not u:
+        return None
+    try:
+        s = _session(urllib.parse.urlsplit(u).hostname or 'debrid')
+        fwd = {k: v for k, v in rq_headers.items()
+               if k.lower() in ('range', 'if-none-match', 'if-modified-since')}
+        return s.get(u, headers=fwd, stream=True, timeout=30)
+    except Exception:                                            # noqa: BLE001 — boundary
         return None
