@@ -18,6 +18,7 @@ from conflux.core.state import (
 )
 from conflux.domain.calendar import _estrenos_cal
 from conflux.domain.lists import _list_metas, _m3u_metas
+from conflux.infra.epg import epg_metas
 from conflux.domain.manifest import _GRP, _LEGACY, _SYNTH, _UTYPE, _YR_OPTS
 from conflux.domain.metafix import _fix_metas
 from conflux.domain.sources import _PREFIX_SRC, _resolve_sid
@@ -131,10 +132,20 @@ def _synth_cal(utype, extra, _defx, key):
             _cset(_cat_c, 'estrenoscal', hit2)
     return hit2 or {'metas': []}, utype, extra
 
+def _synth_m3u(extra):
+    """M3U: sin extra = lista de canales; con date= = guía EPG de ese día."""
+    kv = dict(urllib.parse.parse_qsl(extra or ''))
+    day = kv.get('date')
+    metas = _m3u_metas()
+    if day:
+        return epg_metas(day, metas)
+    return {'metas': metas}
+
+
 _SYNTH_H = {'_busqueda': lambda utype, extra, defx, key: (_busqueda(utype, extra), utype, extra),
             '_recom': _synth_recom,
             '_list': lambda utype, extra, defx, key: (_list_metas(defx, utype), utype, extra),
-            '_m3u': lambda utype, extra, defx, key: ({'metas': _m3u_metas()}, utype, extra),
+            '_m3u': lambda utype, extra, defx, key: (_synth_m3u(extra), utype, extra),
             '_estrenos_cal': _synth_cal}
 
 def _cat_synth(cid, utype, extra, key):

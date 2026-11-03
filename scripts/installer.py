@@ -591,9 +591,9 @@ class Installer(tk.Tk):
 
     def _do_rm_runtime(self):
         import shutil
-        for p in ('.venv', 'm3u', '.manifests-cache.json', 'conflux.log',
-                  'start-conflux.bat', 'post1337.json', 'resp1337.json',
-                  'tz.xml', 'sc.json', 'tu.cs', 'os.json'):
+        for p in ('.venv', 'm3u', '.manifests-cache.json', 'epg-cache.json',
+                  'conflux.log', 'start-conflux.bat', 'post1337.json',
+                  'resp1337.json', 'tz.xml', 'sc.json', 'tu.cs', 'os.json'):
             fp = os.path.join(ROOT, p)
             try:
                 if os.path.isdir(fp):

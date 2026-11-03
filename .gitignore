@@ -7,6 +7,7 @@ dist/
 .ruff_cache/
 .pytest_cache/
 .manifests-cache.json
+epg-cache.json
 proxy.log
 config.json
 config.*.json

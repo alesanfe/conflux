@@ -27,6 +27,7 @@ ENV2CFG = {
     'MDBLIST_KEY': 'mdblist_key',
     'CATALOG_LISTS': 'catalog_lists',
     'M3U_PATH': 'm3u_path',                   # M3U_URL descarga la lista a m3u/ y apunta ahí
+    'EPG_URL': 'epg_url',                     # XMLTV(.gz) con la parrilla — guía nativa
     'TORZNAB_URL': 'torznab_url',
     'TORZNAB_KEY': 'torznab_key',
     'ADMIN_TOKEN': 'admin_token',

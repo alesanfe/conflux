@@ -119,6 +119,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
 - **Subtítulos** — con `opensubtitles_key`: recurso `subtitles` ES-first,
   redirect `/s/<file_id>` al CDN.
 - **M3U propio** — `m3u_path` → catálogo tv «Mis canales» + streams directos.
+  Con `epg_url` (XMLTV público, default epgshare ES) el catálogo se declara guía
+  nativa (`behaviorHints.epgProvider` + extra `date`) y Stremio muestra la
+  parrilla de programación por canal (~50 canales con EPG en la lista ES).
 - **Streams ES** — badge `ES` y boost de orden para `stream_langs` (configurable).
 - **Salud de streams** — HEAD async a URLs http: las confirmadas caídas
   (4xx o 2 timeouts) salen de la lista 30min.

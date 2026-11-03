@@ -286,7 +286,8 @@ def _mf_m3u_cat(cats):
         mid = 'sm3u_tv_channels'
         _SYNTH[mid] = ('tv', '_m3u', None)
         cats.append((_eff_rank('IPTV'), {'id': mid, 'type': 'tv',
-                     'name': 'Mis canales'}))
+                     'name': 'Mis canales',
+                     'extra': [{'name': 'date', 'isRequired': False}]}))
 
 
 def _mf_dedup_names(cats):
@@ -318,7 +319,10 @@ def build_manifest():
         'types': ['movie', 'series', 'anime', 'channel', 'tv'],
         'catalogs': cats,
         'idPrefixes': ['tt', 'kitsu', 'mal', 'anilist', 'anidb', 'tmdb', 'tvdb', 'ia', 'tpb', 'pluto', 'pd', 'yt', 'yt_id', 'iptv', 'local', 'mx', '_onepace', 'onepace', 'm3u'],
-        'behaviorHints': {'newEpisodeNotifications': True},
+        'behaviorHints': {'newEpisodeNotifications': True,
+                          # Native EPG: solo si el catálogo guía existe (spec SDK)
+                          **({'epgProvider': True}
+                             if any(c['id'] == 'sm3u_tv_channels' for c in cats) else {})},
     }
 
 

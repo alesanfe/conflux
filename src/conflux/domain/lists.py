@@ -125,7 +125,7 @@ def _m3u_metas():
         return [{**m} for m in _M3U_METAS]
     metas: list = []
     _M3U.clear()
-    cur = {'name': '', 'logo': '', 'group': ''}
+    cur = {'name': '', 'logo': '', 'group': '', 'tvg': ''}
     for raw in txt.splitlines():
         ln = raw.strip()
         if ln.startswith('#EXTINF'):
@@ -136,17 +136,20 @@ def _m3u_metas():
             metas.append({'id': cid, 'type': 'tv', 'name': cur['name'],
                           'poster': cur['logo'] or 'https://i.imgur.com/tTCuczU.png',
                           'posterShape': 'square',
-                          'description': cur['group']})
-            cur = {'name': '', 'logo': '', 'group': ''}
+                          'description': cur['group'],
+                          'tvg': cur['tvg'],
+                          'behaviorHints': {'isLive': True}})
+            cur = {'name': '', 'logo': '', 'group': '', 'tvg': ''}
     _M3U_TXT[0] = txt
     _M3U_METAS[:] = metas
     return metas
 
 def _m3u_extinf(ln):
-    """Línea #EXTINF -> {name, logo, group}."""
+    """Línea #EXTINF -> {name, logo, group, tvg}."""
     return {'name': ln.rsplit(',', 1)[-1].strip() or 'Canal',
             'logo': (m.group(1) if (m := re.search(r'tvg-logo="([^"]*)"', ln)) else ''),
-            'group': (m.group(1) if (m := re.search(r'group-title="([^"]*)"', ln)) else '')}
+            'group': (m.group(1) if (m := re.search(r'group-title="([^"]*)"', ln)) else ''),
+            'tvg': (m.group(1) if (m := re.search(r'tvg-id="([^"]*)"', ln)) else '')}
 
 
 

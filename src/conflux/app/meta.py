@@ -41,8 +41,18 @@ def _meta_one(i, want, mid):
     return d if isinstance(d, dict) and d.get('meta') else None
 
 
+def _meta_tv(mid):
+    """Canal M3U propio: meta local + programas de hoy (Native EPG)."""
+    from conflux.domain.lists import _m3u_metas   # import perezoso: evita ciclo
+    from conflux.infra.epg import epg_meta
+    ch = next((x for x in _m3u_metas() if x['id'] == mid), None)
+    return {'meta': epg_meta(ch) if ch else {}}
+
+
 def handle_meta(stype, mid):
     """GET /meta — meta canónico + enrichment (wikidata, imdb, yt) con stale fallback."""
+    if mid.startswith('m3u:'):
+        return _meta_tv(mid)
     key = (stype, mid)
     hit = _cget(_meta_c, key)
     if hit is not None:

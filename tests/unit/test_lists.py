@@ -210,8 +210,9 @@ class TestM3U(unittest.TestCase):
             undo()
 
     def test_extinf_parse(self):
-        d = L._m3u_extinf('#EXTINF:-1 tvg-logo="L.png" group-title="G",N')
-        self.assertEqual(d, {'name': 'N', 'logo': 'L.png', 'group': 'G'})
+        d = L._m3u_extinf('#EXTINF:-1 tvg-id="N.es@SD" tvg-logo="L.png" group-title="G",N')
+        self.assertEqual(d, {'name': 'N', 'logo': 'L.png', 'group': 'G',
+                             'tvg': 'N.es@SD'})
 
 
 class TestM3UCache(unittest.TestCase):
