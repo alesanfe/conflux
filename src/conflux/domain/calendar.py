@@ -227,6 +227,11 @@ def _estrenos_cal(_extra=None):
     days = CFG.get('calendar_months_ahead', 2) * 31
     _cal_anime_eps(cine, days, seen, out)
     _cal_trakt(cine, days, hoy, seen, out)
+    # orden: próximo estreno primero (vista navegable + calendario)
+    out.sort(key=lambda m: min(((v.get('released') or '9')[:10] for v in
+                                m.get('videos') or []
+                                if (v.get('released') or '')[:10] > hoy),
+                               default='9'))
     # SOLO metasDetailed: con 'metas' presente el cliente parsea la variante
     # ligera (sin videos) y el calendario no tiene nada que pintar
     return {'metasDetailed': out} if out else None

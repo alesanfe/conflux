@@ -241,6 +241,10 @@ def _mf_cal_cats(cats):
     cats.append((_eff_rank('Cinemeta'), {'id': ccid, 'type': 'series',
                  'name': 'Cinemeta · Próximos estrenos',
                  'extra': [{'name': 'calendarVideosIds', 'isRequired': True}]}))
+    bcid = 'scinemeta_series_calendario'               # gemelo navegable: el mismo
+    _SYNTH[bcid] = ('movie', '_estrenos_cal', None)    # feed en Board/Discover (el
+    cats.append((_eff_rank('Cinemeta'), {'id': bcid, 'type': 'series',
+                 'name': 'Cinemeta · Calendario estrenos'}))  # cal solo lo pide la vista Calendario)
     lvid = 'scinemeta_series_lastvids'             # Continue Watching: ids biblio -> tt -> cinemeta
     _SYNTH[lvid] = ('series', 'last-videos', None)
     cats.append((_eff_rank('Cinemeta'), {'id': lvid, 'type': 'series',
