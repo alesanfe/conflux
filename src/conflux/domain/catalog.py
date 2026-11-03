@@ -119,10 +119,16 @@ def _synth_recom(utype, extra, _defx, _key):
     return hit2, utype, extra
 
 def _synth_cal(utype, extra, _defx, key):
-    """estrenos del calendario (extra=ids pedidos; respuesta cacheada)."""
-    hit2 = _estrenos_cal(extra)
-    if hit2 is not None:
-        _cset(_cat_c, key, hit2)
+    """estrenos del calendario (extra=ids pedidos; respuesta cacheada con clave
+    única — el extra se ignora y todas las variantes de ids comparten la build;
+    sin compartir, cada set de ids de biblioteca repetía el build >10s y el
+    cliente moría por timeout cada vez). Una build degradada (<20) no se cachea:
+    así la siguiente petición reintenta en vez de servir vacío 10 min."""
+    hit2 = _cget(_cat_c, 'estrenoscal')
+    if hit2 is None:
+        hit2 = _estrenos_cal(extra)
+        if hit2 and len(hit2.get('metasDetailed') or ()) >= 20:
+            _cset(_cat_c, 'estrenoscal', hit2)
     return hit2 or {'metas': []}, utype, extra
 
 _SYNTH_H = {'_busqueda': lambda utype, extra, defx, key: (_busqueda(utype, extra), utype, extra),

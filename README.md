@@ -18,6 +18,14 @@ El addon corre en tu máquina — GitHub aloja el código, no el servicio.
 ./scripts/setup.sh           # deps + servicio systemd + registro en tu perfil Stremio
 ```
 
+**Todo en uno** (Windows):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1
+# python>=3.10 (o lo instala winget) + venv + deps + autostart en la carpeta
+# Inicio + arranca el proxy + abre el diálogo «Instalar addon» en Stremio
+```
+
 Si Stremio está abierto, `python3 scripts/install_addon.py --kill` lo cierra y
 registra el addon (local SQLite + colección remota si hay sesión).
 
@@ -49,9 +57,12 @@ los restaura antes de montar servicio+addon:
 # máquina origen
 ./scripts/env_backup.sh                    # → env-backup-<ts>.tar.gz
 
-# máquina destino
+# máquina destino (Linux)
 git clone <repo> && cd conflux
 ./scripts/setup.sh --env env-backup-*.tar.gz   # mismo entorno exactamente
+
+# máquina destino (Windows)
+powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*.tar.gz
 ```
 
 ## Configuración

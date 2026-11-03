@@ -134,6 +134,8 @@ def _mf_collect_cats():
     cats: list = []
     seen: set = set()
     for i, m in enumerate(manifests):
+        if i >= len(SOURCES):   # caché de manifests más larga que SOURCES (fuentes quitadas)
+            break
         if not m or SOURCES[i].name in _NO_CATALOG or SOURCES[i].name in _eff_disabled():
             continue
         keep = _CAT_KEEP.get(SOURCES[i].name)
@@ -315,7 +317,7 @@ def build_manifest():
                       + (['subtitles'] if _cfgget('opensubtitles_key') else [])),
         'types': ['movie', 'series', 'anime', 'channel', 'tv'],
         'catalogs': cats,
-        'idPrefixes': ['tt', 'kitsu', 'mal', 'anilist', 'anidb', 'tmdb', 'tvdb', 'ia', 'tpb', 'pluto', 'pd', 'yt', 'yt_id', 'iptv', 'local', 'mx', '_onepace', 'm3u'],
+        'idPrefixes': ['tt', 'kitsu', 'mal', 'anilist', 'anidb', 'tmdb', 'tvdb', 'ia', 'tpb', 'pluto', 'pd', 'yt', 'yt_id', 'iptv', 'local', 'mx', '_onepace', 'onepace', 'm3u'],
         'behaviorHints': {'newEpisodeNotifications': True},
     }
 

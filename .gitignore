@@ -18,3 +18,8 @@ htmlcov/
 mutants/
 env-backup*/
 env-backup-*.tar.gz
+
+# local windows runtime
+.venv/
+conflux.log
+start-conflux.bat

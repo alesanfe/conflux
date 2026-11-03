@@ -76,11 +76,12 @@ SOURCES = [
     Source('Stravo',     'https://stravo.site/local'),
     Source('StravoII',   'https://v2.stravo.site/local'),
     Source('Hyper',      'https://hyper.stravo.site/local'),
-    Source('Frost',      'https://froststream.cloutteam.com'),
     Source('Fenix',      'https://fenixflix.fenixhub.online'),
     Source('AniSeason',  'https://victorgveloso.github.io/animes-season-addon'),
     Source('TorrentCat', 'https://torrent-catalogs.strem.fun'),
-    Source('OnePace',    'https://onepaceaddon-zoropogger.koyeb.app'),
+    # oficial mantenido (onepace.arl.sh): la instancia koyeb dormía y daba
+    # timeouts; froststream.cloutteam.com devuelve 403 siempre — fuera
+    Source('OnePace',    'https://onepace.arl.sh'),
     Source('IMDBCat',    'https://1fe84bc728af-imdb-catalogs.baby-beamup.club'),
     Source('RTomatoes',  'https://7a82163c306e-rottentomatoes.baby-beamup.club'),
     Source('TMDB',       'https://tmdb.elfhosted.com'),
