@@ -54,6 +54,8 @@ ENV2CFG = {
     'ZILEAN_URL': 'zilean_url',
     'NEWZNAB_URL': 'newznab_url',
     'NEWZNAB_KEY': 'newznab_key',
+    'EASYNEWS_USER': 'easynews_user',
+    'EASYNEWS_PASS': 'easynews_pass',
     'ADMIN_TOKEN': 'admin_token',
     'TLS_CERT': 'tls_cert',
     'TLS_KEY': 'tls_key',

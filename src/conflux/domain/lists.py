@@ -131,7 +131,7 @@ def _m3u_metas():
     except OSError:
         return []
     if txt == _M3U_TXT[0]:
-        return [{**m} for m in _M3U_METAS]
+        return _m3u_out([{**m} for m in _M3U_METAS])
     metas: list = []
     idx: dict = {}                         # local + swap: un reader durante el
     cur = {'name': '', 'logo': '', 'group': '', 'tvg': ''}   # re-parseo no ve el dict a medias
@@ -153,7 +153,16 @@ def _m3u_metas():
     _M3U.update(idx)
     _M3U_TXT[0] = txt
     _M3U_METAS[:] = metas
-    return metas
+    return _m3u_out(metas)
+
+
+def _m3u_out(metas):
+    """parental: fuera canales con etiquetas adultas en nombre/grupo."""
+    if not CFG.get('parental'):
+        return metas
+    from conflux.core.cfg import RE_ADULT           # local: cfg importa lists (circular)
+    return [m for m in metas
+            if not RE_ADULT.search(f"{m.get('name', '')} {m.get('description', '')}")]
 
 def _m3u_extinf(ln):
     """Línea #EXTINF -> {name, logo, group, tvg}."""

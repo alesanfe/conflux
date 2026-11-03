@@ -94,6 +94,11 @@ def _save_cfg():
 
 
 RE_ES = re.compile(r'\b(es)\b', re.IGNORECASE)
+# parental: etiquetas adultas inequívocas en name/title/canal (borde de palabra:
+# 'sex' queda fuera a propósito — 'sex education' no es contenido adulto)
+RE_ADULT = re.compile(
+    r'\b(xxx|porn|nsfw|hentai|playboy|brazzers|onlyfans|xhamster|xvideos|pornhub|'
+    r'redtube|youporn|adult|18\+)\b', re.IGNORECASE)
 
 _RE_NEVER = re.compile(r'(?!)')                 # sin filtro: nunca matchea
 RE_EX = _RE_NEVER                               # stream_exclude vacío = off

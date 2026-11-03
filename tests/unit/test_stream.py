@@ -440,6 +440,110 @@ class TestDbUsenet(unittest.TestCase):
             undo()
 
 
+class TestEasynews(unittest.TestCase):
+    """infra.easynews — solr-search por título del meta cacheado -> /en/ b64."""
+
+    def test_gate_sin_credenciales(self):
+        from tests import cfg_swap
+        from conflux.infra.easynews import _easynews
+        _, undo = cfg_swap(easynews_user='', easynews_pass='')
+        try:
+            self.assertEqual(_easynews('movie', 'tt0137523'), [])
+        finally:
+            undo()
+
+    def test_parseo(self):
+        import base64
+        from unittest import mock
+        from conflux.infra import easynews
+        from tests import cfg_swap
+        st._cset(st._meta_c, ('movie', 'tt0137523'),
+                 {'meta': {'name': 'Fight Club'}})
+        payload = {'downURL': 'https://cdn.en.com', 'dlFarm': 'f1', 'dlPort': '443',
+                   'data': [{'0': 'h1', '10': 'Fight.Club.1999.1080p', '11': '.mkv',
+                             '4': '1000', 'type': 'VIDEO'},
+                            {'0': 'h2', '10': 'clip', '11': '.mkv', 'type': 'VIDEO',
+                             '14': '30s'}]}
+        class R:
+            def json(self_):
+                return payload
+        class S_:
+            def get(self_, url, **kw):
+                self.assertEqual(kw['params']['gps'], 'Fight Club')
+                return R()
+        _, undo = cfg_swap(easynews_user='u', easynews_pass='p')
+        try:
+            with mock.patch.object(easynews, '_session', return_value=S_()):
+                ss = easynews._easynews('movie', 'tt0137523')
+        finally:
+            undo()
+            st._meta_c.clear()
+        self.assertEqual(len(ss), 1)                    # clip <5min fuera
+        self.assertIn('/en/', ss[0]['url'])
+        b = ss[0]['url'].rsplit('/en/', 1)[-1]
+        link = base64.urlsafe_b64decode(b + '=' * (-len(b) % 4)).decode()
+        self.assertEqual(link, 'https://cdn.en.com/f1/443/h1.mkv/Fight.Club.1999.1080p.mkv')  # noqa: E501
+
+    def test_serie_query_s00e00(self):
+        from unittest import mock
+        from conflux.infra import easynews
+        from tests import cfg_swap
+        seen = {}
+        st._cset(st._meta_c, ('series', 'tt0944947'), {'meta': {'name': 'Show'}})
+
+        class R:
+            def json(self_):
+                return {'data': []}
+
+        class S_:
+            def get(self_, url, params=None, **kw):
+                seen.update(params or {})
+                return R()
+        _, undo = cfg_swap(easynews_user='u', easynews_pass='p')
+        try:
+            with mock.patch.object(easynews, '_session', return_value=S_()):
+                easynews._easynews('series', 'tt0944947:2:5')
+        finally:
+            undo()
+            st._meta_c.clear()
+        self.assertEqual(seen['gps'], 'Show s02e05')
+
+
+class TestParental(unittest.TestCase):
+    """parental: fuera streams/canales con etiquetas adultas inequívocas."""
+
+    def test_streams_adultos_fuera(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(parental=True)
+        try:
+            out = S._adult_out([{'name': 'x', 'title': 'Movie XXX 1080p'},
+                                {'name': 'y', 'title': 'Movie normal'},
+                                {'name': 'z', 'title': 'Sex Education S01'}])
+            self.assertEqual([s['name'] for s in out], ['y', 'z'])
+        finally:
+            undo()
+
+    def test_off_pasa_todo(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(parental=False)
+        try:
+            self.assertEqual(len(S._adult_out([{'title': 'xxx'}])), 1)
+        finally:
+            undo()
+
+    def test_m3u_canales_adultos_fuera(self):
+        from tests import cfg_swap
+        from conflux.domain import lists
+        metas = [{'id': 'm3u:1', 'name': 'Canal X', 'description': 'Adult'},
+                 {'id': 'm3u:2', 'name': 'BBC', 'description': 'News'}]
+        _, undo = cfg_swap(parental=True)
+        try:
+            out = lists._m3u_out(metas)
+            self.assertEqual([m['id'] for m in out], ['m3u:2'])
+        finally:
+            undo()
+
+
 class TestStreamMaxGb(unittest.TestCase):
     """stream_max_gb: policy mínima de ranking — un 4K de 80GB no siempre gana."""
 

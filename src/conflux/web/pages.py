@@ -75,13 +75,17 @@ def _cfg_form_fields(form, cfg):
         cfg['stream_prefetch'] = form['stream_prefetch'][-1] == '1'
     if 'debrid_proxy' in form:
         cfg['debrid_proxy'] = form['debrid_proxy'][-1] == '1'
+    if 'parental' in form:
+        cfg['parental'] = form['parental'][-1] == '1'
     if 'stream_langs' in form:
         cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
     for k in ('torznab_url', 'zilean_url', 'newznab_url', 'catalog_lists',
-              'opensubtitles_key', 'opensubtitles_user', 'epg_url', 'stream_format'):
+              'opensubtitles_key', 'opensubtitles_user', 'epg_url', 'stream_format',
+              'easynews_user'):
         if k in form:
             cfg[k] = form[k][0].strip()
-    for k in ('torznab_key', 'newznab_key', 'mdblist_key', 'rpdb_key', 'opensubtitles_pass'):
+    for k in ('torznab_key', 'newznab_key', 'mdblist_key', 'rpdb_key', 'opensubtitles_pass',
+              'easynews_pass'):
         if k in form and form[k][0].strip():
             cfg[k] = form[k][0].strip()
     for k in ('source_order', 'catalogs_disabled', 'stream_exclude', 'stream_required',
@@ -210,7 +214,7 @@ def _configure_page():
     langs = ','.join(CFG.get('stream_langs') or [])
     opts = ''.join(f"<option value='{v}'{' selected' if CFG.get('debrid_provider')==v else ''}>{v or '— ninguno —'}</option>"
                    for v in ('', 'real-debrid', 'torbox', 'alldebrid', 'premiumize',
-                             'easydebrid', 'debrid-link'))
+                             'easydebrid', 'debrid-link', 'offcloud', 'putio'))
     return (f"<html><head><title>configure</title>{_PAGE_CSS}</head><body>"
             f"<h1>Streams Unificados · configuración</h1>"
             f"<p class='dim'>Guarda en config.json. Tras guardar, POST /reload aplica en caliente.</p>"
@@ -236,6 +240,9 @@ def _configure_page():
             f"<p>Newznab / Usenet <span class='dim'>(NZBHydra2, Easynews vía hydra — requiere debrid TorBox)</span><br>"
             f"<input name='newznab_url' value='{CFG.get('newznab_url','')}' placeholder='https://hydra/api — vacío = off'>"
             f"<input name='newznab_key' type='password' value='' placeholder='apikey (no se muestra)'></p>"
+            f"<p>Easynews <span class='dim'>(usenet directo — sin TorBox: busca por título y sirve su propio enlace)</span><br>"
+            f"<input name='easynews_user' value='{CFG.get('easynews_user','')}' placeholder='usuario'>"
+            f"<input name='easynews_pass' type='password' value='' placeholder='contraseña (no se muestra)'></p>"
             f"<p>OpenSubtitles <span class='dim'>(búsqueda con api key; la DESCARGA exige cuenta — "
             f"registro gratis en opensubtitles.com)</span><br>"
             f"<input name='opensubtitles_key' value='' placeholder='api key — vacío = off'>"
@@ -259,7 +266,11 @@ def _configure_page():
             f"proxy debrid <input type='hidden' name='debrid_proxy' value='0'>"
             f"<input type='checkbox' name='debrid_proxy' value='1'"
             f"{' checked' if CFG.get('debrid_proxy') else ''} style='width:auto'>"
-            f" <span class='dim'>(/dp/: tu IP no toca el debrid — estilo StremThru; consume tu banda)</span></p>"
+            f" <span class='dim'>(/dp/: tu IP no toca el debrid — estilo StremThru; consume tu banda)</span> · "
+            f"parental <input type='hidden' name='parental' value='0'>"
+            f"<input type='checkbox' name='parental' value='1'"
+            f"{' checked' if CFG.get('parental') else ''} style='width:auto'>"
+            f" <span class='dim'>(fuera contenido adulto: streams + canales M3U)</span></p>"
             f"<h2>Catálogos</h2>"
             f"<p>Listas externas <span class='dim'>(URLs Trakt /lists/, IMDb /list/ o mdblist:ID — separadas por coma)</span><br>"
             f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://trakt.tv/users/me/lists/mis-favs, https://www.imdb.com/list/ls123456/'>"
@@ -299,6 +310,8 @@ def _configure_page():
             f"if(pf.length&&pf[pf.length-1].checked===false)o.stream_prefetch=false;"
             f"var dx=document.querySelectorAll('[name=debrid_proxy]');"
             f"if(dx.length&&dx[dx.length-1].checked)o.debrid_proxy=true;"
+            f"var px=document.querySelectorAll('[name=parental]');"
+            f"if(px.length&&px[px.length-1].checked)o.parental=true;"
             f"var sf=document.querySelector('[name=stream_format]');if(sf&&sf.value)o.stream_format=sf.value;"
             f"var sd=[];document.querySelectorAll('[name=src]').forEach(c=>{{if(!c.checked)sd.push(c.value);}});"
             f"if(sd.length)o.sources_disabled=sd;"

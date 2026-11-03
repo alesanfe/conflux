@@ -106,8 +106,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
 - **Trakt personal** — `/auth/trakt` (device flow, una autorización) → mi
   calendario (episodios de series seguidas + watchlist) y catálogos
   «Recomendados · tu Trakt» (history → related). Token auto-renovado.
-- **Debrid** — 6 providers (RD, TorBox, AllDebrid, Premiumize, EasyDebrid,
-  Debrid-Link): marca ⚡ los cacheados (instantAvailability) y los sirve vía
+- **Debrid** — 8 providers (RD, TorBox, AllDebrid, Premiumize, EasyDebrid,
+  Debrid-Link, Offcloud, Put.io): marca ⚡ los cacheados (instantAvailability —
+  Put.io lo detecta por transfers previos de la cuenta) y los sirve vía
   redirect `/r/<provider>/<hash>` → URL HTTP. `debrid_proxy: true` los sirve
   vía `/dp/` — túnel de salida estilo StremThru (el player no toca el debrid:
   la IP que ve es la del servidor — reenvía Range para seek).
@@ -128,6 +129,14 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   hydra): items NZB servidos vía `/nzb/` → TorBox usenet
   (`createusenetdownload`→`mylist`→`requestusenetdownload`). Requiere
   `debrid_provider=torbox` — es el único provider integrado que sirve usenet.
+  Stack self-hosted listo: `docker compose -f docker-compose.usenet.yml up -d`
+  (Zilean:8181 + NZBHydra2:5076).
+- **Easynews directo** — `easynews_user`/`easynews_pass`: búsqueda por título
+  (del meta ya cargado) en Global Search 2.0; sus enlaces llevan descarga
+  propia — `/en/` re-inyecta `user:pass@` en el redirect para no filtrar
+  credenciales al manifest. Clips <5min y posts passwd/virus descartados.
+- **Parental** — `parental: true`: fuera streams y canales M3U con etiquetas
+  adultas inequívocas (borde de palabra — 'sex education' sobrevive).
 - **Listas externas** — `catalog_lists`: URLs de listas Trakt, IMDb (`/list/ls*`)
   o `mdblist:ID` (con `mdblist_key`) aparecen como catálogos.
 - **Perfiles** — `/p/<nombre>/manifest.json` usa `config.<nombre>.json`

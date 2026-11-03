@@ -2,6 +2,7 @@
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import os
+import re
 import urllib.parse
 from contextlib import suppress
 
@@ -83,8 +84,41 @@ def _dbc_dl(k, miss):
         _DB_OK[h] = h in ok_
 
 
+def _dbc_oc(k, miss):
+    """Offcloud /api/cache: marca qué magnets están ya en la caché común."""
+    r = _session('offcloud.com').post(
+        f'https://offcloud.com/api/cache?key={k}',
+        data=[('urls[]', f'magnet:?xt=urn:btih:{h}') for h in miss[:40]], timeout=8)
+    d = r.json()
+    hits = set()
+    if isinstance(d, dict):                           # {url|hash: {status:'cached'|...}}
+        for kk, v in d.items():
+            ok = (v.get('status') if isinstance(v, dict) else v) == 'cached' or v is True
+            if ok:
+                mh = re.search(r'btih:([0-9a-fA-F]{40})', str(kk))
+                hits.add((mh.group(1) if mh else str(kk).rsplit(':')[-1]).lower())
+    for h in miss[:40]:
+        _DB_OK[h] = h.lower() in hits
+
+
+def _dbc_pio(k, miss):
+    """Put.io no tiene instant-check: marca lo que ya está en la lista de
+    transfers recientes (source=magnet con btih) — eso sí resuelve al instante."""
+    r = _session('api.put.io').get('https://api.put.io/v2/transfers/list',
+                                   headers={'Authorization': f'Bearer {k}'},
+                                   params={'per_page': 100}, timeout=8)
+    seen = set()
+    for t in r.json().get('transfers', []):
+        mh = re.search(r'btih:([0-9a-fA-F]{40})', str(t.get('source', '')))
+        if mh and t.get('status') in ('COMPLETED', 'SEEDING'):
+            seen.add(mh.group(1).lower())
+    for h in miss[:40]:
+        _DB_OK[h] = h.lower() in seen
+
+
 _DB_CHECK = {'real-debrid': _dbc_rd, 'torbox': _dbc_tb, 'alldebrid': _dbc_ad,
-             'premiumize': _dbc_pm, 'easydebrid': _dbc_ed, 'debrid-link': _dbc_dl}
+             'premiumize': _dbc_pm, 'easydebrid': _dbc_ed, 'debrid-link': _dbc_dl,
+             'offcloud': _dbc_oc, 'putio': _dbc_pio}
 
 
 def _db_avail(hashes):
@@ -225,8 +259,56 @@ def _db_dl(k, h, fi):
     return fsel.get('downloadUrl') if fsel else None
 
 
+def _db_oc(k, h, fi):
+    """Offcloud: POST /api/cloud url=magnet -> requestId+url;
+    GET /api/cloud/explore/{rid} -> ficheros -> url final (FenLight pattern)."""
+    s = _session('offcloud.com')
+    t = s.post(f'https://offcloud.com/api/cloud?key={k}',
+               data={'url': f'magnet:?xt=urn:btih:{h}'}, timeout=15).json()
+    if t.get('status') != 'downloaded' or not t.get('requestId'):   # aún en cola: no se sirve ahora
+        return None
+    base, rid = t.get('url', ''), t['requestId']                    # url = https://{srv}.offcloud.com/cloud/download/{rid}
+    ex = s.get(f'https://offcloud.com/api/cloud/explore/{rid}',
+               params={'key': k, 'format': 'detailed'}, timeout=10)
+    try:
+        items = ex.json()
+    except ValueError:                                              # list/plaintext -> una ruta por línea
+        items = [x.strip() for x in ex.text.splitlines() if x.strip()]
+    files = []
+    for it in items if isinstance(items, list) else []:
+        u = it.get('url') if isinstance(it, dict) else str(it)
+        if not u:
+            continue
+        full = u if u.startswith('http') else f'{base}/{u.lstrip("/")}'
+        if str(it.get('filename', u) if isinstance(it, dict) else u).lower().endswith(_VIDEO_EXT):
+            files.append(full)
+    if not files and base:
+        files = [f"{base}/{t.get('fileName', '')}"]                 # torrent mono-fichero
+    return _pick_file(files, int(fi), files[0] if files else None)
+
+
+def _db_pio(k, h, fi):
+    """Put.io: transfers/add(url=magnet) -> files list -> /files/{id}/download."""
+    s = _session('api.put.io')
+    h_ = {'Authorization': f'Bearer {k}'}
+    t = s.post('https://api.put.io/v2/transfers/add',
+               data={'url': f'magnet:?xt=urn:btih:{h}'}, headers=h_, timeout=15).json()
+    tr = t.get('transfer') or {}
+    root = tr.get('file_id')                                        # dir raíz del transfer
+    fs = s.get('https://api.put.io/v2/files/list',
+               params={'parent_id': root or 0, 'per_page': 200},
+               headers=h_, timeout=10).json().get('files') or []
+    vids = [f for f in fs if str(f.get('name', '')).lower().endswith(_VIDEO_EXT)]
+    fsel = vids[int(fi)] if int(fi) < len(vids) else \
+        (max(vids, key=lambda f: f.get('size', 0)) if vids else None)
+    if not fsel:
+        return None
+    return f'https://api.put.io/v2/files/{fsel["id"]}/download?oauth_token={k}'
+
+
 _DB_RESOLVE = {'real-debrid': _db_rd, 'torbox': _db_tb, 'alldebrid': _db_ad,
-               'premiumize': _db_pm, 'easydebrid': _db_ed, 'debrid-link': _db_dl}
+               'premiumize': _db_pm, 'easydebrid': _db_ed, 'debrid-link': _db_dl,
+               'offcloud': _db_oc, 'putio': _db_pio}
 
 
 def _db_resolve(p, h, fi):

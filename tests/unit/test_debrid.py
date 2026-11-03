@@ -231,6 +231,60 @@ class TestDbResolvers(_DbBase):
         with patch.object(db, '_session', return_value=s):
             self.assertEqual(db._db_dl('k', self.H, 0), 'DU')
 
+    def test_db_oc(self):
+        """Offcloud: cloud(add magnet) downloaded -> explore -> mayor video."""
+        s, _ = fake_session(
+            {'json': {'requestId': 'r1', 'status': 'downloaded',
+                      'url': 'https://dl01.offcloud.com/cloud/download/r1'}},
+            {'json': [{'url': 'dir/f.mkv'}, {'url': 'dir/nfo.txt'}]})
+        with patch.object(db, '_session', return_value=s):
+            out = db._db_oc('k', self.H, 0)
+        self.assertEqual(out, 'https://dl01.offcloud.com/cloud/download/r1/dir/f.mkv')
+
+    def test_db_oc_en_cola_none(self):
+        """Status != downloaded (cola/descargando): no se sirve aún."""
+        s, _ = fake_session({'json': {'requestId': 'r1', 'status': 'created'}})
+        with patch.object(db, '_session', return_value=s):
+            self.assertIsNone(db._db_oc('k', self.H, 0))
+
+    def test_db_pio(self):
+        s, _ = fake_session(
+            {'json': {'transfer': {'id': 9, 'file_id': 100}}},
+            {'json': {'files': [{'id': 7, 'name': 'v.mkv', 'size': 9},
+                                {'id': 8, 'name': 'n.txt', 'size': 1}]}})
+        with patch.object(db, '_session', return_value=s):
+            out = db._db_pio('k', self.H, 0)
+        self.assertEqual(out, 'https://api.put.io/v2/files/7/download?oauth_token=k')
+
+    def test_db_pio_sin_video_none(self):
+        s, _ = fake_session(
+            {'json': {'transfer': {'id': 9, 'file_id': 100}}},
+            {'json': {'files': [{'id': 8, 'name': 'n.txt'}]}})
+        with patch.object(db, '_session', return_value=s):
+            self.assertIsNone(db._db_pio('k', self.H, 0))
+
+    def test_dbc_oc(self):
+        s, _ = fake_session({'json': {
+            f'magnet:?xt=urn:btih:{self.H}': {'status': 'cached'}}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_oc('k', [self.H])
+        self.assertTrue(db._DB_OK[self.H])
+
+    def test_dbc_pio(self):
+        """Put.io: cached = ya está en transfers COMPLETED/SEEDING de la cuenta."""
+        s, _ = fake_session({'json': {'transfers': [
+            {'source': f'magnet:?xt=urn:btih:{self.H}', 'status': 'COMPLETED'}]}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_pio('k', [self.H])
+        self.assertTrue(db._DB_OK[self.H])
+
+    def test_dbc_pio_descargando_no_cached(self):
+        s, _ = fake_session({'json': {'transfers': [
+            {'source': f'magnet:?xt=urn:btih:{self.H}', 'status': 'DOWNLOADING'}]}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_pio('k', [self.H])
+        self.assertFalse(db._DB_OK[self.H])
+
     def test_resolve_captura_excepcion(self):
         """Un provider que lanza -> None, nunca crash (boundary)."""
         st.CFG['debrid_provider'] = 'real-debrid'

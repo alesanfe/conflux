@@ -66,7 +66,7 @@ paths:
     get:
       summary: Redirect 302 a la URL HTTP del debrid
       parameters:
-        - {name: provider, in: path, required: true, schema: {type: string, enum: [real-debrid, torbox, alldebrid, premiumize, easydebrid, debrid-link]}}
+        - {name: provider, in: path, required: true, schema: {type: string, enum: [real-debrid, torbox, alldebrid, premiumize, easydebrid, debrid-link, offcloud, putio]}}
         - {name: hash, in: path, required: true, schema: {type: string}}
         - {name: fi, in: query, schema: {type: integer, default: 0}}
       responses: {'302': {description: Location=URL}, '404': {description: sin key}}
@@ -74,7 +74,7 @@ paths:
     get:
       summary: Túnel de salida debrid (config.debrid_proxy) — el cliente no toca el debrid; reenvía Range
       parameters:
-        - {name: provider, in: path, required: true, schema: {type: string, enum: [real-debrid, torbox, alldebrid, premiumize, easydebrid, debrid-link]}}
+        - {name: provider, in: path, required: true, schema: {type: string, enum: [real-debrid, torbox, alldebrid, premiumize, easydebrid, debrid-link, offcloud, putio]}}
         - {name: hash, in: path, required: true, schema: {type: string}}
         - {name: fi, in: query, schema: {type: integer, default: 0}}
       responses: {'200': {description: body=stream + Content-* del upstream}, '404': {description: sin key/fallo}}

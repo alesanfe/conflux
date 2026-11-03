@@ -108,14 +108,14 @@ class H(BaseHTTPRequestHandler):
         'catalogs_disabled', 'sources_disabled', 'source_order',
         'debrid_provider', 'debrid_key', 'calendar_months_ahead',
         'stream_max_gb', 'stream_prefetch', 'stream_required', 'stream_sort',
-        'stream_format', 'debrid_proxy',
+        'stream_format', 'debrid_proxy', 'parental',
         'opensubtitles_key', 'opensubtitles_user', 'opensubtitles_pass', 'mdblist_key'})
     _CFG_URL_LIST = frozenset({'stream_langs', 'stream_exclude', 'catalogs_disabled',
                                'sources_disabled', 'source_order', 'stream_required',
                                'stream_sort'})
     _CFG_URL_NUM = {'calendar_months_ahead': (0, 24),      # cota: builds de calendario
                     'stream_max_gb': (0, 100000)}
-    _CFG_URL_BOOL = frozenset({'stream_prefetch', 'debrid_proxy'})
+    _CFG_URL_BOOL = frozenset({'stream_prefetch', 'debrid_proxy', 'parental'})
 
     @classmethod
     def _cfg_url_ok(cls, k, v):
@@ -211,6 +211,20 @@ class H(BaseHTTPRequestHandler):
                 link = ''
             return self._redir(_db_usenet(CFG.get('debrid_key', ''), link)
                                if link.startswith('http') else None)
+        if p.startswith('/en/'):                                       # easynews: creds sólo en el redirect
+            b = p[4:]
+            try:
+                link = base64.urlsafe_b64decode(b + '=' * (-len(b) % 4)).decode()
+            except (ValueError, UnicodeDecodeError, binascii.Error):
+                link = ''
+            u, pw = CFG.get('easynews_user', ''), CFG.get('easynews_pass', '')
+            if link.startswith('http') and u and pw:
+                sp = urllib.parse.urlsplit(link)
+                cred = f'{urllib.parse.quote(u, safe="")}:{urllib.parse.quote(pw, safe="")}@'
+                link = f'{sp.scheme}://{cred}{sp.netloc}{sp.path}'
+            else:
+                link = ''                                     # sin creds -> 404
+            return self._redir(link if link.startswith('http') else None)
         if p.startswith('/s/'):                                        # subtitle redirect
             return self._redir(_sub_download(p.rsplit('/', 1)[-1]))
         return self._timed_route(p)

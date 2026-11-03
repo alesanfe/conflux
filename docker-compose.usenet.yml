@@ -1,0 +1,65 @@
+# Stack usenet opcional para Conflux: `docker compose -f docker-compose.usenet.yml up -d`
+# Zilean indexa los hashlists públicos de DebridMediaManager (torrents ya
+# cacheados en debrid -> streams ⚡ sin coste). NZBHydra2 agrega indexers
+# Newznab detrás de una sola API -> items NZB servidos vía TorBox.
+services:
+  zilean:
+    image: ipromknight/zilean:latest
+    container_name: zilean
+    restart: unless-stopped
+    tty: true
+    ports:
+      - "8181:8181"
+    volumes:
+      - zilean_data:/app/data
+    environment:
+      Zilean__Database__ConnectionString: "Host=zilean-postgres;Port=5432;Database=zilean;Username=postgres;Password=postgres"
+      Zilean__Dmm__ImportBatched: "true"          # importación por lotes (máquinas modestas)
+    depends_on:
+      zilean-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: curl --connect-timeout 10 --silent --show-error --fail http://localhost:8181/healthchecks/ping
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  zilean-postgres:
+    image: postgres:16.3-alpine3.20
+    container_name: zilean-postgres
+    restart: unless-stopped
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: zilean
+    volumes:
+      - zilean_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d zilean -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nzbhydra:
+    image: linuxserver/nzbhydra2:latest
+    container_name: nzbhydra
+    restart: unless-stopped
+    ports:
+      - "5076:5076"
+    volumes:
+      - nzbhydra_data:/config
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: "Etc/UTC"
+
+volumes:
+  zilean_data:
+  zilean_pgdata:
+  nzbhydra_data:
+
+# Tras levantar:
+#   Zilean  -> config.json: "zilean_url": "http://127.0.0.1:8181"
+#   NZBHydra-> UI http://127.0.0.1:5076 (añade tus indexers) ->
+#              "newznab_url": "http://127.0.0.1:5076/api", "newznab_key": <apikey>
