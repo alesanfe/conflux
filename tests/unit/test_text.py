@@ -39,7 +39,7 @@ class TestSanitiza(unittest.TestCase):
             for s in fixture(f[:-5]):
                 if px._spam(s):
                     continue
-                out, _res, _seeds, _size, _cached = px.norm_stream(s, f[:-5])
+                out, _res, _seeds, _size, _cached, _f, _sh = px.norm_stream(s, f[:-5])
                 for v in out.values():
                     self.assertIsNotNone(v, f'{f}: campo null en {out.get("name")}')
                 if 'fileIdx' in out:

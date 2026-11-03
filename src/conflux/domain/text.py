@@ -251,12 +251,13 @@ def sanitize_stream(s):
 
 
 def norm_stream(s, short):
-    """Pipeline: parsea → sanitiza → formatea. Devuelve (stream, res, seeds, size, cached)."""
+    """Pipeline: parsea → sanitiza → formatea. Devuelve
+    (stream, res, seeds_crudos, size, cached, campos, short) — campos+short
+    permiten re-etiquetar por perfil sin re-parsear el caché compartido."""
     f = extract_fields(s)
     out = sanitize_stream(s)
     out['name'], out['title'] = build_display(f, short)
-    seeds = (f['seeds'] or 0) + (500 if f['es'] else 0)   # ES/LATAM sube dentro de su resolución
-    return out, f['res'], seeds, f['size'] or 0, f['cached']
+    return out, f['res'], f['seeds'] or 0, f['size'] or 0, f['cached'], f, short
 
 
 RANK = {'4320P': 9, '2160P': 8, '1440P': 7, '1080P': 6, 'HD': 6, '720P': 5, '576P': 4, '480P': 3, '360P': 2, '240P': 1, 'SD': 1}

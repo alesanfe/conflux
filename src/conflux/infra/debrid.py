@@ -105,9 +105,10 @@ def _debrid_mark(streams):
     if not hashes:
         return
     ok = _db_avail(hashes)
-    for s in streams:
+    for i, s in enumerate(streams):
         if s.get('infoHash') in ok:
-            _db_mark_one(p, s)
+            streams[i] = dict(s)                # copia: los dicts viven en _cache —
+            _db_mark_one(p, streams[i])         # mutarlos envenena el caché con /r/
 
 
 def _db_mark_one(p, s):

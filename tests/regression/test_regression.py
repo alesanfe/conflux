@@ -168,3 +168,79 @@ class TestCfgUrlTypeBugs(unittest.TestCase):
         self.assertFalse(H._cfg_url_ok('calendar_months_ahead', True))  # bool es int
         self.assertTrue(H._cfg_url_ok('rpdb_key', 'K9'))
         self.assertFalse(H._cfg_url_ok('admin_token', 'x'))
+
+
+class TestDebridCacheMutation(unittest.TestCase):
+    """Bug: _db_mark_one mutaba los dicts en _cache (url->/r/, infoHash/sources
+    popped, '⚡' pegado) — toda petición posterior servía urls debrid incluso
+    sin key; además el hit-path ni siquiera aplicaba _debrid_mark."""
+
+    def test_mark_no_muta_objetos_cacheados(self):
+        import conflux.infra.debrid as D
+        from conflux.core.state import CFG
+        prov, key = CFG.get('debrid_provider'), CFG.get('debrid_key')
+        CFG['debrid_provider'], CFG['debrid_key'] = 'real-debrid', 'k'
+        try:
+            D._DB_OK['abc123'] = True
+            cached = [{'name': 'T', 'url': 'magnet:?xt=urn:btih:abc123',
+                       'infoHash': 'abc123', 'sources': ['dht']}]
+            marked = list(cached)
+            D._debrid_mark(marked)
+            self.assertEqual(cached[0]['url'], 'magnet:?xt=urn:btih:abc123')
+            self.assertEqual(cached[0]['infoHash'], 'abc123')
+            self.assertTrue(marked[0]['url'].startswith('http://'))
+            self.assertNotIn('infoHash', marked[0])
+        finally:
+            CFG['debrid_provider'], CFG['debrid_key'] = prov, key
+            D._DB_OK.pop('abc123', None)
+
+
+class TestStreamLangsProfileBug(unittest.TestCase):
+    """Bug: el flag 'es' y el boost +500 de seeds se horneaban en la fila
+    cacheada con el patrón global — un perfil /cfg/ o /p/ con stream_langs
+    distinto heredaba sort y etiqueta 'ES' del primer request."""
+
+    def test_perfil_re_etiqueta_y_repuntua(self):
+        import conflux.app.stream as S
+        import conflux.core.cfg as cfg
+        row = S.norm_stream(
+            {'name': 'x', 'title': 'Film.2024.1080p.FRENCH.WEB-DL 8seeds'}, 't')
+        # global=es -> f['es'] False (title dice FRENCH)
+        cfg._PROF.cfg = {'stream_langs': ['french']}
+        try:
+            rr = S._lang_rows([row])
+        finally:
+            cfg._PROF.cfg = None
+        out, _res, seeds, _size, _cached = rr[0]
+        self.assertGreater(seeds, row[2])            # boost por perfil aplicado
+        self.assertNotEqual(out['title'], row[0]['title'])  # etiqueta re-hecha
+        self.assertIn('ES', out['title'])            # _display_t2 usa el flag
+
+    def test_sin_perfil_mantiene_orden_global(self):
+        import conflux.app.stream as S
+        import conflux.core.cfg as cfg
+        row = S.norm_stream(
+            {'name': 'x', 'title': 'Film.2024.1080p.SPANiSH.WEB 8seeds'}, 't')
+        cfg._PROF.cfg = None
+        rr = S._lang_rows([row])
+        self.assertEqual(rr[0][2], row[2] + 500)     # global: boost con flag horneado
+
+
+class TestRegexLoadOrder(unittest.TestCase):
+    """Bug: load_config() corría ANTES de los regex fallback del módulo —
+    RE_ES/RE_EX quedaban pisados por \b(es)\b/(?!) hasta el primer /reload.
+    Los stream_langs/stream_exclude de config.json no aplicaban al arrancar."""
+
+    def test_re_es_deriva_de_config_en_import(self):
+        import conflux.core.cfg as cfg
+        langs = cfg.CFG.get('stream_langs') or ['es']
+        for term in langs:
+            self.assertIn(term, cfg.RE_ES.pattern)   # tras import, no tras /reload
+
+    def test_re_ex_deriva_de_config_en_import(self):
+        import conflux.core.cfg as cfg
+        terms = cfg.CFG.get('stream_exclude') or []
+        if terms:
+            self.assertNotEqual(cfg.RE_EX.pattern, '(?!)')
+        else:
+            self.assertEqual(cfg.RE_EX.pattern, '(?!)')

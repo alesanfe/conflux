@@ -9,7 +9,7 @@ import urllib.request
 from concurrent.futures import as_completed
 
 from conflux.core import cfg
-from conflux.core.cfg import _eff_disabled
+from conflux.core.cfg import _eff_disabled, _es_pat, _PROF, _strs
 from conflux.core.state import (
     _POOL,
     _POOL_BG,
@@ -31,7 +31,7 @@ from conflux.core.state import (
 )
 from conflux.domain.lists import _M3U, _m3u_metas
 from conflux.domain.sources import _resolve_sid
-from conflux.domain.text import RANK, _skip_manifest, _spam, norm_stream
+from conflux.domain.text import RANK, _skip_manifest, _spam, build_display, norm_stream
 from conflux.infra.debrid import _debrid_mark
 from conflux.infra.net import _session, fetch
 from conflux.infra.torznab import _torznab
@@ -157,7 +157,7 @@ def _collect(key, state):
                 _collect_merge(state, name, streams)
     finally:
         with state['lock']:
-            final = [r[0] for r in sorted(state['rows'], key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[2], -r[3]))]
+            final = sorted(state['rows'], key=_rowkey)      # filas completas: re-score por perfil
         with _slock:
             _cset(_cache, key, final)
             _inflight.pop(key, None)
@@ -184,6 +184,43 @@ def _ex_out(streams):
         ' '.join(str(s.get(k) or '') for k in ('name', 'title', 'description')))]
 
 
+def _rowkey(r):
+    """Orden: resolución > debrid-cached > seeds(con boost es del global) > size."""
+    return (-RANK.get(r[1], 0), -r[4], -(r[2] + 500 * (1 if r[5]['es'] else 0)), -r[3])
+
+
+def _lang_rows(rows):
+    """rows -> (out,res,seeds,size,cached) con el patrón de idioma EFECTIVO del
+    request: un perfil con stream_langs distinto re-puntúa y re-etiqueta la
+    entrada cacheada (el flag/seeds horneados son del patrón global)."""
+    pc = getattr(_PROF, 'cfg', None)
+    ovr = _strs(pc.get('stream_langs')) if isinstance(pc, dict) else None
+    if not ovr:
+        return [(r[0], r[1], r[2] + (500 if r[5]['es'] else 0), r[3], r[4])
+                if isinstance(r, tuple) else (r, 'SD', 0, 0, 0) for r in rows]
+    pat = _es_pat()
+    rr = []
+    for r in rows:
+        if isinstance(r, dict):                        # entrada legacy: dict ya formateado
+            rr.append((r, 'SD', 0, 0, 0))
+            continue
+        out, res, seeds, size, cached, f, short = r
+        es = bool(re.search(pat, f['text'], re.IGNORECASE))
+        if es != f['es']:
+            f = dict(f)
+            f['es'] = es
+            out = dict(out)
+            out['name'], out['title'] = build_display(f, short)
+        rr.append((out, res, seeds + (500 if es else 0), size, cached))
+    return rr
+
+
+def _rows_out(rows):
+    rr = _lang_rows(rows)
+    rr.sort(key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[2], -r[3]))
+    return [r[0] for r in rr]
+
+
 def handle_stream(stype, sid):
     """GET /stream — agrega fuentes (pool), dedup, ordena, marca debrid y filtra urls muertas."""
     if sid.startswith('m3u:'):                              # canales M3U propios
@@ -194,12 +231,13 @@ def handle_stream(stype, sid):
     key = (stype, sid)
     hit = _cget(_cache, key)
     if hit is not None:
-        return {'streams': _ex_out(hit)}
+        out = _ex_out(_rows_out(hit))
+        _debrid_mark(out)                          # debrid marca copias: fuera del caché
+        return {'streams': out}
     state = _ensure_collect(key)
     state['done'].wait(STREAM_BUDGET)
     with state['lock']:
-        rows = sorted(state['rows'], key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[2], -r[3]))
-    out = [r[0] for r in rows]
+        out = _rows_out(state['rows'])
     out = _ex_out(out)                                       # filtro usuario tras dedup/rank
     _debrid_mark(out)                                        # si hay key: cache + resolve /r/
     _url_health(out)                                         # HEAD async a streams http

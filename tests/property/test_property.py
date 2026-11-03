@@ -93,7 +93,7 @@ class TestSanitize(unittest.TestCase):
     @_MAX
     @given(_STREAM_DICT)
     def test_norm_stream_tupla_coherente(self, s):
-        out, _res, seeds, size, _cached = T.norm_stream(s, 'x')
+        out, _res, seeds, size, _cached, _f, _short = T.norm_stream(s, 'x')
         self.assertIsInstance(out, dict)
         self.assertIsInstance(out['name'], str)
         self.assertIsInstance(out['title'], str)

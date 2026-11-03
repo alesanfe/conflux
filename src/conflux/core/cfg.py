@@ -52,16 +52,15 @@ def _save_cfg():
         pass
 
 
-load_config()
-
 RE_ES = re.compile(r'\b(es)\b', re.IGNORECASE)
 
 _RE_NEVER = re.compile(r'(?!)')                 # sin filtro: nunca matchea
 RE_EX = _RE_NEVER                               # stream_exclude vacío = off
 
-# RE_ES/RE_EX los re-asigna load_config() desde stream_langs/stream_exclude (no
-# estáticos aquí: el orden de módulo es CFG->load_config->regexes; un compile
-# fijo aquí lo pisaría)
+# RE_ES/RE_EX los re-asigna load_config() desde stream_langs/stream_exclude:
+# load_config() debe ir DESPUÉS de los fallback — si corre antes, el compile
+# fijo pisa el patrón derivado de config.json y éste se pierde hasta /reload
+load_config()
 
 # ---- perfiles (2.4): /p/<nombre>/... usa config.<nombre>.json sobre CFG ----
 _PROF = threading.local()
