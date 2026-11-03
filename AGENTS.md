@@ -16,7 +16,10 @@ python3 -m mypy                             # type-check (config en pyproject)
 # requirements.txt = lock con hashes (pip-compile desde requirements.in)
 # escrituras de ficheros de estado SIEMPRE via _atomic_json (tmp+rename):
 # config.json, .manifests-cache.json — un corte a mitad de write no corrompe
-# CI: matrix py3.11-3.13 + pip-audit + detect-secrets + SBOM (artifact)
+# CI: matrix py3.11-3.13 + pip-audit + detect-secrets + SBOM + docker build
+# e2e es VCR: replay de tests/fixtures/e2e_responses.json.gz (396 urls).
+# Regenerar tras tocar routing: python3 scripts/record_e2e.py && gzip -9kf
+# Live real: CONFLUX_E2E_LIVE=1 python3 -m unittest tests.e2e.test_server_e2e
 systemctl --user restart stremio-proxy      # tras editar src/conflux/
 
 ## Estructura (src-layout estándar PyPA)

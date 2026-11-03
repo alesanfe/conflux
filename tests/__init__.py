@@ -75,6 +75,20 @@ def fake_session(*script):
     return _S(), calls
 
 
+def patch_session(fn):
+    """Sustituye `_session` en TODOS los módulos conflux.* que lo tienen
+    bindeado (`from conflux.infra.net import _session`). Devuelve restore()."""
+    orig = []
+    for name, mod in list(sys.modules.items()):
+        if name.startswith('conflux.') and hasattr(mod, '_session'):
+            orig.append((mod, mod._session))
+            mod._session = fn
+    def restore():
+        for mod, f_ in orig:
+            mod._session = f_
+    return restore
+
+
 def cfg_swap(**kv):
     """Fija claves de CFG y devuelve (old, restore): restore() deja CFG
     exactamente como estaba. Uso: old, undo = cfg_swap(x='v') ... undo()."""

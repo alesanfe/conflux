@@ -50,7 +50,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: pip install -r requirements-dev.txt
-      # suites herméticas (sin red): la e2e se salta sola con CI=true —
-      # verifica upstreams reales, se corre local con scripts/check.sh
+      # toda la suite es hermética: la e2e replaya fixtures VCR grabados
+      # (live con CONFLUX_E2E_LIVE=1 / scripts/record_e2e.py regenera)
       - run: coverage run -m unittest discover -s tests -t .
       - run: coverage report --include='src/*' --fail-under=80
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build .

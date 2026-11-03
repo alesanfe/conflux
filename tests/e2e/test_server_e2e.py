@@ -12,7 +12,26 @@ from http.server import ThreadingHTTPServer
 import conflux.core.state as st
 import conflux.web.server as srv
 from conflux.core import cfg
-from tests import px
+from tests import FIX, fake_session, patch_fetch, patch_session, px
+
+_LIVE = os.environ.get('CONFLUX_E2E_LIVE') == '1'
+_FX_PATH = os.path.join(FIX, 'e2e_responses.json.gz')
+if os.path.exists(_FX_PATH):
+    import gzip as _gz
+    _FX = json.load(_gz.open(_FX_PATH, 'rt', encoding='utf-8'))
+else:
+    _FX = {}
+
+
+def _vcr(url, timeout=None):
+    """fetch replay: url normalizada (años->{Y}) -> payload grabado, o None."""
+    import re as _re
+    return _FX.get(_re.sub(r'(?<!\d)(?:19|20)\d{2}(?!\d)', '{Y}', url))
+
+
+def _vcr_session(*_a, **_k):
+    # stub _session: HEAD url-health y APIs sin key -> 200 con json {}
+    return fake_session({'json': {}})[0]
 
 
 def _get(port, path, raw=False, timeout=15):
@@ -61,10 +80,11 @@ def _get_retry(port, path, tries=3, timeout=60):
     return code, d
 
 
-@unittest.skipIf(os.environ.get('CI') == 'true' and not os.environ.get('CONFLUX_E2E_LIVE'),
-                 'suite live: verifica contra upstreams reales — en CI: CONFLUX_E2E_LIVE=1')
+@unittest.skipIf(not _LIVE and not _FX,
+                 'sin fixture: scripts/record_e2e.py, o live con CONFLUX_E2E_LIVE=1')
 class ServerE2E(unittest.TestCase):
-    """Boot real: manifests cacheados si hay -> refresh bg; si no, fetch vivo."""
+    """Boot real. CONFLUX_E2E_LIVE=1 -> upstreams vivos; si no, replay VCR
+    del fixture (determinista, sin red) — mismo servidor HTTP y mismos tests."""
 
     @classmethod
     def setUpClass(cls):
@@ -73,11 +93,15 @@ class ServerE2E(unittest.TestCase):
         cfg._CFG_FILE = cls._tmp_cfg
         if os.path.exists(cls._tmp_cfg):
             os.unlink(cls._tmp_cfg)
-        # manifests: caché o fetch real
-        cached = srv._load_manifests_cache()
-        if cached:
-            st.manifests[:] = cached
+        cls._undo = []
+        if _LIVE:
+            cached = srv._load_manifests_cache()
+            if cached:
+                st.manifests[:] = cached
+            else:
+                px.refresh_manifests()
         else:
+            cls._undo += [patch_fetch(_vcr), patch_session(_vcr_session)]
             px.refresh_manifests()
         # la app siempre pide /manifest.json antes: puebla _SYNTH/_GRP/_REQ/_UTYPE
         px.build_manifest()
@@ -93,6 +117,8 @@ class ServerE2E(unittest.TestCase):
         cls.httpd.server_close()
         cls.th.join(timeout=5)
         cls.th.join(timeout=3)
+        for undo in reversed(cls._undo):
+            undo()
         if os.path.exists(cls._tmp_cfg):
             os.unlink(cls._tmp_cfg)
 
