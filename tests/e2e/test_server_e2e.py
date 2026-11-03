@@ -18,7 +18,8 @@ _LIVE = os.environ.get('CONFLUX_E2E_LIVE') == '1'
 _FX_PATH = os.path.join(FIX, 'e2e_responses.json.gz')
 if os.path.exists(_FX_PATH):
     import gzip as _gz
-    _FX = json.load(_gz.open(_FX_PATH, 'rt', encoding='utf-8'))
+    with _gz.open(_FX_PATH, 'rt', encoding='utf-8') as _fh:
+        _FX = json.load(_fh)
 else:
     _FX = {}
 
