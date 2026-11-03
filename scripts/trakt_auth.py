@@ -35,14 +35,14 @@ def main():
     html = urllib.request.urlopen(f'{PROXY}/auth/trakt', timeout=15).read().decode()
     code = (re.search(r'<b>([A-Z0-9]{6,10})</b>', html) or
             re.search(r'code[^A-Z0-9]{0,12}([A-Z0-9]{6,10})', html))
-    url = re.search(r'https://auth\.trakt\.tv/activate[^\s<"]*', html)
     if not code:
         sys.exit('no se pudo obtener user_code — ¿está el proxy corriendo?')
+    # auth.trakt.tv/activate (API) redirige a app.trakt.tv -> 404; la real es esta
+    url = 'https://trakt.tv/activate'
     print(f'código: {code.group(1)}')
-    print(f'entra en {url.group(0) if url else "https://auth.trakt.tv/activate"} '
-          'e inicia sesión con tu cuenta trakt.tv')
+    print(f'entra en {url} e inicia sesión con tu cuenta trakt.tv')
     if '--no-open' not in sys.argv:
-        webbrowser.open(url.group(0) if url else 'https://auth.trakt.tv/activate')
+        webbrowser.open(url)
     # espera a que el poll del proxy guarde el token (ventana 10 min)
     for _ in range(120):
         time.sleep(5)

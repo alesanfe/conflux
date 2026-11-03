@@ -223,9 +223,12 @@ def _trakt_auth_page():
     if not d:
         return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
                 f"<h1>Trakt</h1><p class='bad'>No se pudo iniciar el device flow.</p></body></html>")
+    # auth.trakt.tv/activate (lo que devuelve la API) redirige a app.trakt.tv
+    # que da 404 — la página real es trakt.tv/activate
+    url = 'https://trakt.tv/activate'
     return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
             f"<h1>Autorizar en Trakt</h1>"
-            f"<p>1. Abre <a href='{d['verification_url']}' style='color:#7c5ce0'>{d['verification_url']}</a><br>"
+            f"<p>1. Abre <a href='{url}' style='color:#7c5ce0'>{url}</a><br>"
             f"2. Introduce el código:</p>"
             f"<p style='font-size:34px;letter-spacing:4px;color:#7c5ce0'><b>{d['user_code']}</b></p>"
             f"<p id='st' class='dim'>esperando autorización…</p>"
