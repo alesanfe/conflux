@@ -192,6 +192,29 @@ def _cat_resolve(cid, stype, extra, key):
     return base, utype, real, extra
 
 
+def _cat_fix_extra(base, utype, real, extra):
+    """'genre' no declarado por el catálogo upstream -> se descarta.
+    Stremio inyecta opciones sintéticas en el selector ('Top' en Discover de
+    canales) que el upstream desconoce -> 0 metas -> 'Oops!'. Sin la opción
+    declarada en su manifest, se sirve el catálogo base. Groups (_GRP) ya
+    mapean su genre a catálogo real — esto solo aplica a cats directos."""
+    kv = dict(urllib.parse.parse_qsl(extra or ''))
+    g = kv.get('genre')
+    if not g or not base:
+        return extra
+    i = next((j for j, s in enumerate(SOURCES) if s.base == base), None)
+    if i is None or i >= len(manifests):
+        return extra
+    cat = next((c for c in (manifests[i] or {}).get('catalogs') or []
+                if c.get('id') == real and c.get('type') == utype), None)
+    opts = next((e.get('options') for e in (cat or {}).get('extra') or []
+                 if e.get('name') == 'genre'), None)
+    if opts and g.lower() not in {str(o).lower() for o in opts}:
+        kv.pop('genre')
+        return urllib.parse.urlencode(kv, safe=',')
+    return extra
+
+
 def _cat_norm(d):
     """Respuesta catálogo -> contrato: metas/metasDetailed solo listas de dicts."""
     for k in ('metas', 'metasDetailed'):
@@ -213,6 +236,7 @@ def handle_catalog(stype, cid, extra):
     if isinstance(resolved, dict):                            # sintético respondió directo
         return _rpdb(resolved)
     base, utype, real, extra = resolved
+    extra = _cat_fix_extra(base, utype, real, extra)
     tail = f"/{urllib.parse.quote(extra, safe='=&,:')}" if extra else ''
     d = fetch(f"{base}/catalog/{utype}/{urllib.parse.quote(real, safe='')}{tail}.json", 7)
     if isinstance(d, dict):

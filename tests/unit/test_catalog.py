@@ -77,3 +77,39 @@ class TestSearchKeyCanonico(unittest.TestCase):
             C._search_merge({'metas': [{'id': 'tt1'}]}, 'movie', seen, out)
         rs.assert_not_called()          # tt: resolución gratis, sin fetch
         self.assertEqual(len(out), 1)
+
+
+class TestCatFixExtra(unittest.TestCase):
+    """_cat_fix_extra: 'genre' que upstream no declara ('Top' inyectado por
+    Stremio en el selector de canales) -> se quita y sirve el catálogo base."""
+
+    def setUp(self):
+        import conflux.core.state as st
+        self._man = list(st.manifests)
+        st.manifests[:] = [{'catalogs': [
+            {'id': 'iptv-all', 'type': 'tv',
+             'extra': [{'name': 'genre', 'options': ['auto', 'sports']}]}]}]
+
+    def tearDown(self):
+        import conflux.core.state as st
+        st.manifests[:] = self._man
+
+    def test_genre_desconocido_fuera(self):
+        import conflux.core.state as st
+        self.assertEqual(
+            C._cat_fix_extra(st.SOURCES[0].base, 'tv', 'iptv-all', 'genre=Top'), '')
+
+    def test_genre_valido_pasa(self):
+        import conflux.core.state as st
+        self.assertEqual(C._cat_fix_extra(st.SOURCES[0].base, 'tv', 'iptv-all',
+                                          'genre=sports'), 'genre=sports')
+
+    def test_sin_genre_intacto(self):
+        import conflux.core.state as st
+        self.assertEqual(C._cat_fix_extra(st.SOURCES[0].base, 'tv', 'iptv-all',
+                                          'skip=50'), 'skip=50')
+
+    def test_case_insensitive(self):
+        import conflux.core.state as st
+        self.assertEqual(C._cat_fix_extra(st.SOURCES[0].base, 'tv', 'iptv-all',
+                                          'genre=SPORTS'), 'genre=SPORTS')
