@@ -167,6 +167,9 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   Torznab es local por diseño — exento.
 - secretos: `"env:VAR"` en config.json resuelve del entorno en `load_config`;
   `_CFG_ENV_REF` re-emite la ref en `_save_cfg` (nunca el valor resuelto).
+- ranking: `res > cached > _qscore(rip+hdr+codec+audio) > seeds(+500 ES) > size`
+  — los campos de `extract_fields` ordenan, no solo decoran; `_lang_rows`
+  devuelve 6-tupla `(out,res,seeds,size,cached,qscore)`.
 
 ## Decisiones vigentes
 

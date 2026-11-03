@@ -84,6 +84,45 @@ class TestHandleStream(unittest.TestCase):
         self.assertEqual(S.handle_stream('tv', 'm3u:noexiste'), {'streams': []})
 
 
+class TestQScore(unittest.TestCase):
+    """Ranking consciente de calidad: remux/hdr/codec/audio puntúan entre
+    cached y seeds — antes solo decoraban el display."""
+
+    @staticmethod
+    def _row(title):
+        return S.norm_stream({'name': 'x', 'title': title}, 't')
+
+    def test_remux_gana_a_webrip_misma_res(self):
+        rr = S._rows_out([self._row('F.2024.1080p.WEBRip.x264 200seeds'),
+                          self._row('F.2024.1080p.REMUX.AV1 5seeds')])
+        self.assertIn('REMUX', rr[0]['title'])
+
+    def test_hdr_codec_audio_puntuan(self):
+        rr = S._rows_out([self._row('F.2024.1080p.WEB-DL.x264.AAC 50seeds'),
+                          self._row('F.2024.1080p.WEB-DL.H265.DV.Atmos 50seeds')])
+        self.assertIn('DV', rr[0]['name'])           # hdr va en la línea de nombre
+
+    def test_cached_sigue_ganando(self):
+        """qscore no tumba a cached: instant playback antes que remux uncached."""
+        cached = S.norm_stream({'title': 'F.2024.1080p.WEBRip.x264 5seeds',
+                                'behaviorHints': {'cached': True}}, 't')
+        rr = S._rows_out([self._row('F.2024.1080p.REMUX.AV1 5seeds'), cached])
+        self.assertIn('⚡', rr[0]['title'])
+
+    def test_res_sigue_mandando(self):
+        """4K WEBRip sigue delante de 1080p REMUX — resolución primero."""
+        rr = S._rows_out([self._row('F.2024.1080p.REMUX 50seeds'),
+                          self._row('F.2024.2160p.WEBRip 50seeds')])
+        self.assertIn('2160', rr[0]['name'])
+
+    def test_qscore_campos(self):
+        from conflux.domain.text import _qscore, extract_fields
+        f = extract_fields({'title': 'F.2024.2160p.BluRay.REMUX.DV.Atmos.H265 10GB'})
+        self.assertGreater(_qscore(f), 100)        # remux+dv+hevc+atmos
+        f2 = extract_fields({'title': 'F.2024.720p.HDTV.x264'})
+        self.assertLess(_qscore(f2), 40)
+
+
 class TestStreamMaxGb(unittest.TestCase):
     """stream_max_gb: policy mínima de ranking — un 4K de 80GB no siempre gana."""
 

@@ -17,17 +17,17 @@ RE_SRC   = re.compile(r'[⚙️🔎☁️]\s*([\w.\-]+)')
 
 RE_LANG  = re.compile(r'\b(Multi\s?Audio|Multi|Dual\s?Audio|Dual|LATINO|Latino|CASTELLANO|Castellano|ESPAÑOL|Español|Spanish|SPANISH|ESP|ES|ENGLISH|English|ENG|EN|VOSE|FRENCH|French|GERMAN|ITALIAN|PORTUGUESE|JAPANESE|KOREAN|HINDI|RUS|Rutor)\b', re.IGNORECASE)
 
-RE_CODEC = re.compile(r'\b(HEVC|x265|h265|x264|h264|AV1|VP9|AVC|XviD)\b', re.IGNORECASE)
+RE_CODEC = re.compile(r'\b(HEVC|x\.?265|h\.?265|x\.?264|h\.?264|AVC|AV1|VP9|XviD)\b', re.IGNORECASE)
 
-RE_AUDIO = re.compile(r'\b(Dolby\s?Atmos|Atmos|DDP?5\.1|DD\+|TrueHD|DTS(?:-HD|-X)?|FLAC|AAC2?\.0|AAC|[257]\.1|Stereo|Mono)\b', re.IGNORECASE)
+RE_AUDIO = re.compile(r'\b(Dolby\s?Atmos|Atmos|DDP?5\.1|DDP|DD\+|TrueHD|DTS(?:-HD|-X)?|E-?AC-?3|EC3|FLAC|AAC2?\.0|AAC|[257]\.1|Stereo|Mono)\b', re.IGNORECASE)
 
 RE_DUR   = re.compile(r'(\d+)\s?h\s?(\d+)\s?m|(\d{1,2}):(\d{2}):\d{2}|(\d+)\s?min', re.IGNORECASE)
 
 FLAGS    = re.compile(r'[\U0001F1E6-\U0001F1FF]{2}')
 
-RE_SRCT  = re.compile(r'\b(BDREMUX|REMUX|BluRay|BDRip|WEB-?DL|WEBRip|HDTV|DVDRip|DVD|CAM|HDCAM|TS|SCR)\b', re.IGNORECASE)
+RE_SRCT  = re.compile(r'\b(BDREMUX|REMUX|BluRay|BDRip|BRRip|WEB-?DL|WEBRip|HDTV|DVDRip|DVD|CAM|HDCAM|TS|SCR)\b', re.IGNORECASE)
 
-RE_HDR   = re.compile(r'\b(HDR10\+|Dolby\s?Vision|HDR10|HDR|DV)\b', re.IGNORECASE)
+RE_HDR   = re.compile(r'\b(HDR10\+|Dolby\s?Vision|HDR10|HLG|HDR|DV)\b', re.IGNORECASE)
 
 
 LANG_MAP = {'EN':'Inglés','ENG':'Inglés','ENGLISH':'Inglés','ES':'Español','ESP':'Español',
@@ -37,7 +37,8 @@ LANG_MAP = {'EN':'Inglés','ENG':'Inglés','ENGLISH':'Inglés','ES':'Español','
             'PORTUGUESE':'Portugués','KOREAN':'Coreano','HINDI':'Hindi','RUS':'Ruso','RUTOR':'Ruso'}
 
 AUDIO_MAP = {'ATMOS':'Atmos','DOLBY ATMOS':'Atmos','TRUEHD':'TrueHD','DDP5.1':'DD+ 5.1','DD5.1':'DD 5.1',
-             'DD+':'DD+','DTS-HD':'DTS-HD','DTS-X':'DTS:X','DTS':'DTS','FLAC':'FLAC','AAC2.0':'AAC 2.0',
+             'DD+':'DD+','DDP':'DD+','EAC3':'EAC3','E-AC-3':'EAC3','EC3':'EAC3','DTS-HD':'DTS-HD',
+             'DTS-X':'DTS:X','DTS':'DTS','FLAC':'FLAC','AAC2.0':'AAC 2.0',
              'AAC':'AAC','STEREO':'Stereo','MONO':'Mono','2.1':'2.1','5.1':'5.1','7.1':'7.1'}
 
 INDEXER_MAP = {'NYAA':'NyaaSi','NYAASI':'NyaaSi','RUTRACKER':'Rutracker','WOLFMAX4K':'Wolfmax4k',
@@ -48,9 +49,30 @@ INDEXER_MAP = {'NYAA':'NyaaSi','NYAASI':'NyaaSi','RUTRACKER':'Rutracker','WOLFMA
  'RUTOR':'RuTor','MEGUSTA':'MeGusta','NTB':'NTb','FGT':'FGT','EVO':'EVO','PSA':'PSA','ION10':'ION10',
  'XNT':'XNT','DDR':'DDR','SUCCESSFULCRAB':'SuccessfulCrab','SMURF':'SMURF','VXT':'VxT'}
 
-SRCT_ORD = ['BDREMUX','REMUX','BLURAY','WEB-DL','WEBRIP','BDRIP','HDTV','DVDRIP','DVD','CAM','HDCAM','TS','SCR']
+SRCT_ORD = ['BDREMUX','REMUX','BLURAY','WEB-DL','WEBRIP','BDRIP','BRRIP','HDTV','DVDRIP','DVD','CAM','HDCAM','TS','SCR']
 
-HDR_ORD  = ['HDR10+','DV','HDR10','HDR']
+HDR_ORD  = ['HDR10+','DV','HDR10','HLG','HDR']
+
+# Puntos de calidad para _qscore — resolución y cached siguen dominando el
+# ranking; esto decide dentro de la misma res: REMUX > WEBRip, DV+Atmos > AAC.
+_RIP_SC   = {'BDREMUX': 80, 'REMUX': 80, 'BLURAY': 70, 'BDRIP': 65, 'BRRIP': 60,
+             'WEB-DL': 55, 'WEBRIP': 40, 'HDTV': 25, 'DVDRIP': 15, 'DVD': 10}
+_HDR_SC   = {'DV': 30, 'HDR10+': 28, 'HDR10': 22, 'HLG': 18, 'HDR': 18}
+_CODEC_SC = {'AV1': 15, 'HEVC': 12, 'X265': 12, 'H265': 12, 'H.265': 12,
+             'AVC': 6, 'X264': 6, 'H264': 6, 'H.264': 6, 'VP9': 6, 'XVID': 0}
+_AUDIO_SC = {'Atmos': 25, 'DTS:X': 20, 'TrueHD': 18, 'DTS-HD': 16, 'DTS': 12,
+             'EAC3': 10, 'DD+ 5.1': 10, 'DD 5.1': 8, 'DD+': 8, 'FLAC': 10,
+             'AAC 2.0': 4, 'AAC': 4, '7.1': 4, '5.1': 2, '2.1': 1}
+
+
+def _qscore(f):
+    """Puntos de calidad del release parseado (rip + hdr + codec + mejor audio,
+    0..~150). Los campos ya se extraían para el display — ahora también ordenan."""
+    au = (f.get('audio') or '').split()
+    return (_RIP_SC.get(f.get('srctype') or '', 0)
+            + _HDR_SC.get(f.get('hdr') or '', 0)
+            + _CODEC_SC.get((f.get('codec') or '').upper(), 0)
+            + max((_AUDIO_SC.get(t, 0) for t in au), default=0))
 
 
 def _prio(found, order):

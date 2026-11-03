@@ -211,7 +211,7 @@ class TestStreamLangsProfileBug(unittest.TestCase):
             rr = S._lang_rows([row])
         finally:
             cfg._PROF.cfg = None
-        out, _res, seeds, _size, _cached = rr[0]
+        out, _res, seeds, _size, _cached, _qs = rr[0]
         self.assertGreater(seeds, row[2])            # boost por perfil aplicado
         self.assertNotEqual(out['title'], row[0]['title'])  # etiqueta re-hecha
         self.assertIn('ES', out['title'])            # _display_t2 usa el flag
