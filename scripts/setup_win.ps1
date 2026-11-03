@@ -57,7 +57,8 @@ if (Test-Path $envFile) {
 }
 
 # Prowlarr: instala el indexer manager y saca su ApiKey del config.xml → torznab
-if ($Prowlarr -or $envCfg['PROWLARR'] -eq '1') {
+$prowlarrOn = $Prowlarr -or $envCfg['PROWLARR'] -eq '1'
+if ($prowlarrOn) {
     Write-Host '== prowlarr (torznab) =='
     $svc = Get-Service Prowlarr -ErrorAction SilentlyContinue
     if (-not $svc) {
@@ -80,11 +81,16 @@ if ($Prowlarr -or $envCfg['PROWLARR'] -eq '1') {
                 Add-Content $envFile
         }
     }
-    Write-Host 'Añade indexers en http://localhost:9696 (Settings -> Indexers -> +)'
 }
 
 if (Test-Path $envFile) {
     & $venvPy scripts\apply_env.py $envFile
+}
+
+# Sembrar indexers públicos por API (PROWLARR_INDEXERS="a,b,c" personaliza la lista)
+if ($prowlarrOn -and $envCfg['TORZNAB_KEY']) {
+    Write-Host '== sembrando indexers públicos en Prowlarr =='
+    & $venvPy scripts\prowlarr_indexers.py
 }
 
 Write-Host '== lanzador + autostart =='
