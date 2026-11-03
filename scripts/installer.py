@@ -626,6 +626,11 @@ class Installer(tk.Tk):
             self.say('Prowlarr se conserva')
             self.q.put(('done', 'omitido'))
             return
+        if sys.platform != 'win32':
+            self.say('desinstalación automática solo en Windows — '
+                     'quita Prowlarr con tu gestor de paquetes')
+            self.q.put(('done', 'omitido'))
+            return
         self.say('deteniendo servicio Prowlarr…')
         _sh('net stop Prowlarr', shell=True, timeout=30)
         rc, out = _sh('winget uninstall -e --id TeamProwlarr.Prowlarr '
