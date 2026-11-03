@@ -149,11 +149,17 @@ def install_remote(manifest_url=PROXY_MANIFEST):
         return 'manual', 'sin authKey — Stremio sin abrir o sin sesión'
     try:
         addons = _api_get(key)
-        if any(a.get('transportUrl') == manifest_url for a in addons):
-            return 'already', f'{len(addons)} addons en colección'
         man = json.load(urllib.request.urlopen(manifest_url, timeout=10))
-        addons.append({'manifest': man, 'transportUrl': manifest_url,
-                       'flags': {'official': False, 'protected': False}})
+        desc = {'manifest': man, 'transportUrl': manifest_url,
+                'flags': {'official': False, 'protected': False}}
+        for i, a in enumerate(addons):
+            if a.get('transportUrl') == manifest_url:
+                if a.get('manifest') == man:
+                    return 'already', f'{len(addons)} addons en colección'
+                addons[i] = desc            # snapshot viejo -> el selector mostraría
+                _api_set(key, addons)       # catálogos borrados (R6: remoto manda)
+                return 'updated', f'manifest refrescado ({len(addons)} addons)'
+        addons.append(desc)
         _api_set(key, addons)
         return 'installed', f'{len(addons)} addons (remoto)'
     except Exception as e:
@@ -206,8 +212,8 @@ def install(manifest_url=PROXY_MANIFEST):
         local = _sqlite_update(
             lambda ads: [a for a in ads
                          if a.get('transportUrl') != manifest_url] + [desc])
-    if st == 'installed':
-        return 'installed', msg + (' + perfil local' if local else '')
+    if st in ('installed', 'updated'):
+        return st, msg + (' + perfil local' if local else '')
     if st == 'already':
         return 'already', msg + (' (local sync)' if local else '')
     if local:
