@@ -95,5 +95,9 @@
   "name": "Streamed",
   "base": "https://streamed.pk",
   "_nota": "deportes en vivo; algunos ISPs bloquean el dominio — mirrors: streamed.su, streamed.pk"
+ },
+ {
+  "name": "FlixStreams",
+  "base": "https://free.flixnest.app"
  }
 ]

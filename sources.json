@@ -90,5 +90,9 @@
  {
   "name": "TMDB",
   "base": "https://tmdb.elfhosted.com"
+ },
+ {
+  "name": "FlixStreams",
+  "base": "https://free.flixnest.app"
  }
 ]

@@ -322,7 +322,7 @@ def build_manifest():
                       + (['subtitles'] if _cfgget('opensubtitles_key') else [])),
         'types': ['movie', 'series', 'anime', 'channel', 'tv'],
         'catalogs': cats,
-        'idPrefixes': ['tt', 'kitsu', 'mal', 'anilist', 'anidb', 'tmdb', 'tvdb', 'ia', 'tpb', 'pluto', 'pd', 'yt', 'yt_id', 'iptv', 'local', 'mx', '_onepace', 'onepace', 'm3u'],
+        'idPrefixes': ['tt', 'kitsu', 'mal', 'anilist', 'anidb', 'tmdb', 'tvdb', 'ia', 'tpb', 'pluto', 'pd', 'yt', 'yt_id', 'iptv', 'local', 'mx', '_onepace', 'onepace', 'm3u', 'dlstreams', 'essential'],
         'behaviorHints': {'newEpisodeNotifications': True,
                           'configurable': True,               # engranaje -> abre <base>/configure
                           # Native EPG: solo si el catálogo guía existe (spec SDK)
