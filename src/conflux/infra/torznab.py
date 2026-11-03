@@ -97,6 +97,15 @@ def _tz_item(it, attrs):
             return None
     return {'name': 'Torznab', 'title': it.findtext('title') or 'torrent',
             'infoHash': ih,
-            'behaviorHints': {'seeders': int(attrs.get('seeders') or 0),
-                              'videoSize': float(attrs.get('size') or 0),
+            'behaviorHints': {'seeders': _tz_num(attrs.get('seeders'), int),
+                              'videoSize': _tz_num(attrs.get('size'), float),
                               'bingeGroup': 'torznab'}}
+
+
+def _tz_num(v, cast):
+    """Attr torznab malformado ('', 'abc', '12,5') -> 0: un item raro no debe
+    tumbar todos los resultados del indexer."""
+    try:
+        return cast(str(v).replace(',', '.').strip() or 0)
+    except (TypeError, ValueError):
+        return 0

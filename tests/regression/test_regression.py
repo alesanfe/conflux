@@ -287,6 +287,31 @@ class TestConfigureCastBug(unittest.TestCase):
                               self.assertNotEqual(c.get('m3u_path'), '') if CFG.get('m3u_path') else None))
 
 
+class TestSynthOrphansBug(unittest.TestCase):
+    """Bug: _SYNTH/_GRP/_UTYPE/_YR_OPTS acumulaban entradas entre builds —
+    quitar m3u_path, una lista externa o el token Trakt dejaba catálogos
+    fantasma aún ruteables (routing huérfano invisible en el manifest)."""
+
+    def test_build_reset_limpia_routing(self):
+        import tempfile, os
+        import conflux.domain.manifest as MF
+        import conflux.core.state as st
+        tf = tempfile.NamedTemporaryFile(suffix='.m3u', delete=False)
+        tf.write(b'#EXTINF:-1,La 1\nhttp://x/1.m3u8\n'); tf.close()
+        old = st.CFG.get('m3u_path')
+        try:
+            st.CFG['m3u_path'] = tf.name
+            MF.build_manifest()
+            self.assertIn('sm3u_tv_channels', MF._SYNTH)
+            st.CFG['m3u_path'] = ''
+            MF.build_manifest()
+            self.assertNotIn('sm3u_tv_channels', MF._SYNTH)   # huérfano fuera
+        finally:
+            st.CFG['m3u_path'] = old
+            os.unlink(tf.name)
+            MF.build_manifest()
+
+
 class TestReloadSecretsBug(unittest.TestCase):
     """Bug: POST /reload logueaba CFG completo al conflux.log y su respuesta
     solo enmascaraba claves con 'key' — trakt_access_token, client_secret,

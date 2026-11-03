@@ -4,6 +4,7 @@
 import collections
 import os
 import re
+import threading
 
 from conflux.core.cfg import _cfgget, _eff_disabled
 from conflux.core.state import _YEARS, CFG, SOURCES, manifests
@@ -318,10 +319,18 @@ def _mf_dedup_names(cats):
             nc['name'] = f"{n} ({u}{f' {taken[k]}' if taken[k] > 1 else ''})"
 
 
+_MF_LOCK = threading.Lock()
+
+
 def build_manifest():
-    """Manifest unificado: catálogos upstream reagrupados + sintéticos."""
-    cats = _mf_group(_mf_collect_cats())
-    _mf_synth_cats(cats)
+    """Manifest unificado: catálogos upstream reagrupados + sintéticos.
+    Los dicts de routing (_SYNTH/_GRP/_UTYPE/_YR_OPTS) se reconstruyen por
+    completo en cada build — sin reset acumulaban huérfanos tras quitar
+    m3u_path, listas o un token Trakt (catálogos fantasma aún ruteables)."""
+    with _MF_LOCK:                                   # dos builds concurrentes
+        _SYNTH.clear(); _GRP.clear(); _UTYPE.clear(); _YR_OPTS.clear()
+        cats = _mf_group(_mf_collect_cats())
+        _mf_synth_cats(cats)
     _catoff = set(_cfgget('catalogs_disabled') or [])
     cats = [nc for _, nc in sorted(cats, key=lambda t: t[0]) if nc['id'] not in _catoff]
     _mf_dedup_names(cats)

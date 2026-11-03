@@ -38,6 +38,10 @@ class TestCoerce(unittest.TestCase):
         self.assertEqual(cfg._coerce('trakt_client_id', 'abc123'), 'abc123')
         self.assertEqual(cfg._coerce('stream_langs', ['es']), ['es'])
 
+    def test_null_cae_al_default(self):
+        self.assertEqual(cfg._coerce('m3u_path', None), '')      # "k":null no propaga None
+        self.assertEqual(cfg._coerce('trakt_expires', None), 0)
+
 
 class TestEffDisabled(unittest.TestCase):
     def test_eff_disabled_lista(self):

@@ -22,7 +22,9 @@ def _coerce(k, v):
     """Normaliza un valor de config.json al tipo de su default — un int guardado
     como str (edición a mano / apply_env viejo) rompería aritmética o iteración."""
     d = _CFG_DEFAULTS.get(k)
-    if v is None or d is None or isinstance(v, type(d)):
+    if v is None:
+        return d                              # "m3u_path": null -> default, nunca None
+    if d is None or isinstance(v, type(d)):
         return v
     try:
         if isinstance(d, bool):
