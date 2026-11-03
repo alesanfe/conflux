@@ -114,6 +114,8 @@ try:
 except (OSError, ValueError) as e:
     _log.warning('sources.json ignorado (%s) — usando la lista embebida', e)
 
+_SOURCES_BASE = list(SOURCES)      # embebida+sources.json; extra_sources va ENCIMA
+
 
 # ---- config.json unificado (opciones del usuario, todo opcional) ----
 _CFG_FILE = os.path.join(_ROOT, 'config.json')
@@ -132,6 +134,7 @@ _CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '',
                  'zilean_url': '', 'debrid_proxy': False,
                  'newznab_url': '', 'newznab_key': '',
                  'easynews_user': '', 'easynews_pass': '', 'parental': False,
+                 'extra_sources': [], 'stream_preferred': [], 'source_timeout': 0,
                  'trakt_access_token': '', 'trakt_refresh_token': '', 'trakt_expires': 0,
                  'epg_url': 'https://epgshare01.online/epgshare01/epg_ripper_ES1.xml.gz'}
 

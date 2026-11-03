@@ -137,6 +137,13 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   credenciales al manifest. Clips <5min y posts passwd/virus descartados.
 - **Parental** — `parental: true`: fuera streams y canales M3U con etiquetas
   adultas inequívocas (borde de palabra — 'sex education' sobrevive).
+- **Addons extra (marketplace-lite)** — `extra_sources`: URLs de cualquier
+  addon Stremio de la comunidad (base o `.../manifest.json`) — entran como
+  fuentes completas (streams+catálogos+meta) y aparecen en `/configure` como
+  desactivables. Quitarlos los elimina al siguiente `/reload`.
+- **Preferidos** — `stream_preferred`: boost +300 en ranking (no filtro —
+  cierra el trío exclude/required/preferred de AIOStreams); `source_timeout`
+  ajusta el timeout por fuente (0 = 4s).
 - **Listas externas** — `catalog_lists`: URLs de listas Trakt, IMDb (`/list/ls*`)
   o `mdblist:ID` (con `mdblist_key`) aparecen como catálogos.
 - **Perfiles** — `/p/<nombre>/manifest.json` usa `config.<nombre>.json`

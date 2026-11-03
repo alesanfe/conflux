@@ -210,6 +210,16 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   headers Content-* — túnel de salida (IP del servidor, no la del cliente).
 - `zilean_url` (self-hosted :8181) → worker `_collect_zl` paralelo en `_collect`
   (como torznab): `/dmm/filtered?ImdbId=&Season=&Episode=` shape tolerante.
+- `extra_sources` → `_apply_extra_sources` en load_config: URLs de addons →
+  `SOURCES[:] = _SOURCES_BASE + extras` IN SITU (identidad); nombre=host; la
+  whitelist /cfg/ NO la admite (son URLs — igual que torznab_url).
+- `stream_preferred` (+300 boost, `_pref_boost` sobre out) — el ES-boost ya va
+  horneado en r[2] tras `_lang_rows`: OJO la tupla post-lang es 6-campos con
+  r[5]=qscore (no f) — `_seed_score` solo aplica a `_rowkey` pre-lang.
+- `easynews` query = título del `_meta_c` (ficha cargada antes que streams);
+  `/en/` re-inyecta user:pass@ en el 302 — creds fuera del manifest.
+- Put.io cached = `transfers/list` con btih en `source` y COMPLETED/SEEDING
+  (no hay instant-check público). Offcloud: `/api/cloud`+`explore`+`/api/cache`.
 - Disyuntor por host en `fetch()`: `_fails[host]=(strikes,ts)` cuenta fallos
   CONSECUTIVOS (éxito resetea); ≥HOST_OPEN (4) -> fail-fast HOST_CD (60s) sin
   tocar la red. Los hosts muertos (Fenix/Frost...) no cuestan timeout en

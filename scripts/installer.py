@@ -77,11 +77,11 @@ def _sh(cmd, timeout=300, shell=False):
 class Installer(tk.Tk):
     """Wizard estilo instalador moderno: banner, sidebar, progreso, log plegable."""
 
-    STEPS = ['Entorno', 'Prowlarr', 'Configuración', 'Proxy + autostart',
+    STEPS = ['Entorno', 'Prowlarr', 'Usenet', 'Configuración', 'Proxy + autostart',
              'Addon Stremio', 'Trakt (opcional)', 'Fin']
     USTEPS = ['Detener procesos', 'Autostart + addon', 'Borrar runtime',
               'Prowlarr', 'Fin']
-    ICONS = ['1', '2', '3', '4', '5', '6', '7']
+    ICONS = ['1', '2', '3', '4', '5', '6', '7', '8']
     U_ICONS = ['1', '2', '3', '4', '5']
 
     def __init__(self):
@@ -445,6 +445,33 @@ class Installer(tk.Tk):
             self.q.put(('done', 'FALLO'))
 
     def _step2(self):
+        self._lbl('Opcional y self-hosted: levanta Zilean (hashlists DMM → más '
+                  'streams ⚡ gratis) y NZBHydra2 (usenet vía TorBox) con Docker.')
+        self._run(self._do_usenet)
+
+    def _do_usenet(self):
+        rc, _ = _sh('docker --version', shell=True, timeout=15)
+        if rc != 0:
+            self.say('Docker no está instalado — usenet omitido '
+                     '(docker-compose.usenet.yml queda en el repo para cuando lo tengas)')
+            self.q.put(('done', 'omitido'))
+            return
+        rc, out = _sh(f'docker compose -f "{os.path.join(ROOT, "docker-compose.usenet.yml")}" up -d',
+                      shell=True, timeout=600)
+        self.say((out or '')[-300:])
+        if rc == 0:
+            env_f = os.path.join(ROOT, '.env')
+            txt = open(env_f, encoding='utf-8').read() if os.path.exists(env_f) else ''
+            with open(env_f, 'a', encoding='utf-8') as f:
+                if 'ZILEAN_URL' not in txt:
+                    f.write('\nZILEAN_URL=http://127.0.0.1:8181\n')
+                if 'NEWZNAB_URL' not in txt:
+                    f.write('NEWZNAB_URL=http://127.0.0.1:5076/api\n')
+            self.say('Zilean + NZBHydra2 levantados — configura indexers en :5076 '
+                     'y pega su apikey en /configure')
+        self.q.put(('done', 'OK' if rc == 0 else 'FALLO'))
+
+    def _step3(self):
         self._lbl('Crea/actualiza .env con las integraciones gratuitas '
                   '(Trakt, OpenSubtitles, IPTV, Torznab) y lo aplica a config.json.')
         self._run(self._do_cfg)
@@ -462,7 +489,7 @@ class Installer(tk.Tk):
         self.say(out or 'config aplicada')
         self.q.put(('done', 'OK' if rc == 0 else 'FALLO'))
 
-    def _step3(self):
+    def _step4(self):
         self._lbl('Crea el lanzador, registra el autostart en la carpeta Inicio '
                   'y arranca el proxy en 127.0.0.1:9700.')
         self._run(self._do_proxy)
@@ -504,7 +531,7 @@ class Installer(tk.Tk):
         self.say('el proxy no responde — revisa conflux.log')
         self.q.put(('done', 'FALLO'))
 
-    def _step4(self):
+    def _step5(self):
         self._lbl('Registra el addon «conflux» en Stremio. Se intenta de forma '
                   'automática (colección remota, sin clics); si no hay sesión '
                   'disponible se ofrece el diálogo nativo como alternativa.')
@@ -532,7 +559,7 @@ class Installer(tk.Tk):
         else:
             self.q.put(('addon_manual',))
 
-    def _step5(self):
+    def _step6(self):
         self._lbl('Conecta tu cuenta trakt.tv (gratis): pulsa abrir, inicia sesión '
                   'y escribe el código. Se detecta solo.')
         self.code_lbl = tk.Label(self.body, text='········', bg=BG, fg=ACC,
@@ -576,7 +603,7 @@ class Installer(tk.Tk):
                                     'python scripts/trakt_auth.py')
         self.q.put(('done', 'expirado'))
 
-    def _step6(self):
+    def _step7(self):
         ok = sum(self.done_flags.get(i, False) for i in range(len(self.steps) - 1))
         self._lbl(f'{ok} de {len(self.steps) - 1} pasos completados.\n\n'
                   'El addon corre en http://127.0.0.1:9700 y arranca solo al '

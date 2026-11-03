@@ -544,6 +544,72 @@ class TestParental(unittest.TestCase):
             undo()
 
 
+class TestExtraSources(unittest.TestCase):
+    """extra_sources: addons arbitrarios por URL -> SOURCES (marketplace-lite)."""
+
+    def test_aplica_y_limpia(self):
+        from tests import cfg_swap
+        from conflux.core.state import SOURCES, _SOURCES_BASE
+        n0 = len(SOURCES)
+        _, undo = cfg_swap(extra_sources=['https://addon.x.com/manifest.json',
+                                          'notaurl',
+                                          SOURCES[0].base])   # dupe ignorado
+        try:
+            from conflux.core.cfg import _apply_extra_sources
+            _apply_extra_sources()
+            self.assertEqual(len(SOURCES), n0 + 1)
+            self.assertEqual(SOURCES[-1].base, 'https://addon.x.com')
+            self.assertEqual(SOURCES[-1].name, 'addon.x.com')
+        finally:
+            undo()
+            SOURCES[:] = _SOURCES_BASE
+
+    def test_quitar_las_elimina(self):
+        from tests import cfg_swap
+        from conflux.core.cfg import _apply_extra_sources
+        from conflux.core.state import SOURCES, _SOURCES_BASE
+        _, undo = cfg_swap(extra_sources=['https://a.com'])
+        try:
+            _apply_extra_sources()
+            self.assertTrue(any(s.base == 'https://a.com' for s in SOURCES))
+            import conflux.core.state as st
+            st.CFG['extra_sources'] = []
+            _apply_extra_sources()
+            self.assertFalse(any(s.base == 'https://a.com' for s in SOURCES))
+        finally:
+            undo()
+            SOURCES[:] = _SOURCES_BASE
+
+
+class TestStreamPreferred(unittest.TestCase):
+    """stream_preferred: boost, no filtro — sube sin matar el resto."""
+
+    def test_boost_mantiene_otros(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_preferred=['remux'])
+        try:
+            out = S._adult_out([{'title': 'x 1080p WEBRip'},
+                                {'title': 'y 1080p REMUX'}])
+            self.assertEqual(len(out), 2)                     # filtro nunca
+            self.assertEqual(S._pref_boost({'title': 'x REMUX'}), 300)
+            self.assertEqual(S._pref_boost({'title': 'x webrip'}), 0)
+        finally:
+            undo()
+
+    def test_boost_ordena(self):
+        from tests import cfg_swap
+        rows = [S.norm_stream({'name': 'a', 'title': 'F.2024.1080p.WEBRip',
+                               'url': 'http://x/low'}, 't'),        # 10 seeds implícitos
+                S.norm_stream({'name': 'b', 'title': 'G.2024.1080p.WEBRip',
+                               'url': 'http://x/high'}, 't')]
+        _, undo = cfg_swap(stream_sort=['seeds'], stream_preferred=['F.2024'])
+        try:
+            rr = S._rows_out(rows)
+            self.assertEqual(rr[0]['url'], 'http://x/low')         # preferred sube pese a seeds
+        finally:
+            undo()
+
+
 class TestStreamMaxGb(unittest.TestCase):
     """stream_max_gb: policy mínima de ranking — un 4K de 80GB no siempre gana."""
 

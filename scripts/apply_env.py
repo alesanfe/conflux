@@ -56,6 +56,10 @@ ENV2CFG = {
     'NEWZNAB_KEY': 'newznab_key',
     'EASYNEWS_USER': 'easynews_user',
     'EASYNEWS_PASS': 'easynews_pass',
+    'EXTRA_SOURCES': 'extra_sources',
+    'STREAM_PREFERRED': 'stream_preferred',
+    'SOURCE_TIMEOUT': 'source_timeout',
+    'PARENTAL': 'parental',
     'ADMIN_TOKEN': 'admin_token',
     'TLS_CERT': 'tls_cert',
     'TLS_KEY': 'tls_key',
@@ -68,8 +72,9 @@ ENV2CFG = {
     'RPDB_KEY': 'rpdb_key',
 }
 LIST_KEYS = {'sources_disabled', 'catalogs_disabled', 'source_order', 'stream_langs',
-             'stream_exclude'}
-INT_KEYS = {'calendar_months_ahead', 'trakt_expires'}
+             'stream_exclude', 'stream_required', 'stream_preferred', 'extra_sources'}
+INT_KEYS = {'calendar_months_ahead', 'trakt_expires', 'source_timeout', 'stream_max_gb'}
+BOOL_KEYS = {'parental', 'debrid_proxy', 'stream_prefetch'}
 
 
 def _atomic_json(path, data):
@@ -123,6 +128,8 @@ def main():
             cfg[ck] = [x.strip() for x in v.split(',') if x.strip()]
         elif ck in INT_KEYS:
             cfg[ck] = int(v)
+        elif ck in BOOL_KEYS:
+            cfg[ck] = v.lower() in ('1', 'true', 'yes', 'on')
         else:
             cfg[ck] = v
         n += 1

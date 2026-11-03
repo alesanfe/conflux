@@ -89,7 +89,7 @@ def _cfg_form_fields(form, cfg):
         if k in form and form[k][0].strip():
             cfg[k] = form[k][0].strip()
     for k in ('source_order', 'catalogs_disabled', 'stream_exclude', 'stream_required',
-              'stream_sort'):
+              'stream_sort', 'stream_preferred', 'extra_sources'):
         if k in form:
             cfg[k] = _csv_list(form, k)
     if 'src' in form:
@@ -256,6 +256,10 @@ def _configure_page():
             f"<p>Términos requeridos <span class='dim'>(comma — solo pasa lo que contenga alguno: es, latino, remux…)</span><br>"
             f"<input name='stream_required' value='{','.join(CFG.get('stream_required') or [])}' placeholder='vacío = todo pasa'>"
             f"<input name='stream_sort' value='{','.join(CFG.get('stream_sort') or [])}' placeholder='orden: res,cached,quality,seeds,size'></p>"
+            f"<p>Preferidos <span class='dim'>(boost +300, no filtro: remux, es, atmos…)</span><br>"
+            f"<input name='stream_preferred' value='{','.join(CFG.get('stream_preferred') or [])}' placeholder='remux, es, atmos'>"
+            f"timeout por fuente <input name='source_timeout' value='{CFG.get('source_timeout',0)}' style='width:60px'>s"
+            f" <span class='dim'>(0 = {4}s por defecto)</span></p>"
             f"<p>Formato de stream <span class='dim'>(template con {'{res} {hdr} {codec} {audio} {lang} {rip} {title} {es}'} — vacío = normal)</span><br>"
             f"<input name='stream_format' value='{CFG.get('stream_format','')}' placeholder='&#123;res&#125; · &#123;hdr&#125; · &#123;codec&#125; · &#123;audio&#125; · &#123;lang&#125;'></p>"
             f"<p>Tamaño máx. por stream <input name='stream_max_gb' value='{CFG.get('stream_max_gb',0)}' style='width:80px'> GB"
@@ -275,6 +279,8 @@ def _configure_page():
             f"<p>Listas externas <span class='dim'>(URLs Trakt /lists/, IMDb /list/ o mdblist:ID — separadas por coma)</span><br>"
             f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://trakt.tv/users/me/lists/mis-favs, https://www.imdb.com/list/ls123456/'>"
             f"<input name='mdblist_key' value='' placeholder='mdblist apikey (solo si usas MDBList)'></p>"
+            f"<p>Addons extra <span class='dim'>(URLs de addons Stremio — base o .../manifest.json, coma; marketplace-lite: cualquier addon de la comunidad entra como fuente)</span><br>"
+            f"<input name='extra_sources' value='{','.join(CFG.get('extra_sources') or [])}' placeholder='https://addon.ejemplo.com, https://otro.org/manifest.json'></p>"
             f"<p>Catálogos ocultos <span class='dim'>(ids separados por coma — visibles en /health &gt; manifest)</span><br>"
             f"<input name='catalogs_disabled' value='{','.join(CFG.get('catalogs_disabled') or [])}' placeholder='sid_catalogo1, sid_catalogo2'></p>"
             f"<h2>Fuentes activas</h2>"
@@ -300,12 +306,14 @@ def _configure_page():
             f"var dk=document.querySelector('[name=debrid_key]').value;if(dk)o.debrid_key=dk;"
             f"['opensubtitles_key','opensubtitles_user','opensubtitles_pass','mdblist_key']"
             f".forEach(k=>{{var e=document.querySelector('[name='+k+']');if(e&&e.value)o[k]=e.value;}});"
-            f"['source_order','catalogs_disabled','stream_required','stream_sort'].forEach(k=>{{var e=document.querySelector('[name='+k+']');"
+            f"['source_order','catalogs_disabled','stream_required','stream_sort','stream_preferred'].forEach(k=>{{var e=document.querySelector('[name='+k+']');"
             f"if(e&&e.value)o[k]=e.value.split(',').map(x=>x.trim()).filter(Boolean);}});"
             f"var cm=document.querySelector('[name=calendar_months_ahead]').value;"
             f"var ci=parseInt(cm,10);if(!isNaN(ci)&&ci>=1&&ci<=24)o.calendar_months_ahead=ci;"
             f"var mg=document.querySelector('[name=stream_max_gb]').value;"
             f"var mi=parseInt(mg,10);if(!isNaN(mi)&&mi>0)o.stream_max_gb=mi;"
+            f"var st=document.querySelector('[name=source_timeout]').value;"
+            f"var si=parseInt(st,10);if(!isNaN(si)&&si>0)o.source_timeout=si;"
             f"var pf=document.querySelectorAll('[name=stream_prefetch]');"
             f"if(pf.length&&pf[pf.length-1].checked===false)o.stream_prefetch=false;"
             f"var dx=document.querySelectorAll('[name=debrid_proxy]');"

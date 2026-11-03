@@ -5,6 +5,7 @@ import json
 import os
 import re
 import threading
+import urllib.parse
 
 from conflux.core.state import (
     _CFG_DEFAULTS,
@@ -66,6 +67,24 @@ def load_config():
     langs = '|'.join(re.escape(x) for x in CFG.get('stream_langs') or ['es'])
     RE_ES = re.compile(rf'\b({langs})\b', re.IGNORECASE)              # langs configurables en vivo
     RE_EX = _ex_re(CFG.get('stream_exclude'))
+    _apply_extra_sources()
+
+
+def _apply_extra_sources():
+    """extra_sources (marketplace-lite): URLs de addons añadidas por el usuario
+    -> SOURCES tras la lista base. Se reconstruye en cada load — quitar una
+    URL en /configure la elimina al instante. Nombre = host (único, visible
+    en /configure como fuente desactivable)."""
+    from conflux.core.state import _SOURCES_BASE, SOURCES, Source   # local: state ya cargado
+    add = []
+    for u in CFG.get('extra_sources') or []:
+        b = str(u).strip().removesuffix('/manifest.json').rstrip('/')
+        if not re.match(r'https?://', b):
+            continue
+        host = urllib.parse.urlsplit(b).hostname
+        if host and all(s.base != b for s in _SOURCES_BASE):       # sin duplicar la base
+            add.append(Source(host, b))
+    SOURCES[:] = _SOURCES_BASE + add                               # mutar in situ (identidad)
 
 
 def _ex_re(terms):

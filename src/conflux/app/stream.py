@@ -93,7 +93,8 @@ def _collect_health(name, d, ss):
 def _collect_fetch(i, stype, sid):
     """El fetch real de la fuente (post-guards)."""
     name, base = SOURCES[i]
-    d = fetch(f"{base}/stream/{stype}/{urllib.parse.quote(sid, safe=':')}.json", STREAM_TIMEOUT)
+    d = fetch(f"{base}/stream/{stype}/{urllib.parse.quote(sid, safe=':')}.json",
+              cfg.CFG.get('source_timeout') or STREAM_TIMEOUT)
     ss = d.get('streams') if isinstance(d, dict) else None
     if not isinstance(ss, list):
         ss = []            # "streams":null, tipo raro o JSON no-dict
@@ -247,8 +248,28 @@ def _req_out(streams):
         ' '.join(str(s.get(k) or '') for k in _STREAM_TEXT))]
 
 
+def _seed_score(r):
+    """seeds crudos + boosts de preferencia: idioma ES (+500) y
+    stream_preferred (+300 si matchea el título)."""
+    return r[2] + 500 * (1 if r[5]['es'] else 0) + _pref_boost(r[0])
+
+
+def _pref_boost(out):
+    """stream_preferred: boost (no filtro) — tercera pata de exclude/required/
+    preferred de AIOStreams: 'remux,es' sube esos releases sin matar el resto."""
+    terms = _strs((_pcfg() or {}).get('stream_preferred'))
+    if terms is None:
+        terms = cfg.CFG.get('stream_preferred')
+    if not terms:
+        return 0
+    return 300 if cfg._ex_re(terms).search(
+        ' '.join(str(out.get(k) or '') for k in _STREAM_TEXT)) else 0
+
+
 _SORT_FNS = {'res': lambda r: -RANK.get(r[1], 0), 'cached': lambda r: -r[4],
-             'quality': lambda r: -r[5], 'seeds': lambda r: -r[2], 'size': lambda r: -r[3]}
+             'quality': lambda r: -r[5],
+             'seeds': lambda r: -(r[2] + _pref_boost(r[0])),   # ES ya va en r[2] (lang_rows)
+             'size': lambda r: -r[3]}
 _SORT_DEF = ('res', 'cached', 'quality', 'seeds', 'size')
 
 
@@ -268,7 +289,7 @@ def _rowkey(r):
     """Orden: resolución > debrid-cached > calidad(rip/hdr/codec/audio) >
     seeds(con boost es del global) > size."""
     return (-RANK.get(r[1], 0), -r[4], -_qscore(r[5] if len(r) > 5 else {}),
-            -(r[2] + 500 * (1 if r[5]['es'] else 0)), -r[3])
+            -_seed_score(r), -r[3])
 
 
 def _lang_rows(rows):
