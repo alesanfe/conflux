@@ -33,16 +33,32 @@ jobs:
       - run: pip-audit -r requirements.txt
       - run: detect-secrets scan --all-files --exclude-files 'requirements.txt' | python3 -c "import json,sys; r=json.load(sys.stdin)['results']; assert not r, r"
       - run: cyclonedx-py requirements requirements.txt -o sbom.json
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: sbom.json
       - uses: actions/upload-artifact@v4
         with:
           name: sbom
           path: sbom.json
 
-  test:
+  dependency-review:
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+
+  test:
     strategy:
       matrix:
+        os: [ubuntu-latest]
         python-version: ['3.11', '3.12', '3.13']
+        include:
+          - os: macos-latest
+            python-version: '3.13'
+          - os: windows-latest
+            python-version: '3.13'
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

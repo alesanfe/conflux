@@ -5,6 +5,8 @@ import gzip
 import hmac
 import json
 import re
+import signal
+import ssl
 import threading
 import time
 import urllib.parse
@@ -18,9 +20,11 @@ from conflux.app.stream import handle_stream
 from conflux.app.subs import _sub_download, handle_subtitles
 from conflux.core.cfg import _PROF, _profile_load, load_config
 from conflux.core.state import (
+    _MF_CACHE,
     CFG,
     PORT,
     SOURCES,
+    _atomic_json,
     _cache,
     _cat_c,
     _meta_c,
@@ -220,4 +224,18 @@ def main():
     class Srv(ThreadingHTTPServer):
         """Servidor con hilos daemon (sin zombies al parar)."""
         daemon_threads = True   # sin hilos zombie
-    Srv(('127.0.0.1', PORT), H).serve_forever()
+    srv = Srv(('127.0.0.1', PORT), H)
+    cert, key = CFG.get('tls_cert'), CFG.get('tls_key')
+    if cert and key:                                   # TLS opcional (config.tls_cert/tls_key)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert, key)
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+        log_ev('tls', cert=cert)
+    if threading.current_thread() is threading.main_thread():
+        def _bye(*_a):
+            """SIGTERM (systemd stop): persiste el caché de manifests y sale limpio."""
+            log_ev('shutdown')
+            _atomic_json(_MF_CACHE, manifests)
+            raise SystemExit(0)                   # no srv.shutdown(): deadlocked en el hilo principal
+        signal.signal(signal.SIGTERM, _bye)
+    srv.serve_forever()

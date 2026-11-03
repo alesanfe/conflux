@@ -29,10 +29,16 @@ def _load_manifests_cache():
 
 def refresh_manifests():
     """Re-descarga manifests de todas las fuentes (reintenta cold-starts) y persiste."""
-    fs = [_POOL_BG.submit(fetch, base + '/manifest.json', 10) for _, base in SOURCES]
+    try:
+        fs = [_POOL_BG.submit(fetch, base + '/manifest.json', 10) for _, base in SOURCES]
+    except RuntimeError:                     # pool ya cerrado en teardown del intérprete
+        return
     manifests[:] = [f.result() for f in fs]
-    retry = [(i, _POOL_BG.submit(fetch, SOURCES[i].base + '/manifest.json', 20))
-             for i, m in enumerate(manifests) if not m]
+    try:
+        retry = [(i, _POOL_BG.submit(fetch, SOURCES[i].base + '/manifest.json', 20))
+                 for i, m in enumerate(manifests) if not m]
+    except RuntimeError:                     # pool cerrado en teardown
+        retry = []
     for i, f in retry:
         m = f.result()
         if m:

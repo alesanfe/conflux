@@ -32,7 +32,10 @@ Repo en `~/apps/conflux`:
 - `scripts/`         check.sh, setup.sh, install_addon.py, stremio-proxy.service
 - `docs/`            openapi.yaml
 - `pyproject.toml`   metadata PEP 621 + deps + config herramientas
-- `requirements.txt` / `requirements-dev.txt`   deps pinned
+- `requirements.in`/`requirements.txt`  deps directas → lock con hashes (pip-compile)
+- `requirements-dev.txt`               herramientas dev pinned (coverage/mypy/hypothesis/mutmut)
+- `.github/workflows/`  ci.yml (matrix SO×py: lint+tests+sbom+security+docker) / codeql.yml / scorecard.yml / release.yml (attestación+gh-release al taguear v*)
+- `.github/dependabot.yml`  updates semanales pip+actions · `.pre-commit-config.yaml`  hooks ruff/mypy
 
 - `tests/unit/`        un archivo por módulo (fixtures reales, mocks locales)
 - `tests/integration/` flujos multi-módulo con `patch_fetch` global
@@ -164,6 +167,19 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
 - Cinemeta standalone NO se re-añade solo: su reaparición fue por editar el
   perfil SQLite con la app abierta (ésta lo persistía de vuelta al salir).
   **Siempre `flatpak kill com.stremio.Stremio` antes de tocar localstorage.**
+
+## Controles de calidad (todos en verde en CI)
+
+- Linters: ruff · pylint ≥9.5 · xenon avg A · mypy `check_untyped_defs` · bandit -ll
+- Cobertura ≥80% gate (scripts/check.sh y CI; actual ~94%)
+- Auth opcional: `admin_token` en config.json protege /admin /configure POST /reload
+  (`?token=` o `X-Admin-Token`, compare_digest); vacío = abierto (loopback)
+- TLS opcional: `tls_cert`+`tls_key` en config.json → wrap_socket en main()
+- Shutdown limpio: SIGTERM persiste `.manifests-cache.json` (ev `{"ev":"shutdown"}`)
+- Mutation testing opt-in: `mutmut run` (config en pyproject — copia src/tests/proxy.py
+  y muta solo `only_mutate`; subs.py: 168 mutantes, ~64% killed)
+- e2e hermética: fixture VCR gzip; CI nunca toca la red
+- Escrituras de estado atómicas (tmp+rename): config.json, .manifests-cache.json
 
 ## Verificación mínima tras tocar routing
 

@@ -16,3 +16,4 @@ config.*.json
 .coverage
 coverage.xml
 htmlcov/
+mutants/

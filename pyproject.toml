@@ -45,3 +45,8 @@ ignore_missing_imports = true
 follow_imports = "skip"
 warn_unused_ignores = true
 check_untyped_defs = true
+
+[tool.mutmut]
+source_paths = ["src", "proxy.py", "tests"]
+only_mutate = ["src/conflux/app/subs.py"]
+pytest_add_cli_args_test_selection = ["tests/unit/test_subs.py"]
