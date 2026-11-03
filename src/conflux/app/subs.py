@@ -2,6 +2,7 @@
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import threading
+import time
 
 import requests
 
@@ -68,7 +69,6 @@ def _os_login():
     user, pw = _cfgget('opensubtitles_user'), _cfgget('opensubtitles_pass')
     if not (key and user and pw):
         return None
-    import time
     with _OS_LOCK:                                       # dos /s/ concurrentes:
         if _OS_TOK.get('token') and time.time() - _OS_TOK.get('ts', 0) < 23 * 3600:
             return _OS_TOK['token']                      # un login basta
@@ -77,7 +77,6 @@ def _os_login():
 
 def _os_login_now(key, user, pw):
     """POST /login (ya bajo _OS_LOCK)."""
-    import time
     try:
         d = _session('api.opensubtitles.com').post(
             'https://api.opensubtitles.com/api/v1/login',

@@ -328,7 +328,7 @@ def build_manifest():
     completo en cada build — sin reset acumulaban huérfanos tras quitar
     m3u_path, listas o un token Trakt (catálogos fantasma aún ruteables)."""
     with _MF_LOCK:                                   # dos builds concurrentes
-        _SYNTH.clear(); _GRP.clear(); _UTYPE.clear(); _YR_OPTS.clear()
+        _SYNTH.clear(); _GRP.clear(); _UTYPE.clear(); _YR_OPTS.clear(); _REQ.clear()
         cats = _mf_group(_mf_collect_cats())
         _mf_synth_cats(cats)
     _catoff = set(_cfgget('catalogs_disabled') or [])

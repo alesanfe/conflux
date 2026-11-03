@@ -41,9 +41,6 @@ _slock    = threading.Lock()
 
 _RE_LIMIT  = re.compile(r'daily limit|limit reached|link limit|quota', re.IGNORECASE)
 
-_SOFT      = ('cuota', 'espera', 'manifest sin stream', 'tipo no soportado', 'prefijo')
-
-
 def _collect_skip(i, stype, sid, dis):
     """Por qué NO consultar la fuente i (skip blando), o None si toca fetch.
     dis viene capturado del hilo del request: _PROF es thread-local y los

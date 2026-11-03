@@ -9,10 +9,10 @@ import conflux.core.state as st
 
 class TestMetaTry(unittest.TestCase):
     def test_series_fallback_movie(self):
-        self.assertEqual(M._meta_try('series'), {'series', 'movie'})
+        self.assertEqual(M._meta_try('series'), ('series', 'movie'))  # orden: propio primero
 
     def test_movie_sin_fallback(self):
-        self.assertEqual(M._meta_try('movie'), {'movie'})
+        self.assertEqual(M._meta_try('movie'), ('movie',))
 
 
 class TestMetaOne(unittest.TestCase):

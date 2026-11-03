@@ -1,11 +1,13 @@
 # stremio-proxy — notas de proyecto
 
-Proxy unificador de addons Stremio en `http://127.0.0.1:9700` (systemd user `stremio-proxy`).
+Proxy unificador de addons Stremio en `http://127.0.0.1:9700` (Windows: autostart
+vía `Conflux.lnk` -> `start-conflux.bat` -> `.venv\Scripts\pythonw.exe proxy.py`;
+en Linux iba como systemd user `stremio-proxy`).
 
 ## Comandos
 
 ```bash
-python3 -m unittest discover -s tests -t .  # 337+ tests: unit+integration+security+contract+property+resilience+regression+performance+e2e
+python3 -m unittest discover -s tests -t .  # 351+ tests: unit+integration+security+contract+property+resilience+regression+performance+e2e
 python3 -m unittest discover -s tests/unit -t .       # solo unit (~1s)
 scripts/check.sh                            # linters + suite + smoke endpoints + fuentes
 python3 -m mypy                             # type-check (config en pyproject)
@@ -20,7 +22,9 @@ python3 -m mypy                             # type-check (config en pyproject)
 # e2e es VCR: replay de tests/fixtures/e2e_responses.json.gz (396 urls).
 # Regenerar tras tocar routing: python3 scripts/record_e2e.py && gzip -9kf
 # Live real: CONFLUX_E2E_LIVE=1 python3 -m unittest tests.e2e.test_server_e2e
-systemctl --user restart stremio-proxy      # tras editar src/conflux/
+# restart Windows: matar por cmdline y relanzar (ver R7 — nunca por nombre de proc)
+#   Stop-Process pythonw con CommandLine like '*proxy.py*'; luego start-conflux.bat
+systemctl --user restart stremio-proxy      # Linux: tras editar src/conflux/
 ./scripts/env_backup.sh                    # snapshot config*/sources.json → tar.gz
 ./scripts/setup.sh --env <tar.gz>          # otra máquina: mismo entorno exacto
 scripts\setup_win.ps1                      # Windows: venv+deps+autostart (carpeta Inicio)+addon
@@ -30,7 +34,7 @@ python scripts/apply_env.py                # .env → config.json+sources.json (
 
 ## Estructura (src-layout estándar PyPA)
 
-Repo en `~/apps/conflux`:
+Repo (raíz del checkout — en Windows `C:\Users\alex0\conflux`):
 
 - `src/conflux/`     paquete por capas (imports absolutos `from conflux.* import`)
 - `proxy.py`         entry + fachada compat (inserta src/ en sys.path)
@@ -73,7 +77,7 @@ Sub-paquetes por capa — cada uno solo depende "hacia abajo":
   (handler H + ROUTES + main())
 
 Imports internos absolutos (`from conflux.infra.net import fetch`).
-journalctl --user -u stremio-proxy -f    # [done] muestra contrib por fuente + fallos
+Get-Content conflux.log -Wait -Tail 40  # live; journalctl --user -u stremio-proxy en Linux
 curl -s 127.0.0.1:9700/health            # err/usable/streak por fuente
 ```
 
@@ -131,11 +135,29 @@ UTF-8 rompe la app con "Serialization error: expected value at line 1 column 1";
 escribir con `json.dumps(prof).encode('utf-16-le')` como bytes) Y la colección remota.
 **El remoto manda**: con usuario logueado, `addonCollectionSet` pisa el perfil
 local al login — un write solo-local se pierde siempre. Y **matar de verdad**
-la app antes de escribir sqlite: `flatpak kill` + `pgrep` hasta 0 procesos, o
+la app antes de escribir sqlite: `taskkill /IM stremio*.exe /F` (o `flatpak kill`
++ `pgrep` en Linux) hasta 0 procesos, o
 la app persiste su estado en memoria al cerrar y sobrescribe la edición.
 (`api.strem.io/api/addonCollectionSet` con `authKey` del perfil). Las claves deben
 codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
 `s<fuente>_<tipo_upstream>_<id>` porque `tmdb.top` existe como movie Y series.
+
+- `time.time()` (no monotonic) en TODOS los TTLs: los dicts comparten reloj y
+  tests siembran tuplas `(epoch, val)` — una mezcla monotonic/epoch haría
+  edades negativas gigantes (fresh/stale para siempre). Los persistidos
+  (epg fetched, trakt_expires) exigen epoch igualmente. Saltos NTP son
+  raros y se autocurran por TTL.
+- `_cfg_public(cfg)` redacta secretos para log/respuestas (`key|token|secret|
+  pass|admin` -> `***`) — usar en todo volcado de CFG, nunca `CFG.copy()` crudo.
+- `build_manifest` resetea `_SYNTH/_GRP/_UTYPE/_YR_OPTS/_REQ` bajo `_MF_LOCK`:
+  los dicts de routing se reconstruyen por build — quien añada un dict global
+  mutable derivado del build debe incluirlo en el reset.
+- Caches con clave perfil-sensible: si una key de `/cfg/` o `/p/` cambia el
+  resultado, va en la clave del cache (ver `estrenoscal`, collect `dis`) o se
+  aplica post-cache sobre copia (rpdb, debrid, stream_langs re-score).
+- dicts con crecimiento no acotado prohibidos: `_SESS<=64`, `_fails<=200
+  (podados por HOST_CD)`, `_DB_OK<=5000`, `_rtime<=64`, `_URL_*<=2000`,
+  `_PROFILES<=32`, `_wd_c<=400`, `_PROFILES_LOCK` para pop+setdefault.
 
 ## Decisiones vigentes
 
@@ -180,7 +202,9 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
 - `_URL_BAD`/`_URL_OK` acotados (`_url_prune` a >2000).
 - Cinemeta standalone NO se re-añade solo: su reaparición fue por editar el
   perfil SQLite con la app abierta (ésta lo persistía de vuelta al salir).
-  **Siempre `flatpak kill com.stremio.Stremio` antes de tocar localstorage.**
+  **Siempre matar la app DE VERDAD antes de tocar localstorage** —
+  `taskkill /IM stremio*.exe /F` en Windows, `flatpak kill` en Linux —
+  o la app persiste su estado en memoria y sobrescribe la edición.
 
 ## Controles de calidad (todos en verde en CI)
 

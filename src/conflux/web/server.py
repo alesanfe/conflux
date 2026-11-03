@@ -12,7 +12,6 @@ import ssl
 import threading
 import time
 import urllib.parse
-import urllib.request
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 

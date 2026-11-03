@@ -24,8 +24,10 @@ def _meta_race(futs):
 
 
 def _meta_try(stype):
-    """Tipos a probar: series cae a movie (estrenos del calendario llegan como series)."""
-    return {stype, 'movie'} if stype == 'series' else {stype}
+    """Tipos a probar EN ORDEN: el propio primero; series cae a movie (los estrenos
+    del calendario llegan como series). Set daba orden arbitrario: una peli con el
+    mismo id podía ganar el fallback antes de probar el tipo correcto."""
+    return (stype, 'movie') if stype == 'series' else (stype,)
 
 
 def _meta_one(i, want, mid):

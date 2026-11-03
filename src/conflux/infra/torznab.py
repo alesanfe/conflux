@@ -106,6 +106,7 @@ def _tz_num(v, cast):
     """Attr torznab malformado ('', 'abc', '12,5') -> 0: un item raro no debe
     tumbar todos los resultados del indexer."""
     try:
-        return cast(str(v).replace(',', '.').strip() or 0)
+        f = float(str(v).replace(',', '.').strip() or 0)
+        return cast(f)                                 # int('12.5') sin pasar float = 0
     except (TypeError, ValueError):
         return 0
