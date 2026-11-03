@@ -112,7 +112,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
 - **Trakt** — `TRAKT_CLIENT_ID`/`SECRET` en `.env` (par público incluido en
   `.env.example` — listo sin registrar app). `python scripts/trakt_auth.py`
   abre el login: cuenta trakt.tv gratuita → calendario personal y
-  "continuar viendo" activos.
+  "continuar viendo" activos. `python scripts/trakt_sync.py` sube lo visto en
+  Stremio al historial Trakt (bitmaps `watched` del localStorage →
+  `/sync/history`, idempotente) → siembra las recomendaciones.
 - **Torznab** — `torznab_url`+`torznab_key`: Prowlarr/Jackett local como fuente
   extra de streams.
 - **Listas externas** — `catalog_lists`: URLs de listas Trakt, IMDb (`/list/ls*`)
