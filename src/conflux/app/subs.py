@@ -33,7 +33,7 @@ def _subs_map(r):
             continue
         out.append({'id': str(fid), 'lang': a.get('language') or 'es',
                     'url': f'http://127.0.0.1:{PORT}/s/{fid}'})
-    out.sort(key=lambda s: 0 if s['lang'].startswith('es') else 1)   # ES-first
+    out.sort(key=lambda s: 0 if s['lang'].startswith('es') else 1)   # ES-first  # pragma: no mutate — clave binaria, 1/2 equivalente
     return out[:20]
 
 
