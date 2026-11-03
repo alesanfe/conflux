@@ -26,7 +26,7 @@ ENV2CFG = {
     'OPENSUBTITLES_KEY': 'opensubtitles_key',
     'MDBLIST_KEY': 'mdblist_key',
     'CATALOG_LISTS': 'catalog_lists',
-    'M3U_PATH': 'm3u_path',
+    'M3U_PATH': 'm3u_path',                   # M3U_URL descarga la lista a m3u/ y apunta ahí
     'TORZNAB_URL': 'torznab_url',
     'TORZNAB_KEY': 'torznab_key',
     'ADMIN_TOKEN': 'admin_token',
@@ -118,6 +118,20 @@ def main():
                 srcs.append({'name': name, 'base': base})
         _atomic_json(src_path, srcs)
         print(f'sources.json: {len(srcs)} fuentes')
+
+    m3u_url = env.get('M3U_URL', '')
+    if m3u_url:
+        import urllib.request
+        os.makedirs(os.path.join(ROOT, 'm3u'), exist_ok=True)
+        name = os.path.basename(urllib.request.urlparse(m3u_url).path) or 'list.m3u'
+        dst = os.path.join(ROOT, 'm3u', name)
+        try:
+            urllib.request.urlretrieve(m3u_url, dst)
+            cfg['m3u_path'] = dst
+            _atomic_json(cfg_path, cfg)
+            print(f'm3u: {m3u_url} -> {dst}')
+        except OSError as e:
+            print(f'm3u: descarga fallida ({e})')
 
     print(f'config.json: {n} claves aplicadas')
     return 0

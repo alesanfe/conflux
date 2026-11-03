@@ -17,16 +17,20 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-# Indexers públicos por defecto: cobertura películas/series/anime sin credenciales.
+# Indexers públicos por defecto: cobertura películas/series/anime sin
+# credenciales. Los bloqueados por Cloudflare/ISP se guardan igual vía
+# forceSave (Prowlarr reintenta) — quitarlos de la lista si molestan.
 DEFAULT_INDEXERS = (
-    "1337x",
-    "The Pirate Bay",
-    "EZTV",
-    "Nyaa.si",
-    "LimeTorrents",
-    "YTS",
-    "TorrentDownload",
-    "FileMood",
+    # generales (películas/series)
+    "1337x", "The Pirate Bay", "EZTV", "LimeTorrents", "YTS", "TorrentDownload",
+    "FileMood", "Knaben", "Torrent9", "TorrentKitty", "Catorrent",
+    "World-torrent", "torrent-pirat", "NoNaMe Club", "RinTor.NeT", "U3C3",
+    "TorrentProject2", "MagnetDownload", "Magnet Cat", "sosulki",
+    # anime
+    "Nyaa.si", "SubsPlease", "Anime Tosho", "Tokyo Toshokan", "ACG.RIP",
+    "Anibt", "Bangumi Moe", "Mikan", "dmhy", "nekoBT", "Shana Project",
+    # juegos/software/otros
+    "Byrutor", "PC-torrent", "Internet Archive",
 )
 
 
@@ -57,6 +61,8 @@ def _req(method, base, key, path, payload=None, timeout=30):
             return e.code, json.load(e)
         except Exception:
             return e.code, e.read()[:400].decode("utf-8", "replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        return 0, str(e)[:120]
 
 
 def main():
