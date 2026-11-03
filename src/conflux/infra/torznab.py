@@ -16,8 +16,8 @@ except ImportError:
 
 def _torznab(stype, sid):
     """Prowlarr/Jackett (3.5): Torznab directo como fuente extra de streams.
-    Config: torznab_url (p.ej. http://localhost:9696/api/v1.0/indexers/all/results/torznab)
-    + torznab_key."""
+    Config: torznab_url + torznab_key. Prowlarr: http://host:9696/0/api
+    (id 0 = todos los indexers). Jackett: /api/v2.0/indexers/all/results/torznab."""
     url, key = CFG.get('torznab_url', '').rstrip('/'), CFG.get('torznab_key', '')
     imdb = sid.split(':')[0]
     if not url or not key or not imdb.startswith('tt') or _ET is None:

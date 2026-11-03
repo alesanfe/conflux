@@ -76,7 +76,7 @@ if ($Prowlarr -or $envCfg['PROWLARR'] -eq '1') {
             Write-Host 'ApiKey detectada — conectando torznab'
             $envCfg['TORZNAB_KEY'] = $ak
             if (-not (Test-Path $envFile)) { New-Item $envFile -ItemType File | Out-Null }
-            "TORZNAB_URL=http://127.0.0.1:9696/api/v1.0/indexers/all/results/torznab`nTORZNAB_KEY=$ak" |
+            "TORZNAB_URL=http://127.0.0.1:9696/0/api`nTORZNAB_KEY=$ak" |
                 Add-Content $envFile
         }
     }
