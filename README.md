@@ -102,6 +102,10 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
 - **Debrid** — 6 providers (RD, TorBox, AllDebrid, Premiumize, EasyDebrid,
   Debrid-Link): marca ⚡ los cacheados (instantAvailability) y los sirve vía
   redirect `/r/<provider>/<hash>` → URL HTTP.
+- **Trakt** — `TRAKT_CLIENT_ID`/`SECRET` en `.env` (par público incluido en
+  `.env.example` — listo sin registrar app). `python scripts/trakt_auth.py`
+  abre el login: cuenta trakt.tv gratuita → calendario personal y
+  "continuar viendo" activos.
 - **Torznab** — `torznab_url`+`torznab_key`: Prowlarr/Jackett local como fuente
   extra de streams.
 - **Listas externas** — `catalog_lists`: URLs de listas Trakt, IMDb (`/list/ls*`)
