@@ -65,9 +65,20 @@ class TestYts(unittest.TestCase):
         st0 = out[0]
         self.assertEqual(st0['name'], 'YTS')
         self.assertEqual(st0['infoHash'], 'a' * 40)  # minúsculas
+        self.assertIn('Fight Club (1999)', st0['title'])   # title_long > title (mutante Or)
         self.assertEqual(st0['behaviorHints']['seeders'], 42)
         self.assertEqual(st0['behaviorHints']['videoSize'], 2_000_000_000)
         self.assertIn('imdb_id', str(calls[0][2].get('params')))
+        self.assertGreaterEqual(st.HEALTH['YTS']['ok'], 1)  # mutante _health(ok->False)
+        self.assertEqual(st.HEALTH['YTS']['fail'], 0)
+
+    def test_cap_20(self):
+        big = {'data': {'movie': {'title': 'T',
+               'torrents': [{'hash': '%040x' % i, 'seeds': 1}
+                            for i in range(21)]}}}    # 21 -> cap
+        s, _ = fake_session({'json': big})
+        with patch.object(sc, '_session', return_value=s):
+            self.assertEqual(len(sc._sc_yts('movie', 'tt0137523')), 20)
 
 
 class TestEztv(unittest.TestCase):
@@ -75,12 +86,46 @@ class TestEztv(unittest.TestCase):
         self.assertEqual(sc._sc_eztv('movie', 'tt0137523'), [])
 
     def test_filtra_episodio(self):
-        s, _ = fake_session({'json': _EZTV})
+        s, calls = fake_session({'json': _EZTV})
         with patch.object(sc, '_session', return_value=s):
             out = sc._sc_eztv('series', 'tt0944947:1:2')
+        self.assertEqual(calls[0][2]['params']['imdb_id'], '0944947')  # imdb[2:]
         self.assertEqual(len(out), 1)
         self.assertIn('S01E02', out[0]['title'])
         self.assertEqual(out[0]['behaviorHints']['seeders'], 33)
+        self.assertGreaterEqual(st.HEALTH['EZTV']['ok'], 1)  # mutante _health(ok->False)
+        self.assertEqual(st.HEALTH['EZTV']['fail'], 0)
+
+    def test_sin_se_no_filtra(self):
+        """sid sin :S:E -> wse/wep None -> todos los torrents del imdb, sin filtrar."""
+        s, _ = fake_session({'json': _EZTV})
+        with patch.object(sc, '_session', return_value=s):
+            out = sc._sc_eztv('series', 'tt0944947')
+        self.assertEqual(len(out), 2)               # S01E02 + S01E03 juntos
+        self.assertGreaterEqual(st.HEALTH['EZTV']['ok'], 1)
+
+    def test_series_imdb_invalido(self):
+        """stype=series pero imdb no tt\\d+ (meta exótica) -> [] (mutante Or@84)."""
+        s, _ = fake_session({'json': _EZTV})
+        with patch.object(sc, '_sc_title', return_value=('k123', 'T', None)), \
+                patch.object(sc, '_session', return_value=s):
+            self.assertEqual(sc._sc_eztv('series', 'kitsu:123'), [])
+
+    def test_sid_segmento_extra(self):
+        """'tt:1:2:extra' -> all() solo mira parts[1:3] -> S/E filtra igual."""
+        s, _ = fake_session({'json': _EZTV})
+        with patch.object(sc, '_session', return_value=s):
+            out = sc._sc_eztv('series', 'tt0944947:1:2:foo')
+        self.assertEqual(len(out), 1)
+        self.assertIn('S01E02', out[0]['title'])
+
+    def test_cap_20(self):
+        big = {'torrents': [{'hash': '%040x' % i, 'filename': 'S01E%02d' % i,
+                             'season': 1, 'episode': i, 'seeds': 1}
+                            for i in range(1, 22)]}   # 21 -> cap
+        s, _ = fake_session({'json': big})
+        with patch.object(sc, '_session', return_value=s):
+            self.assertEqual(len(sc._sc_eztv('series', 'tt0944947')), 20)
 
 
 class TestNyaa(unittest.TestCase):
@@ -122,6 +167,14 @@ class TestNyaa(unittest.TestCase):
     def test_scraper_desconocido_vacio(self):
         self.assertEqual(sc._scraper('Nope', 'movie', 'tt1'), [])
 
+    def test_tipo_no_soportado(self):
+        """stype fuera de (series,anime,movie) -> [] aunque haya meta/rss (Or@109)."""
+        s, _ = fake_session({'content': _NYAA})
+        with patch.object(sc, '_sc_title',
+                          return_value=('tt0944947', 'T', None)), \
+                patch.object(sc, '_session', return_value=s):
+            self.assertEqual(sc._sc_nyaa('channel', 'tt0944947'), [])
+
 
 class TestTpb(unittest.TestCase):
     def setUp(self):
@@ -149,6 +202,8 @@ class TestTpb(unittest.TestCase):
         self.assertEqual(out[0]['name'], 'TPB')
         self.assertEqual(out[0]['infoHash'], 'a' * 40)
         self.assertEqual(out[0]['behaviorHints']['seeders'], 42)
+        self.assertEqual(st.HEALTH['TPB']['ok'], 1)    # mutante _health(ok->False)
+        self.assertEqual(st.HEALTH['TPB']['fail'], 0)
         self.assertEqual(st.HEALTH['TPB']['err'], '')
         self.assertIn('Fight Club', calls[0][2]['params']['q'])
         self.assertEqual(calls[0][2]['params']['cat'], '200')

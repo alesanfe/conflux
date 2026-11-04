@@ -45,6 +45,7 @@ FOCUS = {
     'infra/mediafusion.py': 'tests/unit/test_mediafusion.py',
     'infra/wikidata.py': 'tests/unit/test_wikidata.py',
     'infra/easynews.py': 'tests/unit/test_easynews.py',
+    'infra/scrape.py': 'tests/unit/test_scrape.py',
     'infra/zilean.py': 'tests/unit/test_zilean.py',
     'infra/newznab.py': 'tests/unit/test_newznab.py',
     'core/cfg.py': 'tests/unit/test_cfg.py',
