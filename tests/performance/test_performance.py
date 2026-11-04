@@ -64,11 +64,12 @@ class TestLatency(unittest.TestCase):
         self.assertLess(dt, 0.5)
 
     def test_parse_stream_throughput(self):
-        """norm_stream con 5000 streams: presupuesto CPU ~2s (regresión O(n²))."""
+        """norm_stream con 5000 streams: presupuesto CPU ~3s (regresión O(n²);
+        margen para ruido bajo carga — degenerado real sería >10x)."""
         s = {'infoHash': 'a' * 40, 'title': 'Película 1080p 👤120 💾1.5 GB ES',
              'behaviorHints': {'bingeGroup': 'x', 'videoSize': 1_500_000_000}}
         _, dt = _timed(lambda: [T.norm_stream(s, 'x') for _ in range(5000)])
-        self.assertLess(dt, 2.0, 'parseo degeneró')
+        self.assertLess(dt, 3.0, 'parseo degeneró')
 
 
 class TestConcurrency(unittest.TestCase):

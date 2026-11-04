@@ -132,11 +132,20 @@ class TimedRunner(unittest.TextTestRunner):
                 w(f"\n[compare] no existe {self.compare_to} — usa --save primero")
                 return res
             bt = base.get('times', {})
-            regr = [(tid, bt.get(tid, 0), el) for tid, el in times.items()
-                    if el > 0.3 and el > 1.5 * bt.get(tid, float('inf'))]
+            # factor de carga global: si la maquina va un 40% mas lenta, TODOS
+            # los tests suben igual — no es regresion. Solo marca los que
+            # superan la inflacion mediana de la suite.
+            import statistics as _st
+            ratios = [el / bt[tid] for tid, el in times.items()
+                      if bt.get(tid, 0) > 0.05]
+            factor = _st.median(ratios) if ratios else 1.0
+            regr = [(tid, bt[tid], el) for tid, el in times.items()
+                    if tid in bt and el - bt[tid] * factor > 0.3
+                    and el > 1.4 * bt[tid] * factor]
             gone = sorted(set(bt) - set(times))
             new = sorted(set(times) - set(bt))
-            w(f"\n--- vs baseline {self.compare_to} ---")
+            w(f"\n--- vs baseline {self.compare_to} "
+              f"(factor carga x{factor:.2f}) ---")
             if regr:
                 w(f"  REGRESIONES ({len(regr)}):")
                 for tid, b, el in sorted(regr, key=lambda x: -(x[2]-x[1])):
