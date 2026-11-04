@@ -465,6 +465,134 @@ class TestResolveFi(unittest.TestCase):
         self.assertEqual(m.call_args[0][2], 0)
 
 
+class TestTimeoutsProtocolo(_DbBase):
+    """Timeouts por llamada y miss[:40] son contrato (6+1/8+1/10+1/15+1/
+    30+1/40+1 y Eq@135)."""
+    H = 'e' * 40
+
+    def _calls(self, fn, scripts, *args):
+        s, calls = fake_session(*scripts)
+        with patch.object(db, '_session', return_value=s):
+            fn(*args)
+        return calls
+
+    def test_dbc_timeout_y_cap(self):
+        cases = [
+            (db._dbc_rd, [{'json': {}}], 6),
+            (db._dbc_tb, [{'json': {'data': {}}}], 6),
+            (db._dbc_ad, [{'json': {'data': {'magnets': []}}}], 6),
+            (db._dbc_pm, [{'json': {'response': []}}], 6),
+            (db._dbc_ed, [{'json': []}], 6),
+            (db._dbc_dl, [{'json': {'value': False}}], 6),
+            (db._dbc_oc, [{'json': {}}], 8),
+            (db._dbc_pio, [{'json': {'transfers': []}}], 8),
+        ]
+        for fn, scripts, t in cases:
+            calls = self._calls(fn, scripts, 'k', [self.H])
+            self.assertEqual(calls[0][2]['timeout'], t, fn.__name__)
+
+    def test_dbc_miss_cap_40(self):
+        """miss[:40] — 41 hashes -> el POST lleva solo 40 (40+1@60/93)."""
+        hashes = [f'{i:040x}' for i in range(41)]
+        calls = self._calls(db._dbc_ad, [{'json': {'data': {'magnets': []}}}],
+                            'k', hashes)
+        self.assertEqual(len(calls[0][2]['data']), 40)
+        calls = self._calls(db._dbc_rd, [{'json': {}}], 'k', hashes)
+        path = calls[0][1].split('instantAvailability/')[1]
+        self.assertEqual(len(path.split('/')), 40)
+
+    def test_dbc_pm_zip_cap_40(self):
+        """El zip del resultado también corta a 40 (40+1@93: 41 flags
+        marcarían un 41º hash)."""
+        hashes = [f'{i:040x}' for i in range(41)]
+        s, _ = fake_session({'json': {'response': [True] * 41}})
+        out = {}
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_pm('k', hashes, out)
+        self.assertEqual(len(out), 40)
+        self.assertNotIn(hashes[40], out)
+
+    def test_oc_status_cached_exacto(self):
+        """status == 'cached' (Eq@135: != marcaría todo lo contrario)."""
+        s, _ = fake_session({'json': {
+            f'magnet:?xt=urn:btih:{self.H}': {'status': 'cached'},
+            'x': {'status': 'downloading'},
+            'y': True}})
+        out = {}
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_oc('k', [self.H, 'f' * 40], out)
+        self.assertTrue(out[self.H])
+        self.assertFalse(out['f' * 40])
+
+    def test_resolver_timeouts(self):
+        """rd=8×5, tb/ad/ed/dl=10, pm/oc/pio=15+10, usenet=15/10, stream=30."""
+        cases = [
+            (db._db_rd, (self.H, 0), [
+                {'json': {'id': 't1'}},
+                {'json': {'files': [{'id': 1, 'name': 'v.mkv', 'bytes': 9}]}},
+                {'json': {}}, {'json': {'links': ['L']}},
+                {'json': {'download': 'd'}}], [8, 8, 8, 8, 8]),
+            (db._db_tb, (self.H, 0), [
+                {'json': {'data': {'torrent_id': 9}}},
+                {'json': {'data': {'link': 'd'}}}], [10, 10]),
+            (db._db_ad, (self.H, 0), [
+                {'json': {'data': {'magnets': [{'id': 'm1'}]}}},
+                {'json': {'data': {'magnets': {'links': [
+                    {'filename': 'v.mkv', 'link': 'L'}]}}}},
+                {'json': {'data': {'link': 'd'}}}], [10, 10, 10]),
+            (db._db_pm, (self.H, 0), [
+                {'json': {'content': [{'path': 'a/v.mkv', 'link': 'L'}]}}], [15]),
+            (db._db_ed, (self.H, 0), [
+                {'json': {'files': [{'filename': 'v.mkv', 'url': 'EU'}]}}], [10]),
+            (db._db_dl, (self.H, 0), [
+                {'json': {'value': {'id': 'i1'}}},
+                {'json': {'value': [{'name': 'v.mkv',
+                                     'downloadUrl': 'DU'}]}}], [10, 10]),
+            (db._db_oc, (self.H, 0), [
+                {'json': {'requestId': 'r1', 'status': 'downloaded',
+                          'url': 'https://x/'}},
+                {'json': [{'url': 'd/v.mkv'}]}], [15, 10]),
+            (db._db_pio, (self.H, 0), [
+                {'json': {'id': 5}},
+                {'json': {'files': [{'name': 'v.mkv', 'id': 7,
+                                     'download_url': 'DU'}]}}], [15, 10]),
+        ]
+        for fn, (h, fi), scripts, touts in cases:
+            calls = self._calls(fn, scripts, 'k', h, fi)
+            self.assertEqual([c[2].get('timeout') for c in calls], touts,
+                             fn.__name__)
+
+    def test_usenet_timeouts(self):
+        """_db_usenet: create 15, mylist/request 10."""
+        old = dict(st.CFG)
+        st.CFG['debrid_providers'] = {'torbox': 'k'}
+        s, calls = fake_session(
+            {'json': {'data': {'usenetdownload_id': '7'}}},
+            {'json': {'data': [{'usenetdownload_id': '7',
+                                'files': [{'id': 3, 'name': 'v.mkv',
+                                           'size': 9}]}]}},
+            {'json': {'data': {'link': 'https://u/nzb'}}})
+        try:
+            with patch.object(db, '_session', return_value=s):
+                db._db_usenet('https://nzb/f')
+        finally:
+            st.CFG.clear(); st.CFG.update(old)
+        self.assertEqual([c[2].get('timeout') for c in calls], [15, 10, 10])
+
+
+class TestDbStreamTimeout(_DbBase):
+    H = 'e' * 40
+
+    def test_stream_timeout_30(self):
+        """_db_stream reenvía con timeout=30 (30+1@443)."""
+        from unittest.mock import MagicMock
+        s = MagicMock()
+        with patch.object(db, '_session', return_value=s), \
+                patch.object(db, '_db_resolve', return_value='https://x/f.mkv'):
+            db._db_stream('rd', self.H, 0, {'Range': 'bytes=0-1'})
+        self.assertEqual(s.get.call_args[1]['timeout'], 30)
+
+
 class TestMultiDebrid(unittest.TestCase):
     """_db_cfgs/_db_key/_db_avail_map — N providers simultáneos."""
     H1, H2 = 'e' * 40, 'f' * 40
