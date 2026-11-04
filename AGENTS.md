@@ -232,16 +232,20 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
 - Búsqueda: dedup por id CANÓNICO (`_search_key` — `_resolve_sid` solo para
   prefijos alien; tt es gratis). Kitsu:X y su tt resuelto no duplican.
 - `_URL_BAD`/`_URL_OK` acotados (`_url_prune` a >2000).
-- `torrent_health` (default on): scrape UDP de trackers públicos por infoHash
-  (`infra/torrent_health.py`, tandas de 20, veredicto 6h en `_SEED`); los
-  0-seeds pasan a **DHT get_peers** (bencode propio `_bdec/_benc`, bootstrap
-  router.bittorrent/utorrent/transmissionbt, budget 90s/worker — si el DHT no
-  responde devuelve 0 como "no visto"). Regla: veredicto >0 vivo; -1 (0 tracker
-  +0 DHT) **con** `sources` -> privado posible, se mantiene; -1 **sin** hints
-  -> inalcanzable, se descarta. Se aplica en ambos caminos de `handle_stream`
-  (fresco y cacheado). `patch_fetch` neutraliza `_scrape_hashes`; en tests el
-  DHT no corre (no hay fetch real). Ojo: routers públicos pueden estar muertos
-  o devolver nodos repetidos — degrada a "0 confirmado", nunca a falso vivo.
+- `torrent_health` (default on): pipeline por infoHash (`infra/torrent_health.py`,
+  veredictos 6h en `_SEED`, persistidos `.seed-cache.json` atomic+throttle 60s):
+  1) scrape UDP trackers públicos (tandas 20); 2) los 0-seed **con** hints
+  `tracker:` en `sources` -> **announce** a sus propios trackers
+  (`_announce_udp`/`_announce_http`, máx 6): swarm -> 99; >=2 responden sin
+  swarm -> **-2** (announce-dead: si sus trackers no lo ven, el cliente tampoco
+  puede unirse — se descarta aunque tenga hints); todo timeout -> 'unknown'
+  (tracker caído != torrent muerto); 3) sin hints o announce-unknown ->
+  **DHT get_peers** (bencode `_bdec/_benc`, bootstrap routers, budget 90s/
+  worker; DHT sin respuesta = "no visto", nunca falso vivo). Regla: >0/99 vivo;
+  -1 sin hints -> fuera; -1 con hints -> se mantiene pero al fondo; -2 -> fuera
+  con o sin hints. Itera TODOS los items (los ausentes del scrape también se
+  anuncian). Se aplica en ambos caminos de `handle_stream` (fresco y cacheado).
+  `patch_fetch` neutraliza `_scrape_hashes`; en tests DHT/announce no corren.
 - Cinemeta standalone NO se re-añade solo: su reaparición fue por editar el
   perfil SQLite con la app abierta (ésta lo persistía de vuelta al salir).
   **Siempre matar la app DE VERDAD antes de tocar localstorage** —

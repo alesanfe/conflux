@@ -111,23 +111,82 @@ class TestDhtVerdict(unittest.TestCase):
         import unittest.mock as um
         with um.patch.object(TH, '_scrape_hashes', return_value={H_DEAD: 0}), \
                 um.patch.object(TH, '_dht_peers', return_value=0):
-            TH._scrape_submit([H_DEAD])
+            TH._scrape_submit([(H_DEAD, [])])
         self.assertEqual(TH._SEED[H_DEAD][0], -1)
 
     def test_cero_tracker_dht_vivo(self):
         import unittest.mock as um
         with um.patch.object(TH, '_scrape_hashes', return_value={H_DEAD: 0}), \
                 um.patch.object(TH, '_dht_peers', return_value=7):
-            TH._scrape_submit([H_DEAD])
+            TH._scrape_submit([(H_DEAD, [])])
         self.assertEqual(TH._SEED[H_DEAD][0], 99)   # vivo via DHT
 
     def test_seeds_directo_sin_dht(self):
         import unittest.mock as um
         with um.patch.object(TH, '_scrape_hashes', return_value={H_LIVE: 5}), \
                 um.patch.object(TH, '_dht_peers') as dp:
-            TH._scrape_submit([H_LIVE])
+            TH._scrape_submit([(H_LIVE, [])])
         self.assertEqual(TH._SEED[H_LIVE][0], 5)
         dp.assert_not_called()                       # seeds>0: DHT no hace falta
+
+
+class TestAnnounceVerdict(unittest.TestCase):
+    """_scrape_submit: 0-seed con hints -> announce a sus propios trackers."""
+
+    def setUp(self):
+        self._seed = dict(TH._SEED)
+        TH._SEED.clear()
+
+    def tearDown(self):
+        TH._SEED.clear()
+        TH._SEED.update(self._seed)
+
+    def _run(self, st):
+        import unittest.mock as um
+        urls = ['udp://tracker.test:1337/announce']
+        with um.patch.object(TH, '_scrape_hashes', return_value={H_DEAD: 0}), \
+                um.patch.object(TH, '_announce_hints', return_value=st) as ah, \
+                um.patch.object(TH, '_dht_peers', return_value=0) as dp:
+            TH._scrape_submit([(H_DEAD, urls)])
+        return ah, dp
+
+    def test_announce_vivo(self):
+        ah, dp = self._run('alive')
+        self.assertEqual(TH._SEED[H_DEAD][0], 99)
+        ah.assert_called_once()
+        dp.assert_not_called()                   # announce resolvió: DHT no hace falta
+
+    def test_announce_muerto(self):
+        self._run('dead')
+        self.assertEqual(TH._SEED[H_DEAD][0], -2)
+
+    def test_announce_unknown_cae_a_dht(self):
+        _, dp = self._run('unknown')
+        self.assertEqual(TH._SEED[H_DEAD][0], -1)
+        dp.assert_called_once_with(H_DEAD)
+
+    def test_menos_de_2_respuestas_unknown(self):
+        import unittest.mock as um
+        with um.patch.object(TH, '_announce_udp', return_value=None):
+            r = TH._announce_hints('a' * 40, ['udp://t1:1/x', 'udp://t2:2/x'])
+        self.assertEqual(r, 'unknown')           # todos timeout = tracker caído
+
+    def test_dos_muetos_dan_dead(self):
+        import unittest.mock as um
+        with um.patch.object(TH, '_announce_udp',
+                             return_value={'seeds': 0, 'leechers': 0, 'peers': 0}):
+            r = TH._announce_hints('a' * 40, ['udp://t1:1/x', 'udp://t2:2/x'])
+        self.assertEqual(r, 'dead')              # 2 trackers responden 0 = muerto
+
+    def test_uno_vivo_alive(self):
+        import unittest.mock as um
+        with um.patch.object(TH, '_announce_udp', return_value=None):
+            r = TH._announce_hints('a' * 40, ['udp://t1:1/x'])
+        self.assertEqual(r, 'unknown')
+        with um.patch.object(TH, '_announce_udp',
+                             side_effect=[None, {'seeds': 3, 'leechers': 1, 'peers': 2}]):
+            r = TH._announce_hints('a' * 40, ['udp://t1:1/x', 'udp://t2:2/x'])
+        self.assertEqual(r, 'alive')
 
 
 class TestBencode(unittest.TestCase):
