@@ -343,3 +343,112 @@ class TestRedirectsEspeciales(unittest.TestCase):
         h = self._h('/nzb/%%%mal%%%')
         h.do_GET()
         h._redir.assert_called_with(None)
+
+
+class TestDbProxy(unittest.TestCase):
+    """/dp/ túnel debrid: pasa status/headers upstream y chunks; pipe roto ok."""
+
+    def _h(self):
+        h = srv.H.__new__(srv.H)
+        h.send_response = MagicMock()
+        h.send_header = MagicMock()
+        h.end_headers = MagicMock()
+        h.wfile = MagicMock()
+        h.headers = {}
+        return h
+
+    def _resp(self):
+        r = MagicMock()
+        r.status_code = 206
+        r.headers = {'Content-Type': 'video/mp4', 'Content-Range': 'bytes 0-9/100',
+                     'X-Skip': 'no'}
+        r.iter_content.return_value = iter([b'abc', b'def'])
+        return r
+
+    def test_pasa_status_headers_y_chunks(self):
+        import unittest.mock as um
+        h = self._h()
+        with um.patch.object(srv, '_db_stream', return_value=self._resp()):
+            h._db_proxy('real-debrid', 'a' * 40, '0')
+        h.send_response.assert_called_with(206)
+        hdrs = {c.args[0] for c in h.send_header.call_args_list}
+        self.assertIn('Content-Range', hdrs)
+        self.assertNotIn('X-Skip', hdrs)              # solo headers Content-*
+        self.assertEqual(h.wfile.write.call_count, 2)
+
+    def test_sin_stream_404(self):
+        import unittest.mock as um
+        h = self._h()
+        h._redir = MagicMock()
+        with um.patch.object(srv, '_db_stream', return_value=None):
+            h._db_proxy('real-debrid', 'a' * 40, '0')
+        h._redir.assert_called_with(None)
+
+    def test_pipe_roto_cierra_respuesta(self):
+        import unittest.mock as um
+        h = self._h()
+        h.wfile.write.side_effect = BrokenPipeError()
+        r = self._resp()
+        with um.patch.object(srv, '_db_stream', return_value=r):
+            h._db_proxy('p', 'a' * 40, '0')            # no propaga
+        r.close.assert_called_once()
+
+
+class TestTimedRoute(unittest.TestCase):
+    """_timed_route: dispatch por ROUTES + contador _rtime por segmento."""
+
+    def _h(self):
+        h = srv.H.__new__(srv.H)
+        h.reply = MagicMock()
+        return h
+
+    def test_route_match_llama_handler(self):
+        import re
+        import unittest.mock as um
+        h = self._h()
+        handler = MagicMock(return_value={'ok': 1})
+        with um.patch.object(srv, 'ROUTES', [(re.compile(r'/x'), handler)]):
+            h._timed_route('/x')
+        handler.assert_called_once()
+        h.reply.assert_called_once_with({'ok': 1})
+        self.assertIn('x', srv._rtime)
+
+    def test_sin_route_404(self):
+        import unittest.mock as um
+        h = self._h()
+        with um.patch.object(srv, 'ROUTES', []):
+            h._timed_route('/nada/raro')
+        h.reply.assert_called_once_with({'err': 'not found'}, 404)
+
+
+class TestFormYHtml(unittest.TestCase):
+    """_form parsea POST urlencoded/multipart-light y _html sirve página."""
+
+    def _h(self, body=b'', ctype='application/x-www-form-urlencoded'):
+        h = srv.H.__new__(srv.H)
+        h.headers = {'Content-Type': ctype,
+                     'Content-Length': str(len(body))}
+        h.rfile = type('R', (), {'read': lambda self_, n: body})()
+        h.send_response = MagicMock()
+        h.send_header = MagicMock()
+        h.end_headers = MagicMock()
+        h.wfile = MagicMock()
+        return h
+
+    def test_form_urlencoded(self):
+        import urllib.parse
+        h = self._h(urllib.parse.urlencode({'a': '1', 'b': 'x y'}).encode())
+        out = h._form()
+        self.assertEqual(out['a'], ['1'])
+        self.assertEqual(out['b'], ['x y'])
+
+    def test_form_vacio(self):
+        h = self._h(b'')
+        self.assertEqual(h._form(), {})
+
+    def test_html_sirve(self):
+        h = self._h()
+        h._html('<h1>ok</h1>', 200)
+        h.send_response.assert_called_with(200)
+        hdrs = {c.args[0]: c.args[1] for c in h.send_header.call_args_list}
+        self.assertIn('text/html', hdrs['Content-Type'])

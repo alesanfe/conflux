@@ -93,3 +93,61 @@ class TestTzQuery(unittest.TestCase):
         self.assertEqual(out[0]['title'], 'Rel')
         self.assertEqual(out[0]['infoHash'], 'abcdef0123456789abcdef0123456789abcdef01')
         self.assertEqual(out[0]['behaviorHints']['seeders'], 7)
+
+
+class TestProwlarrIds(unittest.TestCase):
+    """_tz_prowlarr_ids: caché 600s + endpoint indexers."""
+
+    def setUp(self):
+        self._old = dict(tz._TZ_IDS)
+        tz._TZ_IDS.update(ts=0, ids=None)
+
+    def tearDown(self):
+        tz._TZ_IDS.clear(); tz._TZ_IDS.update(self._old)
+
+    def test_cache_fresca_no_llama(self):
+        tz._TZ_IDS.update(ts=tz.time.time(), ids=[1, 2])
+        with patch.object(tz, '_session') as ses:
+            self.assertEqual(tz._tz_prowlarr_ids('http://p', 'k'), [1, 2])
+            ses.assert_not_called()
+
+    def test_respuesta_ok_ids_habilitados(self):
+        r = MagicMock(ok=True)
+        r.json.return_value = [{'id': 5, 'enable': True},
+                               {'id': 9, 'enable': False}]
+        s2 = MagicMock()
+        s2.get.return_value = r
+        with patch.object(tz, '_session', return_value=s2):
+            self.assertEqual(tz._tz_prowlarr_ids('http://p', 'k'), [5])
+
+    def test_error_devuelve_none(self):
+        s2 = MagicMock()
+        s2.get.side_effect = OSError('down')
+        with patch.object(tz, '_session', return_value=s2):
+            self.assertIsNone(tz._tz_prowlarr_ids('http://p', 'k'))
+
+
+class TestProwlarrExpand(unittest.TestCase):
+    """_tz_query con URL /0/api: expande a cada indexer habilitado."""
+
+    def test_expande_indexers(self):
+        urls = []
+        class S(MagicMock):
+            def get(self, url, params=None, timeout=None):
+                urls.append(url)
+                r = MagicMock(); r.content = b'<rss/>'; return r
+        with patch.object(tz, '_tz_prowlarr_ids', return_value=[3, 7]), \
+                patch.object(tz, '_session', return_value=S()):
+            tz._tz_query('http://p/0/api', 'k', 'movie', 'tt1')
+        self.assertEqual(sorted(urls), ['http://p/3/api', 'http://p/7/api'])
+
+    def test_sin_indexers_url_literal(self):
+        urls = []
+        class S(MagicMock):
+            def get(self, url, params=None, timeout=None):
+                urls.append(url)
+                r = MagicMock(); r.content = b'<rss/>'; return r
+        with patch.object(tz, '_tz_prowlarr_ids', return_value=None), \
+                patch.object(tz, '_session', return_value=S()):
+            tz._tz_query('http://p/0/api', 'k', 'movie', 'tt1')
+        self.assertEqual(urls, ['http://p/0/api'])

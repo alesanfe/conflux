@@ -107,3 +107,64 @@ class TestConcurrency(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestHealthBatch(unittest.TestCase):
+    """_hash_health con 500 streams: lookups O(1), nada de trabajo por stream."""
+
+    def test_hash_health_500_rapido(self):
+        import conflux.infra.torrent_health as TH
+        streams = [{'infoHash': f'{i:040x}'} for i in range(500)]
+        sub = TH._POOL_BG.submit
+        TH._POOL_BG.submit = lambda f, *a: None
+        try:
+            _, dt = _timed(TH._hash_health, streams)
+        finally:
+            TH._POOL_BG.submit = sub
+        self.assertLess(dt, 0.5, 'el filtrado de salud debe ser instantaneo')
+
+
+class TestSearchDeadline(unittest.TestCase):
+    """_busqueda con upstreams lentos: early-done, nunca serializa."""
+
+    def setUp(self):
+        self._m = list(st.manifests)
+
+    def tearDown(self):
+        st.manifests[:] = self._m
+
+    def test_una_lenta_no_frena(self):
+        """12 upstreams: 11 en 10ms + 1 colgando -> la respuesta espera como
+        mucho el timeout del fetch (8s), nunca serializa 12×timeout."""
+        st.manifests[:] = [{'catalogs': [
+            {'id': f'c{i}', 'type': 'movie',
+             'extra': [{'name': 'search'}]}],
+            'resources': []} for i in range(12)]
+        def slow(url, t=8):
+            time.sleep(t if 'c11' in url else 0.01)  # el lento honra su timeout
+            return {'metas': [{'id': 'tt1', 'name': 'X'}]}
+        restore = patch_fetch(slow)
+        try:
+            t0 = time.perf_counter()
+            out = C._busqueda('movie', 'search=x')
+            dt = time.perf_counter() - t0
+        finally:
+            restore()
+        self.assertIsInstance(out.get('metas'), list)
+        self.assertLess(dt, 9.0,
+                        'la busqueda se serializo (12 fetches en cadena)')
+
+
+class TestManifestRouting(unittest.TestCase):
+    """Routing de catalogo + fix extra: throughput de la via caliente."""
+
+    def test_fix_extra_1000_veces(self):
+        import conflux.domain.manifest as MF
+        MF._UTYPE['sx_movie_c1'] = 'movie'
+        try:
+            _, dt = _timed(lambda: [C._cat_fix_extra('http://b', 'movie', 'c1',
+                                                     'genre=accion&year=2020')
+                                    for _ in range(1000)])
+        finally:
+            MF._UTYPE.pop('sx_movie_c1', None)
+        self.assertLess(dt, 1.0)

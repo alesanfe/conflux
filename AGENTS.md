@@ -10,6 +10,12 @@ en Linux iba como systemd user `stremio-proxy`).
 python3 -m unittest discover -s tests -t .  # 351+ tests: unit+integration+security+contract+property+resilience+regression+performance+e2e
 python3 -m unittest discover -s tests/unit -t .       # solo unit (~1s)
 python3 scripts/test_times.py [N] [dir] [--all]      # timer por test + ranking de los N mas lentos
+coverage run -m unittest discover -s tests -t . && python3 scripts/cov_gate.py [80]
+# cov_gate: CADA archivo src/ >= umbral (no media) — actual ~96% total
+python3 scripts/mutation.py <modulo.py> [tests.py] [--max N] [--timeout S]
+# mutation local Windows-safe (mutmut 3.x no va en Windows; en CI/Linux mutmut
+# run sigue valiendo). Operadores: cmp/binop/boolop/not/const/return. Kill-rate
+# real: cada mutante corre los tests enfocados (mapa FOCUS en el script)
 scripts/check.sh                            # linters + suite + smoke endpoints + fuentes
 python3 -m mypy                             # type-check (config en pyproject)
 # CI: .github/workflows/ci.yml — lint + suites herméticas + coverage>=80
