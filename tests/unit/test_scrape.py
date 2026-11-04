@@ -30,9 +30,10 @@ _NYAA = b"""<?xml version="1.0"?>
 
 class TestEnabled(unittest.TestCase):
     def test_default_todos(self):
-        _, undo = cfg_swap(scrapers=['yts', 'eztv', 'nyaa'])
+        _, undo = cfg_swap(scrapers=['yts', 'eztv', 'nyaa', 'tpb'])
         try:
-            self.assertEqual(sc._scraper_names(), ['YTS', 'EZTV', 'Nyaa'])
+            self.assertEqual(sc._scraper_names(),
+                             ['YTS', 'EZTV', 'Nyaa', 'TPB'])
         finally:
             undo()
 
@@ -120,6 +121,61 @@ class TestNyaa(unittest.TestCase):
 
     def test_scraper_desconocido_vacio(self):
         self.assertEqual(sc._scraper('Nope', 'movie', 'tt1'), [])
+
+
+class TestTpb(unittest.TestCase):
+    def setUp(self):
+        self._old = dict(st._meta_c)
+        self._h = dict(st.HEALTH)
+        import time
+        st._meta_c[('movie', 'tt0137523')] = (
+            time.time(), {'meta': {'name': 'Fight Club'}})
+
+    def tearDown(self):
+        st._meta_c.clear(); st._meta_c.update(self._old)
+        st.HEALTH.clear(); st.HEALTH.update(self._h)
+
+    def test_items_a_streams(self):
+        s, calls = fake_session({'json': [
+            {'info_hash': 'a' * 40, 'name': 'Fight Club 1999 1080p',
+             'seeders': 42, 'size': '2000000000', 'imdb': 'tt0137523'},
+            {'info_hash': 'b' * 40, 'name': 'Otro', 'seeders': 9,
+             'size': '9', 'imdb': 'tt9999999'},    # imdb disidente -> fuera
+            {'name': 'sin hash'},                  # sin info_hash -> fuera
+        ]})
+        with patch.object(sc, '_session', return_value=s):
+            out = sc._sc_tpb('movie', 'tt0137523')
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]['name'], 'TPB')
+        self.assertEqual(out[0]['infoHash'], 'a' * 40)
+        self.assertEqual(out[0]['behaviorHints']['seeders'], 42)
+        self.assertEqual(st.HEALTH['TPB']['err'], '')
+        self.assertIn('Fight Club', calls[0][2]['params']['q'])
+        self.assertEqual(calls[0][2]['params']['cat'], '200')
+
+    def test_dict_error_no_lista(self):
+        s, _ = fake_session({'json': {'error': 'no results'}})
+        with patch.object(sc, '_session', return_value=s):
+            self.assertEqual(sc._sc_tpb('movie', 'tt0137523'), [])
+
+    def test_series_query_sxxeyy(self):
+        import time
+        st._meta_c[('series', 'tt0944947')] = (
+            time.time(), {'meta': {'name': 'Some Show'}})
+        s, calls = fake_session({'json': []})
+        with patch.object(sc, '_session', return_value=s):
+            sc._sc_tpb('series', 'tt0944947:2:3')
+        self.assertIn('s02e03', calls[0][2]['params']['q'])
+
+    def test_tipo_y_sin_meta_vacio(self):
+        self.assertEqual(sc._sc_tpb('other', 'tt0137523'), [])
+        st._meta_c.clear()
+        self.assertEqual(sc._sc_tpb('movie', 'tt0137523'), [])
+
+    def test_error_red_vacio(self):
+        s, _ = fake_session(Exception('down'))
+        with patch.object(sc, '_session', return_value=s):
+            self.assertEqual(sc._scraper('TPB', 'movie', 'tt0137523'), [])
 
 
 class TestNyaaSize(unittest.TestCase):

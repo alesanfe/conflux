@@ -130,9 +130,10 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   `?t=caps|search|movie|tvsearch&apikey=<torzapi_key>` devuelve RSS con los
   torrents agregados (magnet+trackers, o `/r/` debrid si está cacheado);
   `torzapi_key` vacía = abierto, o cae a `admin_token`.
-- **Scrapers integrados** — `scrapers: ["yts","eztv","nyaa"]` (default todos):
-  indexers públicos SIN addon upstream — YTS movie_details por imdb, EZTV
-  get-torrents filtrado S/E, Nyaa RSS por título del meta. Cada uno es un
+- **Scrapers integrados** — `scrapers: ["yts","eztv","nyaa","tpb"]` (default
+  todos): indexers públicos SIN addon upstream — YTS movie_details por imdb,
+  EZTV get-torrents filtrado S/E, Nyaa RSS y TPB (apibay q.php) por título
+  del meta. Cada uno es un
   worker propio del collect (aparece en `/health` y `contrib` separado).
   Además `scraper_rss: ["https://…/feed.rss"]` añade un worker `RSS:<host>`
   por feed RSS/Atom de indexer con magnets (torznab attrs / `<ns:infoHash>`

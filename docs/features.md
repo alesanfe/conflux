@@ -63,7 +63,7 @@ GET /torznab/api?t=search&q=dune&apikey=K
 ## Scrapers integrados — `scrapers`
 
 ```json
-"scrapers": ["yts", "eztv", "nyaa"]
+"scrapers": ["yts", "eztv", "nyaa", "tpb"]
 ```
 
 Indexers públicos consultados directamente (sin addon upstream). `[]` los
@@ -75,6 +75,7 @@ propio del collect (health + contrib separados, no puede tumbar el collect).
 | yts | movie | `imdb_id` | API JSON, top 20 |
 | eztv | series | `imdb_id` numérico | solo S/E del id pedido |
 | nyaa | series/anime | título del meta | RSS `c=1_2` (anime EN) |
+| tpb | movie/series/anime | título del meta | apibay `q.php` cat=200; items con `imdb` disidente fuera |
 
 ### Feeds RSS genéricos — `scraper_rss`
 

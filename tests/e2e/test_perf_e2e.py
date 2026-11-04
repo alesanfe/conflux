@@ -16,6 +16,7 @@ import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
 
+import conflux.app.stream as sm
 import conflux.core.state as st
 import conflux.web.server as srv
 from conflux.core import cfg
@@ -67,6 +68,14 @@ def _ms(port, path, n=3, timeout=60):
                  'sin fixture: scripts/record_e2e.py, o live con CONFLUX_E2E_LIVE=1')
 class PerfE2E(unittest.TestCase):
     """Presupuestos por interfaz — se miden TODOS los endpoints públicos."""
+
+    def setUp(self):
+        """Misma higiene que ServerE2E.setUp: fuentes en COOLDOWN/_cache
+        envenenado de tests anteriores no deben sesgar las latencias."""
+        sm.COOLDOWN.clear()
+        st.HEALTH.clear()
+        sm._cache.clear()
+        sm._URL_BAD.clear()
 
     @classmethod
     def setUpClass(cls):

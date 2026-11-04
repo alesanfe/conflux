@@ -142,7 +142,7 @@ _CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '',
                  'stream_required_regex': [], 'source_groups': {},
                  'nntp_host': '', 'nntp_port': 563, 'nntp_user': '', 'nntp_pass': '',
                  'nntp_ssl': True, 'nntp_connections': 5,
-                 'scrapers': ['yts', 'eztv', 'nyaa'], 'torzapi_key': '',
+                 'scrapers': ['yts', 'eztv', 'nyaa', 'tpb'], 'torzapi_key': '',
                  'max_connections': 64,
                  'sabnzbd_url': '', 'sabnzbd_key': '', 'scraper_rss': []}
 

@@ -223,11 +223,11 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   las fuentes en COOLDOWN 15min (FAIL_STREAK=3) → los tests de stream
   posteriores veían 0 → fallo intermitente orden-dependiente (NO flaky:
   defecto de aislamiento real). Regresión: test_stream_0_veneno_cooldown.
-- **Scrapers** (`infra/scrape.py`): YTS/EZTV/Nyaa sin addon upstream — son
+- **Scrapers** (`infra/scrape.py`): YTS/EZTV/Nyaa/TPB sin addon upstream — son
   futures extra del `_collect` (mismo pool; aparecen en contrib/health).
-  `scrapers` en cfg limita la lista; Nyaa necesita el meta cacheado (título
-  para la query) — sin él devuelve [] sin marcar fallo. `_scraper()` nunca
-  propaga excepciones al collect.
+  `scrapers` en cfg limita la lista; Nyaa/TPB necesitan el meta cacheado
+  (título para la query) — sin él devuelven [] sin marcar fallo. `_scraper()`
+  nunca propaga excepciones al collect.
 - **Feeds RSS** (`scraper_rss`, URLs): workers dinámicos `RSS:<host>` vía
   `_rss_map()`+`_sc_rss` — magnets en link/enclosure/guid/magneturl,
   torznab `infohash` o `<ns:infoHash>`; items sin hash se descartan.

@@ -131,6 +131,33 @@ def _sc_nyaa(stype, sid):
     return out[:20]
 
 
+def _sc_tpb(stype, sid):
+    """apibay.org (API JSON pública de The Pirate Bay) por título del meta.
+
+    Items con `imdb` llevan el tt del release — filtra los que discrepan.
+    cat=200 (todo vídeo); el filtro parental de la pipeline descarta XXX."""
+    if stype not in ('movie', 'series', 'anime'):
+        return []
+    imdb, title, se = _sc_title(stype, sid)
+    if not imdb.startswith('tt') or not title:
+        return []                                       # sin meta -> sin query
+    q = f'{title} {se}' if se else title
+    d = _session('apibay.org').get('https://apibay.org/q.php',
+                                   params={'q': q, 'cat': '200'}, timeout=10)
+    items = d.json()
+    if not isinstance(items, list):                     # {'error': '...'} no es lista
+        items = []
+    out = []
+    for t in items:
+        ih = t.get('info_hash')
+        if not ih or (t.get('imdb') and t['imdb'] != imdb):
+            continue
+        title_ = f"{t.get('name') or 'tpb'} 👤 {t.get('seeders', 0)}"
+        out.append(_stream('TPB', title_, ih, t.get('seeders'), t.get('size')))
+    _health('TPB', True, '', len(out))
+    return out[:20]
+
+
 def _nyaa_size(txt):
     """'1.4 GiB' / '650 MiB' del RSS -> bytes."""
     try:
@@ -222,9 +249,9 @@ def _sc_rss(url, stype, sid):
     return out[:20]
 
 
-_SCR_KEY = {'YTS': 'yts', 'EZTV': 'eztv', 'Nyaa': 'nyaa'}
+_SCR_KEY = {'YTS': 'yts', 'EZTV': 'eztv', 'Nyaa': 'nyaa', 'TPB': 'tpb'}
 _SCRAPERS = {'yts': ('YTS', _sc_yts), 'eztv': ('EZTV', _sc_eztv),
-             'nyaa': ('Nyaa', _sc_nyaa)}
+             'nyaa': ('Nyaa', _sc_nyaa), 'tpb': ('TPB', _sc_tpb)}
 
 
 def _scraper_names():
@@ -240,7 +267,7 @@ def _rss_worker(url):
 
 
 def _scraper(name, stype, sid):
-    """Worker por nombre ('YTS'|'EZTV'|'Nyaa'|'RSS:<host>') -> streams o []."""
+    """Worker por nombre ('YTS'|'EZTV'|'Nyaa'|'TPB'|'RSS:<host>') -> streams o []."""
     fn = next((f for k, (n, f) in _SCRAPERS.items() if n == name), None)
     if fn is None and name in _rss_map():
         fn = _rss_worker(_rss_map()[name])
