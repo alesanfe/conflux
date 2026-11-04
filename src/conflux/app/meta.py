@@ -5,7 +5,7 @@ import urllib.parse
 from concurrent.futures import TimeoutError as FutureTimeout
 from concurrent.futures import as_completed
 
-from conflux.app.stream import _eff_disabled, _ensure_collect
+from conflux.app.stream import _eff_disabled_for, _ensure_collect
 from conflux.core.cfg import _cfgget
 from conflux.core.state import _POOL, SOURCES, _cget, _cset, _cstale, _meta_c, manifests
 from conflux.domain.metafix import _fix_metas, _rpdb
@@ -64,7 +64,7 @@ def handle_meta(stype, mid):
     # stream_prefetch=False -> opt-out (privacidad/banda): no consulta fuentes
     # hasta que el usuario pulse reproducir de verdad.
     if stype == 'movie' and ':' not in mid and _cfgget('stream_prefetch', True):
-        _ensure_collect(('movie', mid, tuple(sorted(_eff_disabled()))))  # clave completa del collect
+        _ensure_collect(('movie', mid, tuple(sorted(_eff_disabled_for('movie')))))  # clave completa del collect
     # estrenos del calendario llegan como 'series' aunque sean pelis: fallback
     for want in _meta_try(stype):
         futs = [_POOL.submit(_meta_one, i, want, mid) for i in range(len(SOURCES))]

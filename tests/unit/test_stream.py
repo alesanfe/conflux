@@ -57,7 +57,7 @@ class TestCollectMerge(unittest.TestCase):
 
 class TestHandleStream(unittest.TestCase):
     def test_cache_hit(self):
-        key = ('movie', 'tt1', tuple(sorted(S._eff_disabled())))
+        key = ('movie', 'tt1', tuple(sorted(S._eff_disabled_for('movie'))))
         st._cset(S._cache, key, [{'name': 'x'}])
         self.assertEqual(S.handle_stream('movie', 'tt1'), {'streams': [{'name': 'x'}]})
         S._cache.clear()
@@ -69,7 +69,7 @@ class TestHandleStream(unittest.TestCase):
         st._cset(S._cache, ('movie', 'tt1', ()), [{'name': 'base'}])
         _PROF.cfg = {'sources_disabled': ['Torrentio']}
         try:
-            key_prof = ('movie', 'tt1', tuple(sorted(S._eff_disabled())))
+            key_prof = ('movie', 'tt1', tuple(sorted(S._eff_disabled_for('movie'))))
         finally:
             _PROF.cfg = None
         self.assertNotEqual(('movie', 'tt1', ()), key_prof)
@@ -395,6 +395,25 @@ class TestNewznab(unittest.TestCase):
         self.assertEqual(seen['ep'], '5')
 
 
+class _UsenetS:
+    """Sesión mínima del flujo TorBox usenet (reutilizable)."""
+    def post(self_, url, data=None, **kw):
+        class R:
+            def json(self_):
+                return {'data': {'usenetdownload_id': 7}}
+        return R()
+
+    def get(self_, url, params=None, **kw):
+        class R:
+            def json(self_):
+                if 'mylist' in url:
+                    return {'data': [{'usenetdownload_id': 7, 'files': [
+                        {'id': 3, 'name': 'f.mkv', 'size': 9},
+                        {'id': 4, 'name': 'nfo.txt', 'size': 1}]}]}
+                return {'data': 'https://cdn.torbox/x.mkv'}
+        return R()
+
+
 class TestDbUsenet(unittest.TestCase):
     """_db_usenet — flujo TorBox usenet: create -> mylist -> requestdl."""
 
@@ -425,7 +444,7 @@ class TestDbUsenet(unittest.TestCase):
         _, undo = cfg_swap(debrid_provider='torbox', debrid_key='tk')
         try:
             with mock.patch.object(debrid, '_session', return_value=S_()):
-                out = debrid._db_usenet('tk', 'https://idx/getnzb/1')
+                out = debrid._db_usenet('https://idx/getnzb/1')
         finally:
             undo()
         self.assertEqual(out, 'https://cdn.torbox/x.mkv')
@@ -438,9 +457,23 @@ class TestDbUsenet(unittest.TestCase):
         from tests import cfg_swap
         _, undo = cfg_swap(debrid_provider='real-debrid', debrid_key='k')
         try:
-            self.assertIsNone(debrid._db_usenet('k', 'http://x/nzb'))
+            self.assertIsNone(debrid._db_usenet('http://x/nzb'))
         finally:
             undo()
+
+    def test_gate_multi_provider(self):
+        """TorBox como SEGUNDO provider (debrid_providers) también sirve usenet."""
+        from conflux.infra import debrid
+        from tests import cfg_swap
+        _, undo = cfg_swap(debrid_provider='real-debrid', debrid_key='k',
+                           debrid_providers={'torbox': 'tk2'})
+        try:
+            with mock.patch.object(debrid, '_session', return_value=_UsenetS()) as ps:
+                out = debrid._db_usenet('http://x/nzb')
+        finally:
+            undo()
+        self.assertEqual(out, 'https://cdn.torbox/x.mkv')
+        ps.assert_called()
 
 
 class TestEasynews(unittest.TestCase):
@@ -921,6 +954,7 @@ class TestCollectInternals(unittest.TestCase):
         state = self._state()
         with mock.patch.object(S, 'SOURCES', [_Src('S0', 'http://b')]), \
              mock.patch.object(S, '_POOL'), \
+             mock.patch.object(S, '_scraper_names', return_value=[]), \
              mock.patch.object(S, '_resolve_sid', side_effect=lambda t, i: i), \
              mock.patch.object(S._POOL, 'submit', side_effect=lambda *a: futs.pop(0)), \
              mock.patch.object(S, 'as_completed', side_effect=lambda fs, **k: list(fs)), \
@@ -966,6 +1000,7 @@ class TestCollectInternals(unittest.TestCase):
         with mock.patch.object(S, 'SOURCES',
                                [_Src('A', 'http://a'), _Src('B', 'http://b')]), \
              mock.patch.object(S, 'threading', faketh), \
+             mock.patch.object(S, '_scraper_names', return_value=[]), \
              mock.patch.object(S, '_resolve_sid', side_effect=lambda t, i: i), \
              mock.patch.object(S._POOL, 'submit',
                                side_effect=lambda *a: _Fut(results.pop(0))), \
@@ -1295,7 +1330,7 @@ class TestHandleStreamBordes(unittest.TestCase):
         mm.assert_called_once()
 
     def test_hit_no_collect_miss_si(self):
-        key = ('movie', 'tt77', tuple(sorted(S._eff_disabled())))
+        key = ('movie', 'tt77', tuple(sorted(S._eff_disabled_for('movie'))))
         st._cset(S._cache, key, [])
         with mock.patch.object(S, '_ensure_collect') as ec, \
              mock.patch.object(S, '_debrid_mark'), \
@@ -1311,7 +1346,7 @@ class TestHandleStreamBordes(unittest.TestCase):
              mock.patch.object(S, '_hash_health'), \
              mock.patch.object(S, '_url_health'):
             S.handle_stream('movie', 'tt77')
-        ec.assert_called_once_with(('movie', 'tt77', tuple(sorted(S._eff_disabled()))))
+        ec.assert_called_once_with(('movie', 'tt77', tuple(sorted(S._eff_disabled_for('movie')))))
 
 
 class TestContratoFino(unittest.TestCase):
@@ -1454,6 +1489,125 @@ class TestContratoFino(unittest.TestCase):
         with mock.patch.object(S, 'norm_stream', return_value=fake_row):
             S._collect_merge(stt, 'Foo', [{'title': 'x', 'url': 'http://u'}])
         self.assertEqual(st._SERVED['Foo']['res'], {'SD': 1})
+
+
+class TestRegexFilters(unittest.TestCase):
+    """stream_exclude_regex / stream_required_regex (estilo AIOStreams)."""
+
+    def test_exclude_regex(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_exclude_regex=[r'(?i)\bcam\b', r'\d{3,4}p.*ita'])
+        try:
+            out = S._rex_ex_out([{'title': 'Movie 1080p'},
+                                 {'title': 'Movie cam 720p'},
+                                 {'title': 'Film 1080p ita sub'}])
+        finally:
+            undo()
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]['title'], 'Movie 1080p')
+
+    def test_required_regex(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_required_regex=[r'(?i)espa|latino'])
+        try:
+            out = S._rex_req_out([{'title': 'Movie ESPAÑOL 1080p'},
+                                  {'title': 'Movie ENG 1080p'}])
+        finally:
+            undo()
+        self.assertEqual(len(out), 1)
+
+    def test_patron_roto_se_salta_no_muere(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_exclude_regex=['([unclosed', r'\bcam\b'])
+        try:
+            out = S._rex_ex_out([{'title': 'cam rip'}, {'title': 'ok 1080p'}])
+        finally:
+            undo()
+        self.assertEqual(len(out), 1)               # el válido sigue filtrando
+        self.assertEqual(out[0]['title'], 'ok 1080p')
+
+    def test_vacios_noop(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_exclude_regex=[], stream_required_regex=[])
+        try:
+            ss = [{'title': 'x'}]
+            self.assertIs(S._rex_ex_out(ss), ss)
+            self.assertIs(S._rex_req_out(ss), ss)
+        finally:
+            undo()
+
+    def test_nombre_y_descripcion_tambien_buscan(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_exclude_regex=['(?i)hdcam'])
+        try:
+            out = S._rex_ex_out([{'name': 'release', 'description': 'HDCAM line'}])
+        finally:
+            undo()
+        self.assertEqual(out, [])
+
+
+class TestSourceGroups(unittest.TestCase):
+    """source_groups — routing condicional por tipo (Groups de AIOStreams)."""
+
+    def test_grupo_restringe_tipo(self):
+        from conflux.core import cfg
+        from tests import cfg_swap
+        _, undo = cfg_swap(sources_disabled=[],
+                           source_groups={'anime': [st.SOURCES[0].name]})
+        try:
+            dis_anime = cfg._eff_disabled_for('anime')
+            dis_movie = cfg._eff_disabled_for('movie')
+        finally:
+            undo()
+        self.assertEqual(dis_anime, {s.name for s in st.SOURCES[1:]})
+        self.assertEqual(dis_movie, set())          # movie sin grupo: todas
+
+    def test_sin_grupos_igual_que_disabled(self):
+        from conflux.core import cfg
+        old = set(st._DISABLED)
+        st._DISABLED.clear(); st._DISABLED.add(st.SOURCES[0].name)
+        try:
+            self.assertEqual(cfg._eff_disabled_for('movie'),
+                             {st.SOURCES[0].name})
+        finally:
+            st._DISABLED.clear(); st._DISABLED.update(old)
+
+    def test_grupo_vacio_apaga_tipo(self):
+        """grupo explícito []: ninguna fuente responde a ese tipo."""
+        from conflux.core import cfg
+        from tests import cfg_swap
+        _, undo = cfg_swap(source_groups={'tv': []})
+        try:
+            self.assertEqual(cfg._eff_disabled_for('tv'),
+                             {s.name for s in st.SOURCES})
+        finally:
+            undo()
+
+    def test_key_de_cache_incluye_grupo(self):
+        """La clave del collect discrimina por grupo efectivo."""
+        from conflux.core import cfg
+        from tests import cfg_swap
+        _, undo = cfg_swap(source_groups={'series': [st.SOURCES[0].name]})
+        try:
+            d1 = tuple(sorted(cfg._eff_disabled_for('series')))
+        finally:
+            undo()
+        _, undo = cfg_swap(source_groups={})
+        try:
+            d2 = tuple(sorted(cfg._eff_disabled_for('series')))
+        finally:
+            undo()
+        self.assertNotEqual(d1, d2)
+
+
+class TestMetrics(unittest.TestCase):
+    def test_texto_prometheus(self):
+        from conflux.web.metrics import _metrics_text
+        body = _metrics_text()
+        self.assertIn('# TYPE conflux_source_requests_total counter', body)
+        self.assertIn('conflux_route_latency_ms', body)
+        self.assertIn('conflux_cache_entries', body)
+        self.assertIn('conflux_sources_total', body)
 
 
 if __name__ == '__main__':

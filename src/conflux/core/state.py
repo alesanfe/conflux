@@ -137,7 +137,13 @@ _CFG_DEFAULTS = {'calendar_months_ahead': 2, 'trakt_client_id': '',
                  'extra_sources': [], 'stream_preferred': [], 'source_timeout': 0,
                  'mediafusion': True, 'torrent_health': True,
                  'trakt_access_token': '', 'trakt_refresh_token': '', 'trakt_expires': 0,
-                 'epg_url': 'https://epgshare01.online/epgshare01/epg_ripper_ES1.xml.gz'}
+                 'epg_url': 'https://epgshare01.online/epgshare01/epg_ripper_ES1.xml.gz',
+                 'debrid_providers': {}, 'stream_exclude_regex': [],
+                 'stream_required_regex': [], 'source_groups': {},
+                 'nntp_host': '', 'nntp_port': 563, 'nntp_user': '', 'nntp_pass': '',
+                 'nntp_ssl': True, 'nntp_connections': 5,
+                 'scrapers': ['yts', 'eztv', 'nyaa'], 'torzapi_key': '',
+                 'max_connections': 64}
 
 CFG: dict[str, Any] = dict(_CFG_DEFAULTS)
 

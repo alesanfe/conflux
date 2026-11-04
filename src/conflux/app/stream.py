@@ -8,7 +8,7 @@ import urllib.parse
 from concurrent.futures import as_completed
 
 from conflux.core import cfg
-from conflux.core.cfg import _eff_disabled, _es_pat, _pcfg, _strs
+from conflux.core.cfg import _eff_disabled_for, _es_pat, _pcfg, _strs
 from conflux.core.state import (
     _POOL,
     _POOL_BG,
@@ -35,6 +35,7 @@ from conflux.infra.debrid import _debrid_mark
 from conflux.infra.net import _session, fetch
 from conflux.infra.easynews import _easynews
 from conflux.infra.newznab import _newznab
+from conflux.infra.scrape import _scraper, _scraper_names
 from conflux.infra.torrent_health import _hash_health
 from conflux.infra.torznab import _torznab
 from conflux.infra.zilean import _zilean
@@ -164,6 +165,16 @@ def _collect_en(stype, sid):
     return 'Easynews', ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
 
 
+def _collect_sc(name, stype, sid):
+    """Worker de scraper integrado (yts/eztv/nyaa): mismo contrato."""
+    try:
+        ss = _scraper(name, stype, sid)
+    except Exception as e:                              # noqa: BLE001 — scraper nunca tumba el collect
+        log_ev('src_worker', err=repr(e)[:100])
+        return name, [], 0
+    return name, ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+
+
 def _collect(key, state):
     stype, sid, dis = key                     # dis: sources_disabled efectivo (perfil)
     sid = _resolve_sid(stype, sid)            # kitsu/mal -> imdb para las fuentes
@@ -174,6 +185,8 @@ def _collect(key, state):
         futs.append(_POOL.submit(_collect_zl, stype, sid))     # zilean (DMM cacheados): idem
         futs.append(_POOL.submit(_collect_nz, stype, sid))     # newznab (usenet/torbox): idem
         futs.append(_POOL.submit(_collect_en, stype, sid))     # easynews (usenet directo): idem
+        futs += [_POOL.submit(_collect_sc, nm, stype, sid)     # scrapers integrados (yts/eztv/nyaa)
+                 for nm in _scraper_names()]
         pending = len(futs)
 
         def _nearly_done():                                    # ~2s: si solo cuelgan stragglers
@@ -234,6 +247,51 @@ def _adult_out(streams):
         return streams
     return [s for s in streams if not cfg.RE_ADULT.search(
         ' '.join(str(s.get(k) or '') for k in _STREAM_TEXT))]
+
+
+_REX_C: dict = {}                       # (key, tuple(pats)) -> [compiled]
+
+
+def _rex_pats(key):
+    """stream_*_regex (perfil/global) -> compilados cacheados. Los patrones
+    rotos se registran y se saltan — un regex malo del usuario no rompe el
+    stream (comportamiento AIOStreams: avisar, no morir)."""
+    pats = _strs((_pcfg() or {}).get(key))
+    if pats is None:
+        pats = _strs(cfg.CFG.get(key))
+    if not pats:
+        return []
+    ck = (key, tuple(pats))
+    out = _REX_C.get(ck)
+    if out is None:
+        out = []
+        for p in pats:
+            try:
+                out.append(re.compile(p))
+            except re.error as e:
+                log_ev('regex_bad', key=key, pat=p[:60], err=str(e)[:80])
+        _REX_C[ck] = out
+    return out
+
+
+def _rex_text(s):
+    return ' '.join(str(s.get(k) or '') for k in _STREAM_TEXT)
+
+
+def _rex_ex_out(streams):
+    """stream_exclude_regex: fuera lo que matchee CUALQUIER patrón."""
+    pats = _rex_pats('stream_exclude_regex')
+    if not streams or not pats:
+        return streams
+    return [s for s in streams if not any(p.search(_rex_text(s)) for p in pats)]
+
+
+def _rex_req_out(streams):
+    """stream_required_regex: solo pasa lo que matchee ALGÚN patrón."""
+    pats = _rex_pats('stream_required_regex')
+    if not streams or not pats:
+        return streams
+    return [s for s in streams if any(p.search(_rex_text(s)) for p in pats)]
 
 
 def _req_out(streams):
@@ -336,10 +394,10 @@ def handle_stream(stype, sid):
             _m3u_metas()
         u = _M3U.get(sid)
         return {'streams': [{'name': 'M3U', 'title': 'Canal propio', 'url': u}] if u else []}
-    key = (stype, sid, tuple(sorted(_eff_disabled())))      # fuentes off varía por perfil
+    key = (stype, sid, tuple(sorted(_eff_disabled_for(stype))))  # off+groups por perfil
     hit = _cget(_cache, key)
     if hit is not None:
-        out = _adult_out(_req_out(_ex_out(_rows_out(hit))))
+        out = _adult_out(_req_out(_rex_req_out(_rex_ex_out(_ex_out(_rows_out(hit))))))
         _debrid_mark(out)                          # debrid marca copias: fuera del caché
         _hash_health(out)                          # veredictos scrape: filtran también el caché
         return {'streams': out}
@@ -347,7 +405,7 @@ def handle_stream(stype, sid):
     state['done'].wait(STREAM_BUDGET)
     with state['lock']:
         out = _rows_out(state['rows'])
-    out = _adult_out(_req_out(_ex_out(out)))                 # filtros usuario tras dedup/rank
+    out = _adult_out(_req_out(_rex_req_out(_rex_ex_out(_ex_out(out)))))   # filtros usuario tras dedup/rank
     _debrid_mark(out)                                        # si hay key: cache + resolve /r/
     _url_health(out)                                         # HEAD async a streams http
     _hash_health(out)                                        # infoHash sin swarm ni hints fuera

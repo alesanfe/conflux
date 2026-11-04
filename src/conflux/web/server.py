@@ -37,6 +37,7 @@ from conflux.core.state import (
 from conflux.domain.catalog import handle_catalog
 from conflux.domain.sources import _load_manifests_cache, _persist_manifests, refresh_manifests
 from conflux.infra.debrid import _db_resolve, _db_stream, _db_usenet
+from conflux.web.metrics import _metrics_text
 from conflux.web.pages import (
     _admin_page,
     _configure_page,
@@ -48,6 +49,7 @@ from conflux.web.pages import (
     _trakt_auth_page,
     _trakt_status,
 )
+from conflux.web.torzapi import handle_torzapi
 
 
 class H(BaseHTTPRequestHandler):
@@ -110,14 +112,21 @@ class H(BaseHTTPRequestHandler):
         'stream_max_gb', 'stream_prefetch', 'stream_required', 'stream_sort',
         'stream_format', 'debrid_proxy', 'parental', 'stream_preferred',
         'source_timeout', 'mediafusion', 'torrent_health',
-        'opensubtitles_key', 'opensubtitles_user', 'opensubtitles_pass', 'mdblist_key'})
+        'opensubtitles_key', 'opensubtitles_user', 'opensubtitles_pass', 'mdblist_key',
+        'debrid_providers', 'stream_exclude_regex', 'stream_required_regex',
+        'source_groups', 'nntp_host', 'nntp_port', 'nntp_user', 'nntp_pass',
+        'nntp_ssl', 'nntp_connections', 'scrapers'})
     _CFG_URL_LIST = frozenset({'stream_langs', 'stream_exclude', 'catalogs_disabled',
                                'sources_disabled', 'source_order', 'stream_required',
-                               'stream_sort', 'stream_preferred'})
+                               'stream_sort', 'stream_preferred',
+                               'stream_exclude_regex', 'stream_required_regex', 'scrapers'})
     _CFG_URL_NUM = {'calendar_months_ahead': (0, 24),      # cota: builds de calendario
-                    'stream_max_gb': (0, 100000), 'source_timeout': (0, 30)}
+                    'stream_max_gb': (0, 100000), 'source_timeout': (0, 30),
+                    'nntp_port': (1, 65535), 'nntp_connections': (1, 64)}
     _CFG_URL_BOOL = frozenset({'stream_prefetch', 'debrid_proxy', 'parental',
-                               'mediafusion', 'torrent_health'})
+                               'mediafusion', 'torrent_health', 'nntp_ssl'})
+    _CFG_URL_DICT = frozenset({'debrid_providers'})   # str -> str
+    _CFG_URL_DLIST = frozenset({'source_groups'})     # str -> list[str]
 
     @classmethod
     def _cfg_url_ok(cls, k, v):
@@ -127,6 +136,13 @@ class H(BaseHTTPRequestHandler):
             return False
         if k in cls._CFG_URL_LIST:
             return isinstance(v, list) and all(isinstance(x, str) for x in v)
+        if k in cls._CFG_URL_DICT:
+            return isinstance(v, dict) and all(
+                isinstance(a, str) and isinstance(b, str) for a, b in v.items())
+        if k in cls._CFG_URL_DLIST:
+            return isinstance(v, dict) and all(
+                isinstance(a, str) and isinstance(b, list)
+                and all(isinstance(x, str) for x in b) for a, b in v.items())
         if k in cls._CFG_URL_NUM:
             lo, hi = cls._CFG_URL_NUM[k]
             return type(v) is int and lo <= v <= hi
@@ -211,7 +227,7 @@ class H(BaseHTTPRequestHandler):
                 link = base64.urlsafe_b64decode(b + '=' * (-len(b) % 4)).decode()
             except (ValueError, UnicodeDecodeError, binascii.Error):
                 link = ''
-            return self._redir(_db_usenet(CFG.get('debrid_key', ''), link)
+            return self._redir(_db_usenet(link)
                                if link.startswith('http') else None)
         if p.startswith('/en/'):                                       # easynews: creds sólo en el redirect
             b = p[4:]
@@ -229,6 +245,12 @@ class H(BaseHTTPRequestHandler):
             return self._redir(link if link.startswith('http') else None)
         if p.startswith('/s/'):                                        # subtitle redirect
             return self._redir(_sub_download(p.rsplit('/', 1)[-1]))
+        if p in ('/torznab/api', '/newznab/api'):                      # indexer *arr (Torznab/Newznab)
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            code, body = handle_torzapi(q)
+            return self._xml(body, code)
+        if p == '/metrics':                                            # Prometheus scrape
+            return self._text(_metrics_text())
         return self._timed_route(p)
     def _db_proxy(self, pvd, h, fi):
         """Túnel de salida debrid (config.debrid_proxy): el player recibe los
@@ -265,6 +287,22 @@ class H(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('Content-Length', str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+    def _xml(self, body, code=200):
+        b = body.encode()
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/rss+xml; charset=utf-8')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Content-Length', str(len(b)))
+        self.end_headers()
+        self.wfile.write(b)
+    def _text(self, body, code=200):
+        b = body.encode()
+        self.send_response(code)
+        self.send_header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')
+        self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Content-Length', str(len(b)))
         self.end_headers()
         self.wfile.write(b)
@@ -361,8 +399,25 @@ def main():
     threading.Thread(target=_prefetch_catalogs, daemon=True).start()   # caché caliente antes del 1er cliente
 
     class Srv(ThreadingHTTPServer):
-        """Servidor con hilos daemon (sin zombies al parar)."""
+        """Hilos daemon + pool acotado: >MAX_CONNS conexiones esperan en el
+        backlog del kernel (un burst no crea hilos ilimitados)."""
         daemon_threads = True   # sin hilos zombie
+        request_queue_size = 64              # backlog: el cliente espera, no muere
+        _sem = threading.Semaphore(int(CFG.get('max_connections', 64)))
+
+        def process_request(self, request, client_address):
+            self._sem.acquire()
+            try:
+                super().process_request(request, client_address)
+            except Exception:                                  # noqa: BLE001 — spawn falló: liberar
+                self._sem.release()
+                raise
+
+        def process_request_thread(self, request, client_address):
+            try:
+                super().process_request_thread(request, client_address)
+            finally:
+                self._sem.release()
     try:
         srv = Srv(('127.0.0.1', PORT), H)
     except OSError as e:

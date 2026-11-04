@@ -4,6 +4,7 @@
 import os
 import re
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 
 import requests
@@ -14,31 +15,65 @@ from conflux.infra.net import _session
 # ---- debrid (Real-Debrid / TorBox) — activo solo con key en config.json/env ----
 _DB_OK: dict = {}
 
+_DB_SHORT = {'real-debrid': 'RD', 'torbox': 'TB', 'alldebrid': 'AD',
+             'premiumize': 'PM', 'easydebrid': 'ED', 'debrid-link': 'DL',
+             'offcloud': 'OC', 'putio': 'PIO'}
+
+
+def _db_cfgs():
+    """[(provider, key)] configurados, en orden de prioridad.
+
+    Multi-debrid: `debrid_providers` (dict provider->key) añade providers;
+    `debrid_provider`+`debrid_key` (legacy singular) van primero si existen.
+    """
+    out, seen = [], set()
+    p = CFG.get('debrid_provider')
+    k = CFG.get('debrid_key') or os.environ.get('DEBRID_KEY', '')
+    if p and k:
+        out.append((p, k))
+        seen.add(p)
+    extra = CFG.get('debrid_providers') or {}
+    if isinstance(extra, dict):
+        for pp, kk in extra.items():
+            if pp in _DB_CHECK and kk and pp not in seen:
+                out.append((pp, str(kk)))
+                seen.add(pp)
+    return out
+
+
 def _db_cfg():
-    p, k = CFG.get('debrid_provider'), CFG.get('debrid_key') or os.environ.get('DEBRID_KEY', '')
-    return (p, k) if p and k else (None, None)
+    cfgs = _db_cfgs()
+    return cfgs[0] if cfgs else (None, None)
 
 
-def _dbc_rd(k, miss):
+def _db_key(p):
+    """API key del provider p entre los configurados (multi-debrid)."""
+    return next((k for pp, k in _db_cfgs() if pp == p), None)
+
+
+def _dbc_rd(k, miss, out=None):
+    out = _DB_OK if out is None else out
     r = _session('api.real-debrid.com').get(
         'https://api.real-debrid.com/rest/1.0/torrents/instantAvailability/' + '/'.join(miss[:40]),
         headers={'Authorization': f'Bearer {k}'}, timeout=6)
     d = r.json()
     for h in miss[:40]:
         e = d.get(h) or {}
-        _DB_OK[h] = bool(e.get('rd') or e.get('files'))
+        out[h] = bool(e.get('rd') or e.get('files'))
 
 
-def _dbc_tb(k, miss):
+def _dbc_tb(k, miss, out=None):
+    out = _DB_OK if out is None else out
     r = _session('api.torbox.app').get(
         'https://api.torbox.app/v1/api/torrents/checkcached?hash=' + ','.join(miss[:40]),
         headers={'Authorization': f'Bearer {k}'}, timeout=6)
     ok = set((r.json().get('data') or {}).keys())
     for h in miss[:40]:
-        _DB_OK[h] = h.lower() in ok
+        out[h] = h.lower() in ok
 
 
-def _dbc_ad(k, miss):
+def _dbc_ad(k, miss, out=None):
+    out = _DB_OK if out is None else out
     r = _session('api.alldebrid.com').post(
         'https://api.alldebrid.com/v4/magnet/instant',
         params={'agent': 'conflux', 'apikey': k},
@@ -46,19 +81,21 @@ def _dbc_ad(k, miss):
     mags = {m.get('magnet', '').rsplit(':', maxsplit=1)[-1].lower(): m.get('instant')
             for m in ((r.json().get('data') or {}).get('magnets') or [])}
     for h in miss[:40]:
-        _DB_OK[h] = bool(mags.get(h.lower()))
+        out[h] = bool(mags.get(h.lower()))
 
 
-def _dbc_pm(k, miss):
+def _dbc_pm(k, miss, out=None):
+    out = _DB_OK if out is None else out
     r = _session('www.premiumize.me').post(
         f'https://www.premiumize.me/api/cache/check?apikey={k}',
         data=[('items[]', f'magnet:?xt=urn:btih:{h}') for h in miss[:40]], timeout=6)
     flags = r.json().get('response') or []
     for h, ok in zip(miss[:40], flags, strict=False):
-        _DB_OK[h] = bool(ok)
+        out[h] = bool(ok)
 
 
-def _dbc_ed(k, miss):
+def _dbc_ed(k, miss, out=None):
+    out = _DB_OK if out is None else out
     r = _session('easydebrid.com').post(
         'https://easydebrid.com/api/v1/link/lookup',
         json={'urls': [f'magnet:?xt=urn:btih:{h}' for h in miss[:40]]},
@@ -68,10 +105,11 @@ def _dbc_ed(k, miss):
     hit = {str(x.get('url','')).rsplit(':', maxsplit=1)[-1].lower(): x.get('cached', True)
            for x in lst if isinstance(x, dict)}
     for h in miss[:40]:
-        _DB_OK[h] = bool(hit.get(h.lower(), h.lower() in hit))
+        out[h] = bool(hit.get(h.lower(), h.lower() in hit))
 
 
-def _dbc_dl(k, miss):
+def _dbc_dl(k, miss, out=None):
+    out = _DB_OK if out is None else out
     ok_ = set()
     for h in miss[:20]:                            # API: una petición por magnet
         r = _session('debrid-link.com').get(
@@ -81,11 +119,12 @@ def _dbc_dl(k, miss):
         if r.json().get('value'):
             ok_.add(h)
     for h in miss[:20]:
-        _DB_OK[h] = h in ok_
+        out[h] = h in ok_
 
 
-def _dbc_oc(k, miss):
+def _dbc_oc(k, miss, out=None):
     """Offcloud /api/cache: marca qué magnets están ya en la caché común."""
+    out = _DB_OK if out is None else out
     r = _session('offcloud.com').post(
         f'https://offcloud.com/api/cache?key={k}',
         data=[('urls[]', f'magnet:?xt=urn:btih:{h}') for h in miss[:40]], timeout=8)
@@ -98,12 +137,13 @@ def _dbc_oc(k, miss):
                 mh = re.search(r'btih:([0-9a-fA-F]{40})', str(kk))
                 hits.add((mh.group(1) if mh else str(kk).rsplit(':')[-1]).lower())
     for h in miss[:40]:
-        _DB_OK[h] = h.lower() in hits
+        out[h] = h.lower() in hits
 
 
-def _dbc_pio(k, miss):
+def _dbc_pio(k, miss, out=None):
     """Put.io no tiene instant-check: marca lo que ya está en la lista de
     transfers recientes (source=magnet con btih) — eso sí resuelve al instante."""
+    out = _DB_OK if out is None else out
     r = _session('api.put.io').get('https://api.put.io/v2/transfers/list',
                                    headers={'Authorization': f'Bearer {k}'},
                                    params={'per_page': 100}, timeout=8)
@@ -113,7 +153,7 @@ def _dbc_pio(k, miss):
         if mh and t.get('status') in ('COMPLETED', 'SEEDING'):
             seen.add(mh.group(1).lower())
     for h in miss[:40]:
-        _DB_OK[h] = h.lower() in seen
+        out[h] = h.lower() in seen
 
 
 _DB_CHECK = {'real-debrid': _dbc_rd, 'torbox': _dbc_tb, 'alldebrid': _dbc_ad,
@@ -121,29 +161,54 @@ _DB_CHECK = {'real-debrid': _dbc_rd, 'torbox': _dbc_tb, 'alldebrid': _dbc_ad,
              'offcloud': _dbc_oc, 'putio': _dbc_pio}
 
 
-def _db_avail(hashes):
-    """Hashes cacheados en el debrid -> set (lote, cacheado en _DB_OK)."""
+def _db_avail_map(hashes):
+    """{hash: provider} — multi-debrid: cada provider se consulta en paralelo
+    (timeout propio; un provider lento no bloquea a los demás). El orden de
+    configuración decide quién se sirve cuando varios lo tienen cacheado.
+    _DB_OK[h] guarda el provider ganador (o False si ninguno lo tiene)."""
     if len(_DB_OK) > 5000:                                # infoHashes ilimitados:
         _DB_OK.clear()                                    # re-check es barato
-    p, k = _db_cfg()
+    cfgs = _db_cfgs()
     miss = [h for h in hashes if h not in _DB_OK]
-    fn = _DB_CHECK.get(p) if p else None
-    if fn and miss:
-        with suppress(requests.RequestException, TypeError, ValueError, KeyError):
-            fn(k, miss)
-    return {h for h in hashes if _DB_OK.get(h)}
+    if cfgs and miss:
+        results: dict = {}
+
+        def _one(p, k):
+            fn = _DB_CHECK.get(p)
+            scratch: dict = {}
+            if fn:
+                with suppress(requests.RequestException, TypeError, ValueError, KeyError):
+                    fn(k, miss, scratch)
+            results[p] = scratch
+
+        with ThreadPoolExecutor(max_workers=len(cfgs)) as ex:
+            list(ex.map(lambda c: _one(*c), cfgs))
+        for p, _ in cfgs:                                 # orden cfg = prioridad
+            for h in miss:
+                if (results.get(p) or {}).get(h):
+                    _DB_OK.setdefault(h, p)
+        for h in miss:
+            _DB_OK.setdefault(h, False)
+    first = cfgs[0][0] if cfgs else None
+    return {h: (_DB_OK[h] if isinstance(_DB_OK.get(h), str) else first)
+            for h in hashes if _DB_OK.get(h)}
+
+
+def _db_avail(hashes):
+    """Hashes cacheados en algún debrid configurado -> set."""
+    return set(_db_avail_map(hashes))
 
 
 def _debrid_mark(streams):
-    p, _ = _db_cfg()
-    if not p:
+    if not _db_cfgs():
         return
     hashes = [s.get('infoHash') for s in streams if s.get('infoHash')]
     if not hashes:
         return
-    ok = _db_avail(hashes)
+    ok = _db_avail_map(hashes)
     for i, s in enumerate(streams):
-        if s.get('infoHash') in ok:
+        p = ok.get(s.get('infoHash'))
+        if p:
             streams[i] = dict(s)                # copia: los dicts viven en _cache —
             _db_mark_one(p, streams[i])         # mutarlos envenena el caché con /r/
 
@@ -151,10 +216,12 @@ def _debrid_mark(streams):
 def _db_mark_one(p, s):
     """Stream cacheado -> rayo + url /r/ (o /dp/ con debrid_proxy: tunel de
     salida estilo StremThru — el cliente no toca el debrid, la IP visible es
-    la del servidor; coste: nuestro ancho de banda)."""
+    la del servidor; coste: nuestro ancho de banda). Multi-debrid: el tag
+    [XX] identifica qué provider lo sirve."""
     h = s['infoHash']
     s['cached'] = True
-    s['name'] = '⚡ ' + (s.get('name') or '')
+    tag = f'[{_DB_SHORT.get(p, str(p).upper()[:4])}] ' if len(_db_cfgs()) > 1 else ''
+    s['name'] = '⚡ ' + tag + (s.get('name') or '')
     route = 'dp' if CFG.get('debrid_proxy') else 'r'
     s['url'] = f'http://127.0.0.1:{PORT}/{route}/{p}/{h}?fi={s.get("fileIdx", 0)}'
     s.pop('infoHash', None)
@@ -312,8 +379,9 @@ _DB_RESOLVE = {'real-debrid': _db_rd, 'torbox': _db_tb, 'alldebrid': _db_ad,
 
 
 def _db_resolve(p, h, fi):
-    """Resuelve infoHash -> URL HTTP final del debrid (redirect 302)."""
-    _, k = _db_cfg()
+    """Resuelve infoHash -> URL HTTP final del debrid (redirect 302).
+    La key se busca POR provider (multi-debrid: /r/torbox/ usa la key de torbox)."""
+    k = _db_key(p)
     fn = _DB_RESOLVE.get(p)
     if not k or not fn:
         return None
@@ -327,10 +395,12 @@ def _db_resolve(p, h, fi):
         return None
 
 
-def _db_usenet(k, nzb_url):
+def _db_usenet(nzb_url):
     """TorBox usenet: createusenetdownload -> mylist -> requestusenetdownload.
-    Solo torbox sirve NZB (los demás providers no tienen usenet)."""
-    if CFG.get('debrid_provider') != 'torbox' or not k:
+    Solo torbox sirve NZB — la key se busca entre TODOS los providers
+    configurados (multi-debrid: torbox puede ser el segundo provider)."""
+    k = _db_key('torbox')
+    if not k:
         return None
     s = _session('api.torbox.app')
     h_ = {'Authorization': f'Bearer {k}'}

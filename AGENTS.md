@@ -100,7 +100,9 @@ Sub-paquetes por capa — cada uno solo depende "hacia abajo":
   · `_m3u_metas` (lists): re-parsea solo si cambia el contenido del .m3u
   · `?fi=` de /r/ se sanitiza a int en `_db_resolve` (malformado -> 0)
 - `conflux/web/`    `pages.py` (HTML /configure /admin /health) + `server.py`
-  (handler H + ROUTES + main())
+  (handler H + ROUTES + main()) + `torzapi.py` (indexer *arr: /torznab/api,
+  /newznab/api — auth por torzapi_key|admin_token) + `metrics.py` (/metrics
+  Prometheus)
 
 Imports internos absolutos (`from conflux.infra.net import fetch`).
 Get-Content conflux.log -Wait -Tail 40  # live; journalctl --user -u stremio-proxy en Linux
@@ -199,6 +201,40 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
 
 ## Decisiones vigentes
 
+- **Multi-debrid**: `debrid_providers {nombre: key}` se fusiona con el singular
+  `debrid_provider`/`debrid_key` en `_db_cfgs()`; `_db_key(p)` busca la key del
+  provider entre todos. `_db_mark_one(p, s)` marca ⚡ con el provider ganador;
+  las rutas `/r/<provider>/` y `/dp/<provider>/` llevan el nombre embebido —
+  provider desconocido en la ruta -> None/404. `_db_usenet(url)` resuelve
+  internamente `_db_key('torbox')` — la key de TorBox puede vivir en
+  `debrid_providers` sin ser el provider principal.
+- **Regex de stream**: `stream_exclude_regex`/`stream_required_regex` van por
+  regex compilada cacheada (`_ex_re`); un patrón inválido se descarta con
+  `log_ev('regex_bad')` — nunca rompe el collect. Son ADITIVAS a
+  `stream_exclude`/`stream_required` de términos.
+- **`source_groups {tipo: [fuentes]}`**: `cfg._eff_disabled_for(tipo)` — tipo
+  con grupo solo consulta esas fuentes; sin grupo usa `sources_disabled`
+  global; `[]` explícito apaga el tipo. La clave del collect lleva el grupo
+  efectivo (`tuple(sorted(...))`) — mismo sid+tipo con grupos distintos no
+  comparten caché. `meta.py` lo usa vía `_eff_disabled_for` igual que stream.
+- **Scrapers** (`infra/scrape.py`): YTS/EZTV/Nyaa sin addon upstream — son
+  futures extra del `_collect` (mismo pool; aparecen en contrib/health).
+  `scrapers` en cfg limita la lista; Nyaa necesita el meta cacheado (título
+  para la query) — sin él devuelve [] sin marcar fallo. `_scraper()` nunca
+  propaga excepciones al collect.
+- **NNTP nativo**: `nntp_host/user/pass` -> streams Stremio NNTP
+  (`nzbUrl`+`servers`+`fileMustInclude`) en newznab.py; sin ellos cae al
+  flujo TorBox `/nzb/`. `_nntp_server()` devuelve None sin host+user.
+- **Indexer *arr**: `/torznab/api` y `/newznab/api` -> `web/torzapi.py`
+  (`t=caps|search|movie|tvsearch`). Auth: `torzapi_key` > `admin_token` >
+  abierto si ambas vacías. Emite RSS newznab con `<enclosure magnet>` o
+  `/r/<provider>/` si cacheado.
+- **`/metrics`**: exposición Prometheus 0.0.4 del estado en memoria —
+  HEALTH/COOLDOWN/_SERVED/_rtime/_fails/cachés. Sin labels con secretos.
+- **Pool acotado**: `max_connections` (def 64) -> `threading.Semaphore` en la
+  clase Srv dentro de main(); `request_queue_size=64` backlog — bursts no
+  crean hilos ilimitados. Ojo en tests: parchear `srv.threading` exige
+  exponer `Semaphore` en el fake.
 - `catálogo.type='anime'` para catálogos movie/series con contenido anime
   (`_ANIME_CAT`); `_UTYPE[cid]` conserva el tipo real para la llamada upstream.
 - `_NO_CATALOG`: fuentes cuyos catálogos son clones (Stravo⊂StravoII) o están

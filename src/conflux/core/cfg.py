@@ -13,6 +13,7 @@ from conflux.core.state import (
     _DISABLED,
     _ROOT,
     CFG,
+    SOURCES,
     _atomic_json,
     _log,
     _open,
@@ -169,6 +170,23 @@ def _eff_disabled():
     pc = _pcfg()
     v = _strs(pc['sources_disabled']) if pc is not None and 'sources_disabled' in pc else None
     return set(v) if v is not None else _DISABLED
+
+def _groups_cfg():
+    """source_groups efectivo (perfil > global) -> {tipo: [fuentes]}."""
+    pc = _pcfg()
+    if pc is not None and 'source_groups' in pc and isinstance(pc['source_groups'], dict):
+        return pc['source_groups']
+    return CFG.get('source_groups') or {}
+
+def _eff_disabled_for(stype):
+    """sources_disabled efectivo + source_groups (Groups de AIOStreams):
+    si el tipo tiene grupo, SOLO sus fuentes responden a ese contenido."""
+    dis = set(_eff_disabled())
+    sel = _groups_cfg().get(stype)
+    if sel is not None:
+        keep = set(sel)
+        dis |= {s.name for s in SOURCES if s.name not in keep}
+    return dis
 
 def _strs(v):
     """Coerce a lista[str]; tipos raros (int, str plano) -> None -> fallback global."""

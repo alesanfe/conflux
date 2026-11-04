@@ -1,0 +1,21 @@
+name: Feature request
+description: Propuesta de funcionalidad
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Qué
+      description: Qué debería hacer conflux que hoy no hace
+    validations: {required: true}
+  - type: textarea
+    id: why
+    attributes:
+      label: Por qué
+      description: Qué problema resuelve / qué alternativa existente cubre (AIOStreams, MediaFusion, Comet, StremThru…)
+    validations: {required: true}
+  - type: textarea
+    id: how
+    attributes:
+      label: Cómo (opcional)
+      description: Config keys, endpoints, UX propuesta

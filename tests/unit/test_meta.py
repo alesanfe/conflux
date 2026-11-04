@@ -41,7 +41,7 @@ class TestHandleMeta(unittest.TestCase):
                     patch.object(M, '_ensure_collect') as ec:
                 M.handle_meta('movie', 'tt999')
                 ec.assert_called_once_with(
-                    ('movie', 'tt999', tuple(sorted(M._eff_disabled()))))
+                    ('movie', 'tt999', tuple(sorted(M._eff_disabled_for('movie')))))
         finally:
             restore()
 

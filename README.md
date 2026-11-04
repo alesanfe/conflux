@@ -112,6 +112,10 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   redirect `/r/<provider>/<hash>` → URL HTTP. `debrid_proxy: true` los sirve
   vía `/dp/` — túnel de salida estilo StremThru (el player no toca el debrid:
   la IP que ve es la del servidor — reenvía Range para seek).
+  **Multi-debrid**: `debrid_providers: {"torbox": "k1", "real-debrid": "k2"}`
+  consulta TODOS en paralelo y marca ⚡ con el provider que tenga el hash
+  (la ruta `/r/<provider>/` ya lo resuelve); `debrid_provider`/`debrid_key`
+  singular sigue funcionando.
 - **Trakt** — `TRAKT_CLIENT_ID`/`SECRET` en `.env` (par público incluido en
   `.env.example` — listo sin registrar app). `python scripts/trakt_auth.py`
   abre el login: cuenta trakt.tv gratuita → calendario personal y
@@ -121,14 +125,36 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   el proxy lo lanza al arrancar y cada 30 min (subproceso aislado — sin
   intervención).
 - **Torznab** — `torznab_url`+`torznab_key`: Prowlarr/Jackett local como fuente
-  extra de streams.
+  extra de streams. **Y al revés**: `/torznab/api` (+alias `/newznab/api`)
+  expone Conflux como indexer newznab para Sonarr/Radarr/Prowlarr —
+  `?t=caps|search|movie|tvsearch&apikey=<torzapi_key>` devuelve RSS con los
+  torrents agregados (magnet+trackers, o `/r/` debrid si está cacheado);
+  `torzapi_key` vacía = abierto, o cae a `admin_token`.
+- **Scrapers integrados** — `scrapers: ["yts","eztv","nyaa"]` (default todos):
+  indexers públicos SIN addon upstream — YTS movie_details por imdb, EZTV
+  get-torrents filtrado S/E, Nyaa RSS por título del meta. Cada uno es un
+  worker propio del collect (aparece en `/health` y `contrib` separado).
+- **Source groups** — `source_groups: {"anime": ["Kitsu","Nyaa"]}`: routing
+  condicional por tipo — ese tipo solo consulta las fuentes del grupo; los
+  tipos sin grupo usan todas (estilo groups de AIOStreams). `[]` explícito
+  apaga el tipo.
+- **Concurrencia** — keep-alive + pool acotado: `max_connections` (default 64)
+  limita hilos de request simultáneos; el resto espera en el backlog del
+  kernel — un burst no crea hilos ilimitados. (Hilos con semáforo, no async.)
+- **Observabilidad** — `/metrics`: exposición Prometheus —
+  `conflux_source_requests_total`, `conflux_route_latency_ms`,
+  `conflux_cache_entries`, `conflux_sources_total` — listo para
+  `scrape_configs` de Grafana/Prometheus.
 - **Zilean** — `zilean_url` (self-hosted, docker `ipromknight/zilean`+postgres):
   hashlists DebridMediaManager = torrents **ya cacheados en debrid**; se sirven
   como streams ⚡ sin coste por consulta — más instant-playables gratis.
 - **Usenet / Newznab** — `newznab_url`+`newznab_key` (NZBHydra2, Easynews vía
   hydra): items NZB servidos vía `/nzb/` → TorBox usenet
   (`createusenetdownload`→`mylist`→`requestusenetdownload`). Requiere
-  `debrid_provider=torbox` — es el único provider integrado que sirve usenet.
+  TorBox entre los providers configurados (multi-debrid incluido).
+  Con `nntp_host`/`nntp_port`/`nntp_user`/`nntp_pass`/`nntp_ssl`/`nntp_connections`
+  los items salen como **streams NNTP nativos** (`nzbUrl`+`servers`+
+  `fileMustInclude` — los reproduce Stremio Desktop v5/Android TV, sin debrid).
   Stack self-hosted listo: `docker compose -f docker-compose.usenet.yml up -d`
   (Zilean:8181 + NZBHydra2:5076).
 - **Easynews directo** — `easynews_user`/`easynews_pass`: búsqueda por título
@@ -163,7 +189,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
 - **Filtros de stream** — `stream_exclude` (términos csv: `cam,camrip,hdts,ts,screener…`; ≤3 chars con borde de palabra, ≥4 substring)
   saca releases malos de la lista; `stream_required` es su complemento
   required (solo pasa lo que contiene algún término: `es,latino,remux`),
-  estilo AIOStreams. `stream_max_gb` descarta
+  estilo AIOStreams. **Regex**: `stream_exclude_regex`/`stream_required_regex`
+  aceptan patrones completos (`(?i)\b(cam|ts)\b`, `\d{3,4}p.*ita`) — un patrón
+  inválido se salta y queda logueado, no tumba el pipeline. `stream_max_gb` descarta
   por tamaño (un 4K de 80GB no siempre gana); `stream_prefetch: false`
   desactiva la precarga al abrir fichas. `rpdb_key` sirve
   posters con rating (ratingposterdb.com, gratis) estilo MediaFusion.

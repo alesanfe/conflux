@@ -1,5 +1,6 @@
 # pylint: disable=missing-docstring,protected-access,import-outside-toplevel,multiple-statements,unused-argument,invalid-name,redefined-outer-name,expression-not-assigned,too-many-public-methods,duplicate-code,non-ascii-name,wrong-import-position
 """Unit tests conflux.web.server — handler + ROUTES."""
+import threading
 import unittest
 from unittest.mock import MagicMock
 
@@ -47,6 +48,14 @@ class TestRoutes(unittest.TestCase):
         rx, _ = srv.ROUTES[4]
         m = rx.match('/meta/series/tt0944947.json')
         self.assertIsNotNone(m)
+
+    def test_cfg_url_nntp_numerico(self):
+        """BUG: nntp_port/connections eran solo str — int en cfg-URL rechazado."""
+        self.assertTrue(srv.H._cfg_url_ok('nntp_port', 563))
+        self.assertTrue(srv.H._cfg_url_ok('nntp_connections', 20))
+        self.assertFalse(srv.H._cfg_url_ok('nntp_port', 'abc'))
+        self.assertFalse(srv.H._cfg_url_ok('nntp_port', 70000))
+        self.assertFalse(srv.H._cfg_url_ok('nntp_connections', 0))
 
 
 class TestRedir(unittest.TestCase):
@@ -334,7 +343,7 @@ class TestRedirectsEspeciales(unittest.TestCase):
             h = self._h('/nzb/' + link)
             with um.patch.object(srv, '_db_usenet', return_value='https://tb/redir') as du:
                 h.do_GET()
-            du.assert_called_once_with('k', 'https://nzb.example/get/1')
+            du.assert_called_once_with('https://nzb.example/get/1')
             h._redir.assert_called_with('https://tb/redir')
         finally:
             undo()
@@ -596,6 +605,7 @@ class TestMain(unittest.TestCase):
         return type('T', (), {
             'Thread': staticmethod(
                 lambda target=None, daemon=None: rec.append(target) or MagicMock()),
+            'Semaphore': threading.Semaphore,
             'current_thread': staticmethod(lambda: 'm'),
             'main_thread': staticmethod(lambda: 'm')}), rec
 
@@ -668,3 +678,57 @@ class TestMain(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 handlers[_sig.SIGTERM]()          # dentro del with: aj aún mockeado
         aj.assert_called_once()
+
+
+class TestWiringNuevasRutas(unittest.TestCase):
+    """do_GET -> /metrics, /torznab/api, /newznab/api (wiring, no lógica)."""
+
+    def _h(self, path):
+        h = srv.H.__new__(srv.H)
+        h.path = path
+        h.send_response = MagicMock()
+        h.send_header = MagicMock()
+        h.end_headers = MagicMock()
+        h.wfile = unittest.mock.MagicMock()
+        h.headers = {}
+        return h
+
+    def test_metrics_route(self):
+        h = self._h('/metrics')
+        h.do_GET()
+        h.send_response.assert_called_with(200)
+        body = h.wfile.write.call_args[0][0]
+        self.assertIn(b'conflux_source_requests_total', body)
+        ct = [c[0] for c in h.send_header.call_args_list
+              if c[0][0] == 'Content-Type'][0]
+        self.assertIn('text/plain', ct[1])
+
+    def test_torznab_route_caps(self):
+        _, undo = cfg_swap(torzapi_key='', admin_token='')
+        try:
+            h = self._h('/torznab/api?t=caps')
+            h.do_GET()
+        finally:
+            undo()
+        h.send_response.assert_called_with(200)
+        body = h.wfile.write.call_args[0][0]
+        self.assertIn(b'<caps>', body)
+
+    def test_newznab_route_alias(self):
+        _, undo = cfg_swap(torzapi_key='', admin_token='')
+        try:
+            h = self._h('/newznab/api?t=caps')
+            h.do_GET()
+        finally:
+            undo()
+        h.send_response.assert_called_with(200)
+        self.assertIn(b'<caps>', h.wfile.write.call_args[0][0])
+
+    def test_torznab_401_sin_key(self):
+        _, undo = cfg_swap(torzapi_key='k9', admin_token='')
+        try:
+            h = self._h('/torznab/api?t=caps&apikey=malo')
+            h.do_GET()
+        finally:
+            undo()
+        h.send_response.assert_called_with(401)

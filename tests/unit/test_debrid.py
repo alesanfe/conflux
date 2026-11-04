@@ -296,10 +296,101 @@ class TestDbResolvers(_DbBase):
 class TestResolveFi(unittest.TestCase):
     """?fi= del query: malformado -> 0 (no crash ni fallo del resolve)."""
 
-    @patch('conflux.infra.debrid._db_cfg', return_value=('real-debrid', 'k'))
+    @patch('conflux.infra.debrid._db_key', return_value='k')
     def test_fi_malformado_cae_a_cero(self, _):
         m = unittest.mock.Mock(return_value='http://dl/x')
         # _DB_RESOLVE guarda referencia directa: hay que parchear el dict
         with unittest.mock.patch.dict(db._DB_RESOLVE, {'real-debrid': m}):
             self.assertEqual(db._db_resolve('real-debrid', 'h', 'abc'), 'http://dl/x')
         self.assertEqual(m.call_args[0][2], 0)
+
+
+class TestMultiDebrid(unittest.TestCase):
+    """_db_cfgs/_db_key/_db_avail_map — N providers simultáneos."""
+    H1, H2 = 'e' * 40, 'f' * 40
+
+    def setUp(self):
+        self._old = dict(st.CFG)
+        db._DB_OK.clear()
+
+    def tearDown(self):
+        st.CFG.clear(); st.CFG.update(self._old)
+        db._DB_OK.clear()
+
+    def test_cfgs_legacy_primero_despues_dict(self):
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='k1',
+                      debrid_providers={'torbox': 'k2', 'alldebrid': 'k3'})
+        self.assertEqual(db._db_cfgs(),
+                         [('real-debrid', 'k1'), ('torbox', 'k2'), ('alldebrid', 'k3')])
+
+    def test_cfgs_dedup_y_desconocido(self):
+        st.CFG.update(debrid_provider='torbox', debrid_key='k1',
+                      debrid_providers={'torbox': 'otra', 'nope': 'k', '': 'x'})
+        cfgs = db._db_cfgs()
+        self.assertEqual(len(cfgs), 1)                    # torbox dedup; nope/'' fuera
+        self.assertEqual(cfgs[0], ('torbox', 'k1'))
+
+    def test_db_key_por_provider(self):
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='k1',
+                      debrid_providers={'torbox': 'k2'})
+        self.assertEqual(db._db_key('torbox'), 'k2')
+        self.assertEqual(db._db_key('real-debrid'), 'k1')
+        self.assertIsNone(db._db_key('premiumize'))
+
+    def test_resolve_usa_key_del_provider(self):
+        """Bug latente: /r/torbox/ resolvía con la key del provider principal."""
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='kRD',
+                      debrid_providers={'torbox': 'kTB'})
+        m = unittest.mock.Mock(return_value='http://dl/x')
+        with unittest.mock.patch.dict(db._DB_RESOLVE, {'torbox': m}):
+            db._db_resolve('torbox', self.H1, 0)
+        self.assertEqual(m.call_args[0][0], 'kTB')      # key de torbox, no de RD
+
+    def test_avail_map_prioridad_config(self):
+        """Los dos lo tienen -> gana el primero configurado (orden cfg)."""
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='k',
+                      debrid_providers={'torbox': 'k2'})
+
+        def hit_all(k, miss, out):
+            for h in miss:
+                out[h] = True
+        with unittest.mock.patch.dict(db._DB_CHECK,
+                                      {'real-debrid': hit_all, 'torbox': hit_all}):
+            got = db._db_avail_map([self.H1])
+        self.assertEqual(got[self.H1], 'real-debrid')   # primero en cfg gana
+        self.assertEqual(db._DB_OK[self.H1], 'real-debrid')
+
+    def test_avail_map_segundo_si_primero_no(self):
+        """Solo lo tiene torbox -> provider torbox en el mapa."""
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='k',
+                      debrid_providers={'torbox': 'k2'})
+
+        def rd_miss(k, miss, out):
+            for h in miss:
+                out[h] = False
+
+        def tb_hit(k, miss, out):
+            for h in miss:
+                out[h] = True
+        with unittest.mock.patch.dict(db._DB_CHECK,
+                                      {'real-debrid': rd_miss, 'torbox': tb_hit}):
+            got = db._db_avail_map([self.H1, self.H2])
+        self.assertEqual(got[self.H1], 'torbox')
+        self.assertEqual(db._db_avail([self.H1]), {self.H1})
+
+    def test_marca_con_tag_multi(self):
+        """Multi-provider: el nombre lleva el tag [XX] del que lo sirve."""
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='k',
+                      debrid_providers={'torbox': 'k2'})
+        s = {'infoHash': self.H1, 'name': 'n', 'fileIdx': 0}
+        db._db_mark_one('torbox', s)
+        self.assertTrue(s['name'].startswith('⚡ [TB]'))
+
+    def test_marca_sin_tag_mono(self):
+        """Un solo provider: formato clásico sin tag (compat)."""
+        st.CFG.update(debrid_provider='torbox', debrid_key='k',
+                      debrid_providers={})
+        s = {'infoHash': self.H1, 'name': 'n', 'fileIdx': 0}
+        db._db_mark_one('torbox', s)
+        self.assertTrue(s['name'].startswith('⚡ '))
+        self.assertNotIn('[', s['name'])

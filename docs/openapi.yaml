@@ -99,6 +99,32 @@ paths:
       parameters:
         - {name: b64, in: path, required: true, schema: {type: string}}
       responses: {'302': {description: Location=URL}, '404': {description: sin torbox/fallo}}
+  /torznab/api:
+    get:
+      summary: 'Indexer Torznab para Sonarr/Radarr/Prowlarr — busca en las fuentes agregadas'
+      parameters:
+        - {name: t, in: query, required: true, schema: {type: string, enum: [caps, search, movie, tvsearch]}}
+        - {name: apikey, in: query, schema: {type: string, description: 'config.torzapi_key (o admin_token si vacía)'}}
+        - {name: q, in: query, schema: {type: string}}
+        - {name: imdbid, in: query, schema: {type: string}}
+        - {name: season, in: query, schema: {type: integer}}
+        - {name: ep, in: query, schema: {type: integer}}
+      responses:
+        '200': {description: RSS/XML newznab con items torrent (magnet o /r/ debrid o /nzb/)}
+        '401': {description: apikey inválida}
+  /newznab/api:
+    get:
+      summary: Alias de /torznab/api (mismo contrato; Prowlarr lo exige como newznab)
+      parameters:
+        - {name: t, in: query, required: true, schema: {type: string, enum: [caps, search, movie, tvsearch]}}
+        - {name: apikey, in: query, schema: {type: string}}
+      responses:
+        '200': {description: RSS/XML newznab}
+        '401': {description: apikey inválida}
+  /metrics:
+    get:
+      summary: Métricas Prometheus (requests por fuente, latencias de ruta, cachés)
+      responses: {'200': {description: text/plain version=0.0.4}}
   /health:
     get:
       summary: Salud por fuente + fails por host + latencias p50/p95/p99 + streams servidos
