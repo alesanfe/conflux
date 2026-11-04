@@ -81,6 +81,41 @@ class TestZilean(unittest.TestCase):
         finally:
             undo()
 
+    def test_url_vacia_ni_intenta(self):
+        """zilean_url='' -> [] sin llamar a _session (mutante Or@51: el
+        except de red lo enmascaraba — hay que verificar que NO se pide)."""
+        s, _ = fake_session({'json': [{'infoHash': 'a' * 40, 'filename': 'x'}]})
+        _, undo = cfg_swap(zilean_url='')
+        try:
+            with patch.object(z, '_session', return_value=s) as m:
+                self.assertEqual(z._zilean('movie', 'tt0137523'), [])
+            m.assert_not_called()
+        finally:
+            undo()
+
+    def test_session_con_hostname(self):
+        """_session se clavea por el host real de la url (mutante Or@58:
+        `hostname or 'zilean'` -> and claveaba siempre 'zilean')."""
+        s, _ = fake_session({'json': []})
+        _, undo = cfg_swap(zilean_url='http://z.lan:8181')
+        try:
+            with patch.object(z, '_session', return_value=s) as m:
+                z._zilean('movie', 'tt0137523')
+            m.assert_called_once_with('z.lan')
+        finally:
+            undo()
+
+    def test_cap_40(self):
+        items = [{'infoHash': '%040x' % i, 'filename': 'f%d' % i}
+                 for i in range(41)]                  # 41 -> cap
+        s, _ = fake_session({'json': items})
+        _, undo = cfg_swap(zilean_url='http://z.lan')
+        try:
+            with patch.object(z, '_session', return_value=s):
+                self.assertEqual(len(z._zilean('movie', 'tt0137523')), 40)
+        finally:
+            undo()
+
 
 if __name__ == '__main__':
     unittest.main()

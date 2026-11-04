@@ -274,6 +274,58 @@ class TestOsLogin(unittest.TestCase):
         finally:
             undo()
 
+    def _tok_con_edad(self, age_s):
+        import time
+        sub._OS_TOK.update(token='OLD', ts=time.time() - age_s)
+
+    def test_ttl_fresco_usa_cache(self):
+        """edad 100s < 23*3600 -> cache, sin relogin (mutante Mult@73: 23/3600)."""
+        self._tok_con_edad(100)
+        _, undo = cfg_swap(**self.CREDS)
+        try:
+            with patch.object(sub, '_os_login_now', return_value='NEW') as ln:
+                self.assertEqual(sub._os_login(), 'OLD')
+            ln.assert_not_called()
+        finally:
+            undo()
+
+    def test_ttl_exacto_23h_relogea(self):
+        """edad == 23*3600 exacto -> caducado: < no <= (mutante Lt@73).
+        freezegun: sin drift entre _OS_TOK['ts'] y el time.time() interno."""
+        import time
+        from freezegun import freeze_time
+        with freeze_time('2025-01-01 12:00:00'):
+            sub._OS_TOK.update(token='OLD', ts=time.time() - 23 * 3600)
+            _, undo = cfg_swap(**self.CREDS)
+            try:
+                with patch.object(sub, '_os_login_now', return_value='NEW') as ln:
+                    self.assertEqual(sub._os_login(), 'NEW')
+                ln.assert_called_once()
+            finally:
+                undo()
+
+    def test_ttl_23h_mas_segundo_relogea(self):
+        """edad 23h+1s -> caducado: TTL es 23h no 24h (mutante 23+1@73)."""
+        self._tok_con_edad(23 * 3600 + 1)
+        _, undo = cfg_swap(**self.CREDS)
+        try:
+            with patch.object(sub, '_os_login_now', return_value='NEW') as ln:
+                self.assertEqual(sub._os_login(), 'NEW')
+            ln.assert_called_once()
+        finally:
+            undo()
+
+    def test_ttl_23h_mas_10s_relogea(self):
+        """edad 23h+10s -> caducado: hora son 3600s no 3601 (mutante 3600+1@73)."""
+        self._tok_con_edad(23 * 3600 + 10)
+        _, undo = cfg_swap(**self.CREDS)
+        try:
+            with patch.object(sub, '_os_login_now', return_value='NEW') as ln:
+                self.assertEqual(sub._os_login(), 'NEW')
+            ln.assert_called_once()
+        finally:
+            undo()
+
 
 class TestSubDownloadBearer(unittest.TestCase):
     def tearDown(self):

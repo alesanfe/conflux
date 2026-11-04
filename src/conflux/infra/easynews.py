@@ -79,8 +79,8 @@ def _en_search(user, pw, q):
                       's1': 'relevance', 's1d': '-', 'fty[]': 'VIDEO'},
               auth=(user, pw), timeout=10)
     d = r.json()
-    base_url = '/'.join(str(d.get(k, '')).strip('/') for k in
-                        ('downURL', 'dlFarm', 'dlPort')) \
+    base_url = '/'.join(p for p in (str(d.get(k, '')).strip('/') for k in
+                                    ('downURL', 'dlFarm', 'dlPort')) if p) \
         or 'https://members.easynews.com/dl'
     out = [x for x in (_en_item(it, base_url) for it in d.get('data', [])) if x]
     _health('Easynews', True, '', len(out))

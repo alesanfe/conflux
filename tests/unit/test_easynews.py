@@ -44,6 +44,13 @@ class TestEnItem(unittest.TestCase):
         self.assertEqual(s['behaviorHints']['videoSize'], 1500000)
         link = base64.urlsafe_b64decode(s['url'].rsplit('/', 1)[-1] + '==').decode()
         self.assertIn('f.mkv', link)
+        self.assertIn('h1', link)                    # hash real, no 'None' (Or@39)
+        self.assertIn('h1.mkv', link)                # ext aplicada (Or@40)
+
+    def test_array_legacy_hash_en_link(self):
+        s = en._en_item({'0': 'h9', '10': 'leg.mkv', '11': '.mkv'}, self.B)
+        link = base64.urlsafe_b64decode(s['url'].rsplit('/', 1)[-1] + '==').decode()
+        self.assertIn('h9.mkv/leg.mkv.mkv', link)    # claves numéricas reales
 
     def test_array_legacy_ok(self):
         s = en._en_item({'0': 'h9', '10': 'leg.mkv', '11': '.mkv', '4': '200'}, self.B)
@@ -125,6 +132,7 @@ class TestEasynews(unittest.TestCase):
             undo()
         self.assertEqual(len(out), 1)
         self.assertIn('/en/', out[0]['url'])
+        self.assertGreaterEqual(st.HEALTH['Easynews']['ok'], 1)   # mutante True@86
 
     def test_error_red_vacio(self):
         _meta()
@@ -133,6 +141,52 @@ class TestEasynews(unittest.TestCase):
         try:
             with patch.object(en, '_session', return_value=s):
                 self.assertEqual(en._easynews('series', 'tt0944947'), [])
+        finally:
+            undo()
+        self.assertGreaterEqual(st.HEALTH['Easynews']['fail'], 1)  # mutante False@68
+
+    def test_user_vacio_no_busca(self):
+        """user='' (pw sí) -> [] sin pedir: el guarda corta por user (Or@58)."""
+        _meta()
+        s, _ = fake_session({'json': {'downURL': 'https://f', 'dlFarm': 'a',
+                                      'dlPort': 'b', 'data': [
+                                          {'hash': 'h1', 'filename': 'x.mkv'}]}})
+        _, undo = cfg_swap(easynews_user='', easynews_pass='p')
+        try:
+            with patch.object(en, '_session', return_value=s) as m:
+                self.assertEqual(en._easynews('series', 'tt0944947'), [])
+            m.assert_not_called()
+        finally:
+            undo()
+
+    def test_base_url_fallback_sin_downurl(self):
+        """Sin downURL/dlFarm/dlPort -> base por defecto dl oficial.
+        BUG: '/'.join de tres '' da '//' (truthy) -> el `or fallback` era
+        código muerto y el link quedaba '//hash/file' (scheme-relative roto)."""
+        _meta()
+        s, _ = fake_session({'json': {'data': [{'hash': 'h1',
+                                                'filename': 'x.mkv'}]}})
+        _, undo = cfg_swap(easynews_user='u', easynews_pass='p')
+        try:
+            with patch.object(en, '_session', return_value=s):
+                out = en._easynews('series', 'tt0944947')
+        finally:
+            undo()
+        link = base64.urlsafe_b64decode(
+            out[0]['url'].rsplit('/', 1)[-1] + '==').decode()
+        self.assertTrue(link.startswith('https://members.easynews.com/dl/'),
+                        link)
+
+    def test_cap_40(self):
+        _meta()
+        s, _ = fake_session({'json': {'downURL': 'https://f', 'dlFarm': 'a',
+                                      'dlPort': 'b', 'data': [
+                                          {'hash': 'h%d' % i, 'filename': 'x%d' % i}
+                                          for i in range(41)]}})
+        _, undo = cfg_swap(easynews_user='u', easynews_pass='p')
+        try:
+            with patch.object(en, '_session', return_value=s):
+                self.assertEqual(len(en._easynews('series', 'tt0944947')), 40)
         finally:
             undo()
 
