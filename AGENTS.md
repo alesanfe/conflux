@@ -9,6 +9,7 @@ en Linux iba como systemd user `stremio-proxy`).
 ```bash
 python3 -m unittest discover -s tests -t .  # 351+ tests: unit+integration+security+contract+property+resilience+regression+performance+e2e
 python3 -m unittest discover -s tests/unit -t .       # solo unit (~1s)
+python3 scripts/test_times.py [N] [dir] [--all]      # timer por test + ranking de los N mas lentos
 scripts/check.sh                            # linters + suite + smoke endpoints + fuentes
 python3 -m mypy                             # type-check (config en pyproject)
 # CI: .github/workflows/ci.yml — lint + suites herméticas + coverage>=80
