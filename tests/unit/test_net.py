@@ -48,6 +48,30 @@ class TestFetch(unittest.TestCase):
             self.assertIsNone(net.fetch('http://x.com/'))
             self.assertEqual(m.return_value.get.call_count, 2)
 
+    def test_get_stream_y_read_cap(self):
+        """get lleva stream=True y raw.read se limita a 6_000_001 bytes."""
+        r = self._resp(b'{"a":1}')
+        with patch.object(net, '_session') as m:
+            m.return_value.get.return_value = r
+            net.fetch('http://x.com/')
+        self.assertTrue(m.return_value.get.call_args[1].get('stream'))  # True@68
+        r.raw.read.assert_called_once_with(6_000_001, decode_content=True)
+
+    def test_body_6mb_exacto_parsea(self):
+        """len == 6_000_000 -> SÍ parsea: la cota es >6M no >= (Gt@71)."""
+        body = b'{"a":"' + b'x' * (6_000_000 - 8) + b'"}'
+        with patch.object(net, '_session') as m:
+            m.return_value.get.return_value = self._resp(body)
+            self.assertEqual(net.fetch('http://x.com/'),
+                             {'a': 'x' * (6_000_000 - 8)})
+
+    def test_body_6mb_mas_1_descarta(self):
+        """len == 6_000_001 -> descarta aunque sea JSON válido (6000000+1@71)."""
+        body = b'{"a":"' + b'x' * (6_000_001 - 8) + b'"}'
+        with patch.object(net, '_session') as m:
+            m.return_value.get.return_value = self._resp(body)
+            self.assertIsNone(net.fetch('http://x.com/'))
+
 
 if __name__ == '__main__':
     unittest.main()
@@ -113,6 +137,62 @@ class TestDisyuntorHost(unittest.TestCase):
             net.fetch('http://h.host/x', 1)
         self.assertNotIn('h.host', net._fails)
 
+    def test_disyuntor_borde_exacto_host_cd(self):
+        """edad == HOST_CD -> rearma: la guarda es < no <= (Lt@64, freezegun)."""
+        import requests
+        from freezegun import freeze_time
+        with freeze_time('2025-01-01 12:00:00'):
+            net._fails['dead.host'] = (4, time.time() - net.HOST_CD)
+            s, calls = fake_session(requests.ConnectionError('x'))
+            with patch.object(net, '_session', return_value=s), \
+                    patch.object(net.time, 'sleep'):
+                net.fetch('http://dead.host/x', 1)
+            self.assertTrue(calls, 'edad == HOST_CD debe reintentar')
+
+    def test_strike_purga_solo_caducados(self):
+        """>HOST_CD se purga; edad == HOST_CD NO (Gt@34, freezegun)."""
+        from freezegun import freeze_time
+        with freeze_time('2025-01-01 12:00:00'):
+            now = time.time()
+            net._fails.clear()
+            for i in range(199):                    # +borde+strike = 201: poda si >200
+                net._fails[f'h{i}'] = (1, now - net.HOST_CD - 1)
+            net._fails['borde'] = (1, now - net.HOST_CD)   # justo en el límite
+            net._strike('nuevo')
+        self.assertIn('borde', net._fails)
+        self.assertNotIn('h0', net._fails)
+
+    def test_strike_no_poda_bajo_umbral(self):
+        """len queda en 201 -> poda; bajo el umbral la entrada sobrevive (Gt@32)."""
+        from freezegun import freeze_time
+        with freeze_time('2025-01-01 12:00:00'):
+            net._fails.clear()
+            for i in range(199):
+                net._fails[f'h{i}'] = (1, time.time() - net.HOST_CD - 1)
+            net._strike('nuevo')                     # len = 200, no >200
+            self.assertIn('h0', net._fails, 'poda no debe dispararse a len 200')
+
+    def test_no_sleep_tras_ultimo_intento(self):
+        """El backoff va ENTRE intentos, no después del último (not-elim@79)."""
+        parent = MagicMock()
+        with patch.object(net, '_session') as m, \
+                patch.object(net.time, 'sleep') as sl:
+            m.return_value.get.side_effect = Exception('down')
+            parent.attach_mock(m.return_value.get, 'get')
+            parent.attach_mock(sl, 'sleep')
+            net.fetch('http://x.com/')
+        seq = [c[0] for c in parent.mock_calls]
+        self.assertEqual(seq, ['get', 'sleep', 'get'])
+
+    def test_session_cap_64(self):
+        """len(_SESS)>=64 -> se vacía el pool antes de crear otra (64+1/GtE@19)."""
+        for i in range(64):
+            net._SESS[f'old{i}'] = MagicMock()
+        s = net._session('new.host')
+        self.assertIs(net._SESS['new.host'], s)
+        self.assertNotIn('old0', net._SESS, 'a 64 sesiones el pool se reinicia')
+        self.assertEqual(len(net._SESS), 1)
+
 
 class TestPublicUrl(unittest.TestCase):
     """_public_url: guard SSRF de URLs configurables (epg_url, M3U_URL)."""
@@ -156,6 +236,20 @@ class TestPublicUrl(unittest.TestCase):
 
     def test_sin_host(self):
         self.assertFalse(self._pu('http:///path'))
+
+    def test_puerto_https_443_http_80(self):
+        """getaddrinfo recibe el puerto por defecto del esquema (Eq/443/80@47)."""
+        for url, port in (('https://x/e', 443), ('http://x/e', 80),
+                          ('http://x:8080/e', 8080)):
+            with patch.object(net.socket, 'getaddrinfo',
+                              return_value=self._gai(('93.184.216.34',))) as g:
+                net._public_url(url)
+            self.assertEqual(g.call_args[0][1], port, url)
+
+    def test_dns_sin_respuestas_false(self):
+        """getaddrinfo -> [] (host existe pero sin registros) -> False (False@50)."""
+        with patch.object(net.socket, 'getaddrinfo', return_value=[]):
+            self.assertFalse(net._public_url('http://x/'))
 
 
 class TestEpgSsrf(unittest.TestCase):

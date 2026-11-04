@@ -57,6 +57,19 @@ class TestTraktSync(unittest.TestCase):
         r.assert_called_once()
         le.assert_called_once_with('trakt_sync', rc=0, out='ok')
 
+    def test_rc_no_cero_se_loguea_no_excepciona(self):
+        """check=False: rc!=0 NO lanza — el scrobble fallido queda como dato
+        (mutante check=True lo convertiría en trakt_sync_err)."""
+        bg.CFG['trakt_access_token'] = 'tok'
+        with patch.object(bg.os.path, 'exists', return_value=True), \
+                patch.object(bg.subprocess, 'run',
+                             return_value=MagicMock(returncode=3, stdout='',
+                                                    stderr='locked')) as r, \
+                patch.object(bg, 'log_ev') as le:
+            bg._trakt_sync()
+        self.assertEqual(r.call_args[1].get('check'), False)
+        le.assert_called_once_with('trakt_sync', rc=3, out='locked')
+
     def test_excepcion_no_muere_daemon(self):
         bg.CFG['trakt_access_token'] = 'tok'
         with patch.object(bg.os.path, 'exists', return_value=True), \
