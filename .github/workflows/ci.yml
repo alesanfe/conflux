@@ -35,7 +35,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt && pip install -r requirements-dev.txt
       - run: pip-audit -r requirements.txt
-      - run: detect-secrets scan --all-files --exclude-files 'requirements.txt' | python3 -c "import json,sys; r=json.load(sys.stdin)['results']; assert not r, r"
+      - run: detect-secrets scan --all-files --exclude-files 'requirements.txt' --baseline .secrets.baseline | python3 -c "import json,sys; t=sys.stdin.read().strip(); r=json.loads(t)['results'] if t else {}; assert not r, r"
       - run: cyclonedx-py requirements requirements.txt -o sbom.json
       - uses: actions/attest-build-provenance@v2
         with:

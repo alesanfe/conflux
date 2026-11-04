@@ -75,7 +75,9 @@ class TestAtomicJson(unittest.TestCase):
 
     def test_escribe_y_reemplaza(self):
         import conflux.core.state as st
-        path = '/tmp/atomic-test.json'
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix='.json')
+        os.close(fd)
         import json
         st._atomic_json(path, {'a': 1})
         with open(path, encoding='utf-8') as fh:

@@ -9,6 +9,7 @@ acotan el overhead del proxy, no la red upstream.
 import concurrent.futures as cf
 import json
 import os
+import tempfile
 import threading
 import time
 import unittest
@@ -69,7 +70,8 @@ class PerfE2E(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls._tmp_cfg = '/tmp/perf-e2e-config.json'
+        cls._fd, cls._tmp_cfg = tempfile.mkstemp(suffix='.json')
+        os.close(cls._fd)
         cfg._CFG_FILE = cls._tmp_cfg
         if os.path.exists(cls._tmp_cfg):
             os.unlink(cls._tmp_cfg)

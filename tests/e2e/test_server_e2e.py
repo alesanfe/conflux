@@ -2,6 +2,7 @@
 """E2E: servidor HTTP real en hilo daemon — cubre TODAS las funcionalidades."""
 import json
 import os
+import tempfile
 import shutil
 import threading
 import time
@@ -106,7 +107,8 @@ class ServerE2E(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # POST /configure no toca el config.json real: fichero temporal
-        cls._tmp_cfg = '/tmp/e2e-config.json'
+        cls._fd, cls._tmp_cfg = tempfile.mkstemp(suffix='.json')
+        os.close(cls._fd)
         cfg._CFG_FILE = cls._tmp_cfg
         if os.path.exists(cls._tmp_cfg):
             os.unlink(cls._tmp_cfg)
