@@ -117,6 +117,12 @@ playback en línea — igual que el botón equivalente de MediaFusion. Cada vía
 configurada suma un stream del mismo item (TorBox `/nzb/` + NNTP nativo +
 SABnzbd pueden convivir).
 
+**NzbDAV**: expone una API compatible con SABnzbd (`mode=addurl`) —
+`sabnzbd_url: "http://nzbdav:3000"` + su apikey monta el NZB al instante en
+su filesystem virtual WebDAV. El playback directo vía WebDAV (PROPFIND +
+ruta montada) no está implementado: exige una instancia real para
+verificarlo; el "enviar a NzbDAV" sí funciona hoy por la vía de arriba.
+
 ## Source groups — `source_groups`
 
 ```json

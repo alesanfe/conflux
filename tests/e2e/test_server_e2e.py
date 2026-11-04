@@ -104,6 +104,18 @@ class ServerE2E(unittest.TestCase):
     """Boot real. CONFLUX_E2E_LIVE=1 -> upstreams vivos; si no, replay VCR
     del fixture (determinista, sin red) — mismo servidor HTTP y mismos tests."""
 
+    def setUp(self):
+        """Aísla el estado de fallos compartido entre tests: collects con
+        sids basura (fuzzing schemathesis, prefetch meta, id_raro) marcan
+        fuentes en COOLDOWN 15min y un collect vacío queda en _cache —
+        sin limpieza, los tests posteriores heredan fuentes 'en espera'
+        y ven 0 streams (fallo intermitente orden-dependiente)."""
+        import conflux.app.stream as sm
+        sm.COOLDOWN.clear()
+        st.HEALTH.clear()
+        sm._cache.clear()
+        sm._URL_BAD.clear()
+
     @classmethod
     def setUpClass(cls):
         # POST /configure no toca el config.json real: fichero temporal
@@ -189,6 +201,24 @@ class ServerE2E(unittest.TestCase):
         self.assertIn(b'<', b)
 
     # ---- stream ----
+    def test_stream_0_veneno_cooldown(self):
+        """Regresión E2E-1 (intermitente): tests con sids basura (fuzzing,
+        prefetch meta, id_raro) ponen cada fuente en COOLDOWN 15min tras
+        FAIL_STREAK — los tests posteriores veían 0 streams. El setUp debe
+        limpiar el estado compartido para que esto no se herede."""
+        import conflux.app.stream as sm
+        for name, _base in sm.SOURCES:
+            sm.COOLDOWN[name] = (time.time() + 900, 'veneno-test')
+        self.assertTrue(sm.COOLDOWN)          # queda envenenado al acabar
+
+    def test_stream_cooldown_no_contamina(self):
+        """Tras el veneno del test anterior, setUp limpió COOLDOWN/HEALTH —
+        las fuentes deben volver a responder (no 'en espera')."""
+        code, d = _get(self.port, '/stream/movie/tt0137523.json')
+        self.assertEqual(code, 200)
+        self.assertGreater(len(d['streams']), 50,
+                           'fuentes en cooldown heredado -> 0 streams')
+
     def test_stream_movie_tt(self):
         code, d = _get(self.port, '/stream/movie/tt0137523.json')
         self.assertEqual(code, 200)

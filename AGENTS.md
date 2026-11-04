@@ -217,6 +217,12 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   global; `[]` explícito apaga el tipo. La clave del collect lleva el grupo
   efectivo (`tuple(sorted(...))`) — mismo sid+tipo con grupos distintos no
   comparten caché. `meta.py` lo usa vía `_eff_disabled_for` igual que stream.
+- **E2E aislamiento de estado de fallos**: `ServerE2E.setUp` limpia
+  `COOLDOWN`/`HEALTH`/`_cache`/`_URL_BAD` por test. Sin ella, collects con
+  sids basura (fuzzing schemathesis, prefetch meta, id_raro) dejaban TODAS
+  las fuentes en COOLDOWN 15min (FAIL_STREAK=3) → los tests de stream
+  posteriores veían 0 → fallo intermitente orden-dependiente (NO flaky:
+  defecto de aislamiento real). Regresión: test_stream_0_veneno_cooldown.
 - **Scrapers** (`infra/scrape.py`): YTS/EZTV/Nyaa sin addon upstream — son
   futures extra del `_collect` (mismo pool; aparecen en contrib/health).
   `scrapers` en cfg limita la lista; Nyaa necesita el meta cacheado (título

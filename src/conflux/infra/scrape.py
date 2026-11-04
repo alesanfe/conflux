@@ -17,7 +17,7 @@ Título para Nyaa: igual que Easynews — del meta que el cliente ya cargó
 import re
 import urllib.parse
 
-from conflux.core.state import CFG, _cget, _health, _meta_c
+from conflux.core.state import CFG, _health, _meta_title
 from conflux.infra.net import _session
 
 try:
@@ -41,14 +41,7 @@ def _sc_enabled():
 
 def _sc_title(stype, sid):
     """(imdb, título, sXXeYY) — título del meta cacheado; '' si aún no está."""
-    imdb = sid.split(':')[0]
-    meta = (_cget(_meta_c, (stype, imdb)) or {}).get('meta') or {}
-    t = (meta.get('name') or meta.get('title') or '').strip()
-    parts = sid.split(':')
-    se = None
-    if len(parts) >= 3 and all(x.isdigit() for x in parts[1:3]):
-        se = f's{int(parts[1]):02d}e{int(parts[2]):02d}'
-    return imdb, t, se
+    return _meta_title(stype, sid)
 
 
 def _stream(name, title, ih, seeds=0, size=0):

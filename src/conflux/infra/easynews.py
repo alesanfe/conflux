@@ -10,19 +10,13 @@ import base64
 import re
 import urllib.parse
 
-from conflux.core.state import CFG, PORT, _cget, _health, _meta_c
+from conflux.core.state import CFG, PORT, _health, _meta_title
 from conflux.infra.net import _session
 
 
 def _en_title(stype, sid):
     """(query, show_se) — título del meta cacheado + sXXeYY si es episodio."""
-    imdb = sid.split(':')[0]
-    meta = (_cget(_meta_c, (stype, imdb)) or {}).get('meta') or {}
-    t = (meta.get('name') or meta.get('title') or '').strip()
-    parts = sid.split(':')
-    se = None
-    if len(parts) >= 3 and all(x.isdigit() for x in parts[1:3]):
-        se = f's{int(parts[1]):02d}e{int(parts[2]):02d}'
+    _, t, se = _meta_title(stype, sid)
     return t, se
 
 
