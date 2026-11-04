@@ -187,6 +187,59 @@ class _Pool:
         return [f(x) for x in it]
 
 
+class TestFetchTimeouts(unittest.TestCase):
+    """Timeouts de cada fetch son contrato (10+1/12+1@{45-52,93,105,175,216,264})."""
+
+    class _P:
+        def __init__(self):
+            self.args = []
+        def submit(self, fn, *a):
+            self.args.append(a)
+            class F:
+                def result(self): return {}
+            return F()
+        def map(self, f, it):
+            return [f(x) for x in it]
+
+    def test_seed_ids_timeouts(self):
+        """top/airing=10, seasons=12, year pages=10, tmdb_year=10."""
+        import unittest.mock as um
+        p = self._P()
+        with um.patch.object(CAL, '_POOL_BG', p):
+            CAL._cal_seed_ids('http://cine', 'http://kitsu', 'http://anise')
+        timeouts = [a[1] for a in p.args]
+        self.assertEqual(timeouts, [10, 10, 12, 12, 10, 10, 10, 10, 10, 10, 10])
+
+    def test_series_eps_timeout_12(self):
+        import unittest.mock as um
+        with um.patch.object(CAL, 'fetch', return_value={}) as f:
+            CAL._cal_series_eps('http://cine', ['tt1'], set(), [])
+        self.assertEqual(f.call_args[0][1], 12)
+
+    def test_meta_films_timeout_10(self):
+        import unittest.mock as um
+        p = self._P()
+        with um.patch.object(CAL, '_POOL_BG', p):
+            CAL._cal_meta_films('http://tmdb', ['tt1'], '2020-01-01', set(), [])
+        self.assertEqual(p.args[0][1], 10)
+
+    def test_anime_done_meta_timeout_10(self):
+        import unittest.mock as um
+        p = self._P()
+        with um.patch.object(CAL, '_POOL_BG', p), \
+                um.patch.object(CAL, '_anime_eps_map', return_value={'tt1': []}):
+            CAL._cal_anime_done('http://cine', [], set(), [])
+        self.assertEqual(p.args[0][1], 10)
+
+    def test_my_fill_meta_timeout_10(self):
+        import unittest.mock as um
+        p = self._P()
+        my_eps = [('tt9', 1, 1, 'x', {'id': 'tt9'})]
+        with um.patch.object(CAL, '_POOL_BG', p):
+            CAL._cal_my_fill('http://cine', ['tt9'], my_eps, {}, set(), [])
+        self.assertEqual(p.args[0][1], 10)
+
+
 class TestAddFilmBorde(unittest.TestCase):
     def test_released_igual_hoy_no_es_futuro(self):
         """rel == hoy -> fuera: `rel <= hoy` no es `<` y `[:10]` no `[:11]`
@@ -425,6 +478,52 @@ class TestEstrenosCal(unittest.TestCase):
         # ttG (estreno más próximo) primero; ttS (released==hoy, no >) al final
         self.assertEqual(ids.index('ttG'), 0)
         self.assertLess(ids.index('ttF'), ids.index('ttS'))
+
+    def test_orden_released_hoy_largo_no_futuro(self):
+        """released 'HOYT...' (ISO largo): [:10]==hoy -> no futuro; el mutante
+        [:11] lo contaría como próximo (10+1@264/266)."""
+        hoy = __import__('time').strftime('%Y-%m-%d')
+        canned = {
+            'series/top.json': {'metas': [{'id': 'ttS'}]},
+            'calendar-videos': {'metasDetailed': [
+                {'id': 'ttS', 'videos': [{'id': 'ttS:1:1',
+                                          'released': hoy + 'T09:00:00Z'}]}]},
+            'genre=': {'metas': [{'id': 'ttF', 'released': '2999-01-10'}]},
+        }
+        pool = self._pool(canned)
+        with patch.object(CAL, '_POOL_BG', pool), \
+                patch.object(CAL, 'tmdb_year', return_value='http://t/y'), \
+                patch.object(CAL, '_anilist_airing', return_value=[]), \
+                patch.object(CAL, '_trakt_movies', return_value=[]), \
+                patch.object(CAL, '_trakt_my', return_value=([], [])), \
+                patch.object(CAL, '_resolve_sid', side_effect=lambda t, i: i):
+            out = CAL._estrenos_cal()
+        ids = [m['id'] for m in out['metasDetailed']]
+        self.assertLess(ids.index('ttF'), ids.index('ttS'))
+
+    def test_fcv_timeout_12(self):
+        """calendar-videos se pide con timeout 12 (12+1@253)."""
+        class P(_Pool):
+            def __init__(self, canned):
+                super().__init__(canned)
+                self.touts = []
+            def submit(self, fn, *a):
+                if a and isinstance(a[0], str) and a[0].startswith('http'):
+                    self.touts.append(a[1] if len(a) > 1 else None)
+                return super().submit(fn, *a)
+        canned = {'series/top.json': {'metas': [{'id': 'tt1'}]},
+                  'calendar-videos': {'metasDetailed': []}}
+        pool = P(canned)
+        with patch.object(CAL, '_POOL_BG', pool), \
+                patch.object(CAL, 'tmdb_year', return_value='http://t/y'), \
+                patch.object(CAL, '_anilist_airing', return_value=[]), \
+                patch.object(CAL, '_trakt_movies', return_value=[]), \
+                patch.object(CAL, '_trakt_my', return_value=([], [])), \
+                patch.object(CAL, '_resolve_sid', side_effect=lambda t, i: i):
+            CAL._estrenos_cal()
+        i = next(n for n, u in enumerate(pool.submitted)
+                 if 'calendar-videos' in u)
+        self.assertEqual(pool.touts[i], 12)
 
 
 if __name__ == '__main__':

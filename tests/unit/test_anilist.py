@@ -48,6 +48,7 @@ class TestAiringLoop(unittest.TestCase):
         with um.patch.object(A, '_anilist_page', return_value=fila) as pg:
             A._anilist_airing(7)
         self.assertEqual(pg.call_count, 3)              # tope: páginas 1,2,3
+        self.assertEqual([c[0][0] for c in pg.call_args_list], [1, 2, 3])
         t_end = pg.call_args_list[0][0][1]
         esperado = int(time.time()) + 7 * 86400
         self.assertAlmostEqual(t_end, esperado, delta=5)  # days*86400 real
@@ -72,9 +73,11 @@ class TestAnilistPage(unittest.TestCase):
     def test_page_devuelve_schedules(self):
         import unittest.mock as um
         payload = {'data': {'Page': {'airingSchedules': [{'episode': 1}]}}}
-        with um.patch.object(A, '_session', return_value=self._sess(payload)):
+        s = self._sess(payload)
+        with um.patch.object(A, '_session', return_value=s):
             out = A._anilist_page(1, 999)
         self.assertEqual(out, [{'episode': 1}])
+        self.assertEqual(s.post.call_args[1]['timeout'], 8)
 
     def test_page_error_vacio(self):
         import unittest.mock as um

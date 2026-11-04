@@ -796,3 +796,527 @@ class TestSeedPersist(unittest.TestCase):
             self.assertTrue(os.path.exists(p))
             with open(p) as f:
                 self.assertEqual(json.load(f)['a' * 40][0], 5)
+
+    def test_save_borde_60s_escribe(self):
+        """age == 60 -> ya no throttles (Lt@62: <= lo saltaría; 60+1@62)."""
+        import tempfile
+        import os
+        from freezegun import freeze_time
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, 's.json')
+            with freeze_time('2025-06-01 12:00:00'):
+                TH._LAST_SAVE[0] = time.time() - 60   # justo en el borde
+                TH._SEED['b' * 40] = (3, time.time())
+                TH._seed_save(p)
+            self.assertTrue(os.path.exists(p))
+
+    def test_save_sin_dirname_usa_cwd(self):
+        """dirname(path) or '.' (Or@69: and -> '' rompe mkstemp)."""
+        import tempfile
+        import os
+        import json
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as td:
+            try:
+                os.chdir(td)
+                TH._LAST_SAVE[0] = 0
+                TH._SEED['c' * 40] = (7, time.time())
+                TH._seed_save('rel.json')            # sin directorio -> '.'
+                self.assertTrue(os.path.exists('rel.json'))
+                with open('rel.json') as f:
+                    self.assertEqual(json.load(f)['c' * 40][0], 7)
+            finally:
+                os.chdir(cwd)
+
+    def test_constantes_operativas(self):
+        """Contrato operacional: trackers, chunk, TTL y timeout (@30-35)."""
+        self.assertEqual(TH._TRACKERS,
+                         [('open.demonii.com', 1337),
+                          ('tracker.torrent.eu.org', 451),
+                          ('open.stealth.si', 80),
+                          ('tracker.dler.org', 6969)])
+        self.assertEqual(TH._CHUNK, 20)
+        self.assertEqual(TH._TTL, 21600)             # 6*3600
+        self.assertEqual(TH._TMO, 4)
+        self.assertEqual(TH._DHT_BOOT,
+                         [('router.bittorrent.com', 6881),
+                          ('router.utorrent.com', 6881),
+                          ('dht.transmissionbt.com', 6881)])
+        self.assertEqual(len(TH._NID), 20)           # node id 20B
+
+
+class TestWireBytes(unittest.TestCase):
+    """Los fakes no validan lo enviado: un byte mal y el tracker real nos
+    ignora — hay que asertar el protocolo en sendto."""
+
+    def test_scrape_connect_magic_y_accion(self):
+        import struct
+        import unittest.mock as um
+        sent = []
+        class S:
+            def __init__(self):
+                self.n = 0
+                self.recv_n = []
+            def settimeout(self, t): self.t = t
+            def sendto(self, b, dst):
+                sent.append(b)
+                self.n += 1
+            def recvfrom(self, n):
+                self.recv_n.append(n)
+                if self.n == 1:
+                    return struct.pack('!IIQ', 0,
+                                       struct.unpack('!I', sent[0][12:16])[0],
+                                       99), None
+                return struct.pack('!II', 2,
+                                   struct.unpack('!I', sent[1][12:16])[0]) + \
+                    struct.pack('!III', 5, 0, 0), None
+            def close(self): pass
+        s = S()
+        with um.patch.object(TH.socket, 'socket', return_value=s), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'):
+            r = TH._scrape_tracker('t', 1, ['a' * 40])
+        self.assertEqual(s.recv_n, [2048, 65535])    # tamaños del protocolo
+        magic, act, _ = struct.unpack('!QII', sent[0][:16])
+        self.assertEqual(magic, 0x41727101980)       # BEP15 connect
+        self.assertEqual(act, 0)
+        self.assertEqual(struct.unpack('!QII', sent[1][:16])[1], 2)   # scrape
+        self.assertEqual(r, {'a' * 40: 5})
+
+    def test_scrape_connect_respuesta_corta_vacia(self):
+        """len(r0) < 16 -> {} (16+1: 16 justo debe parsear)."""
+        import struct
+        import unittest.mock as um
+        class S:
+            def settimeout(self, t): pass
+            def sendto(self, b, dst): self.tx = struct.unpack('!I', b[12:16])[0]
+            def recvfrom(self, n): return b'\x00' * 15, None
+            def close(self): pass
+        with um.patch.object(TH.socket, 'socket', return_value=S()), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'):
+            self.assertEqual(TH._scrape_tracker('t', 1, ['a' * 40]), {})
+
+    def test_scrape_tx2_ajeno_vacio(self):
+        """rtx2 != tx2 -> {} (echo de transacción)."""
+        import struct
+        import unittest.mock as um
+        class S:
+            def __init__(self): self.n = 0
+            def settimeout(self, t): pass
+            def sendto(self, b, dst):
+                self.n += 1
+                self.tx = struct.unpack('!I', b[12:16])[0]
+            def recvfrom(self, n):
+                if self.n == 1:
+                    return struct.pack('!IIQ', 0, self.tx, 7), None
+                return struct.pack('!II', 2, self.tx + 1) + b'\x00' * 12, None
+            def close(self): pass
+        with um.patch.object(TH.socket, 'socket', return_value=S()), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'):
+            self.assertEqual(TH._scrape_tracker('t', 1, ['a' * 40]), {})
+
+    def test_announce_udp_accion_y_puerto(self):
+        """pkt announce: action=1, puerto 6881 en el tail."""
+        import struct
+        import unittest.mock as um
+        sent = []
+        class S:
+            def __init__(self): self.n = 0
+            def settimeout(self, t): pass
+            def sendto(self, b, dst):
+                sent.append(b)
+                self.n += 1
+            def recvfrom(self, n):
+                if self.n == 1:
+                    return struct.pack('!IIQ', 0,
+                                       struct.unpack('!I', sent[0][12:16])[0], 5), None
+                return struct.pack('!II', 1,
+                                   struct.unpack('!I', sent[1][12:16])[0]) + \
+                    struct.pack('!III', 0, 2, 9) + b'\x00' * 6, None
+            def close(self): pass
+        with um.patch.object(TH.socket, 'socket', return_value=S()), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'):
+            r = TH._announce_udp('t', 1, 'a' * 40)
+        self.assertEqual(struct.unpack('!QII', sent[1][:16])[1], 1)   # announce
+        self.assertEqual(struct.unpack('!H', sent[1][-2:])[0], 6881)  # port
+        self.assertEqual(r['seeds'], 9)
+        self.assertEqual(r['peers'], 1)              # (len-20)//6
+
+    def test_announce_respuesta_20_exacta(self):
+        """len(r) < 20 -> None; exactamente 20 parsea (Lt: <21 lo rompería)."""
+        import struct
+        import unittest.mock as um
+        sent = []
+        class S:
+            def __init__(self): self.n = 0
+            def settimeout(self, t): pass
+            def sendto(self, b, dst): sent.append(b); self.n += 1
+            def recvfrom(self, n):
+                if self.n == 1:
+                    return struct.pack('!IIQ', 0,
+                                       struct.unpack('!I', sent[0][12:16])[0], 5), None
+                return struct.pack('!II', 1,
+                                   struct.unpack('!I', sent[1][12:16])[0]) + \
+                    struct.pack('!III', 0, 0, 3), None
+            def close(self): pass
+        with um.patch.object(TH.socket, 'socket', return_value=S()), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'):
+            r = TH._announce_udp('t', 1, 'a' * 40)
+        self.assertEqual(r['seeds'], 3)
+        self.assertEqual(r['peers'], 0)              # (20-20)//6
+
+    def test_krpc_tid_2b_y_r(self):
+        """tid de 2B y devuelve r no-vacío (2+1@tid, Or@r)."""
+        sent = []
+        class S:
+            def sendto(self, b, dst): sent.append(b)
+            def recvfrom(self, n):
+                d, _ = TH._bdec(sent[0])
+                return TH._benc({b't': d[b't'], b'y': b'r',
+                                 b'r': {b'ip': b'x'}}), None
+        r = TH._krpc(S(), ('1.2.3.4', 1), 'ping', {})
+        d, _ = TH._bdec(sent[0])
+        self.assertEqual(len(d[b't']), 2)
+        self.assertEqual(r, {b'ip': b'x'})
+
+    def test_krpc_recvfrom_65535(self):
+        seen = []
+        class S:
+            def sendto(self, b, dst): pass
+            def recvfrom(self, n):
+                seen.append(n)
+                return TH._benc({b't': b'zz', b'y': b'r', b'r': {}}), None
+        TH._krpc(S(), ('1.2.3.4', 1), 'ping', {})
+        self.assertEqual(seen, [65535])
+
+
+class TestDhtNodos(unittest.TestCase):
+    def setUp(self):
+        self._nodes = TH._DHT_NODES
+        TH._DHT_NODES = []
+
+    def tearDown(self):
+        TH._DHT_NODES = self._nodes
+
+    def _node(self, ip, port):
+        import socket as so
+        import struct as st
+        return b'n' * 20 + so.inet_aton(ip) + st.pack('!H', port)
+
+    def test_nodos_26b_dos_registros(self):
+        """Registro nodo = 26B (20 id + 4 ip + 2 port) — 26+1 parte records."""
+        import unittest.mock as um
+        nb = self._node('1.1.1.1', 6881) + self._node('2.2.2.2', 51413)
+        with um.patch.object(TH, '_krpc',
+                             side_effect=[{b'nodes': nb}, {}, {}]) as k:
+            out = TH._dht_nodes(um.MagicMock())
+        self.assertEqual(out, [('1.1.1.1', 6881), ('2.2.2.2', 51413)])
+        self.assertEqual(k.call_args[0][4], 3)       # timeout=3 por nodo
+
+    def test_nodos_cap_64(self):
+        """nodes[:64] — LRU acotado (64+1)."""
+        import unittest.mock as um
+        nb = b''.join(self._node(f'10.0.0.{i % 250 + 1}', i) for i in range(70))
+        with um.patch.object(TH, '_krpc', return_value={b'nodes': nb}):
+            out = TH._dht_nodes(um.MagicMock())
+        self.assertEqual(len(out), 64)
+
+    def test_dht_peers_cap_10_y_nodes(self):
+        """asked < cap (10) y cada nodo 26B aprendido entra en todo."""
+        import unittest.mock as um
+        nb = self._node('9.9.9.9', 1) * 1
+        calls = []
+        def krpc(s, addr, q, args, timeout):
+            calls.append(addr)
+            return {b'values': [], b'nodes': nb}
+        nodes = [(f'10.0.0.{i}', i) for i in range(15)]
+        with um.patch.object(TH.socket, 'socket', lambda *a: um.MagicMock()), \
+                um.patch.object(TH, '_dht_nodes', return_value=nodes), \
+                um.patch.object(TH, '_krpc', side_effect=krpc):
+            self.assertEqual(TH._dht_peers('a' * 40), 0)
+        self.assertEqual(len(calls), 10)             # cap=10 para en seco
+
+    def test_dht_peers_nodos_26b_y_puerto(self):
+        """Nodos aprendidos: records de 26B con su puerto real (26+1@189/191)."""
+        import unittest.mock as um
+        nb = self._node('9.9.9.9', 1111) + self._node('8.8.8.8', 2222)
+        calls = []
+        def krpc(s, addr, q, args, timeout):
+            calls.append(addr)
+            return {b'values': [b'p' * 6], b'nodes': nb}   # peer -> para ya
+        with um.patch.object(TH.socket, 'socket', lambda *a: um.MagicMock()), \
+                um.patch.object(TH, '_dht_nodes', return_value=[('1.2.3.4', 1)]), \
+                um.patch.object(TH, '_krpc', side_effect=krpc):
+            self.assertEqual(TH._dht_peers('a' * 40), 1)
+        self.assertEqual(calls, [('1.2.3.4', 1)])    # para al hallar peer
+        # el aprendizaje de nodos lo valida _dht_nodes con 2 records:
+        TH._DHT_NODES = []
+        def krpc2(s, addr, q, args, timeout):
+            calls.append(addr)
+            return {b'values': [], b'nodes': nb}
+        with um.patch.object(TH.socket, 'socket', lambda *a: um.MagicMock()), \
+                um.patch.object(TH, '_dht_nodes', return_value=[('1.2.3.4', 1)]), \
+                um.patch.object(TH, '_krpc', side_effect=krpc2):
+            TH._dht_peers('a' * 40)
+        self.assertIn(('9.9.9.9', 1111), calls)
+        self.assertIn(('8.8.8.8', 2222), calls)
+
+
+class TestAnnounceHttpProto(unittest.TestCase):
+    def _open(self, data):
+        import unittest.mock as um
+        req = []
+        resp = um.MagicMock()
+        resp.__enter__.return_value = resp
+        resp.read.side_effect = lambda n: (req.append(('n', n)), data)[1]
+        def urlopen(r, timeout=None):
+            req.append((r.full_url, timeout))
+            return resp
+        return req, urlopen
+
+    def test_sep_query_y_timeout(self):
+        """'?' in url -> '&' si ya hay query (In@292, Add@339); timeout=5;
+        read(65536)."""
+        d = TH._benc({b'complete': 4, b'incomplete': 1, b'peers': b''})
+        req, urlopen = self._open(d)
+        import unittest.mock as um
+        with um.patch('urllib.request.urlopen', urlopen):
+            TH._announce_http('http://t/ann', 'a' * 40)
+            self.assertIn('?info_hash=', req[0][0])
+            self.assertEqual(req[0][1], 5)
+            self.assertIn(('n', 65536), req)
+            TH._announce_http('http://t/ann?x=1', 'a' * 40)
+            self.assertIn('&info_hash=', req[-2][0])
+
+    def test_peers_compactos_6b(self):
+        """len(peers)//6 — 12B = 2 peers (6+1)."""
+        d = TH._benc({b'complete': 0, b'incomplete': 0,
+                      b'peers': b'\x00' * 12})
+        req, urlopen = self._open(d)
+        import unittest.mock as um
+        with um.patch('urllib.request.urlopen', urlopen):
+            r = TH._announce_http('http://t/ann', 'a' * 40)
+        self.assertEqual(r['peers'], 2)
+
+
+class TestAnnounceHintsCap(unittest.TestCase):
+    def test_cap_6_y_puerto_defecto(self):
+        """urls[:6] cap; 'udp://host' sin puerto -> 80 (Or/80+1@322)."""
+        import unittest.mock as um
+        urls = [f'udp://h{i}' for i in range(8)]
+        calls = []
+        with um.patch.object(TH, '_announce_udp',
+                             side_effect=lambda h, p, i, *a: calls.append((h, p)) or None):
+            self.assertEqual(TH._announce_hints('a' * 40, urls), 'unknown')
+        self.assertEqual(len(calls), 6)
+        self.assertEqual(calls[0], ('h0', 80))
+
+    def test_url_mal_formada_salta(self):
+        """regex udp|http no casa -> continue (tracker: sin esquema)."""
+        import unittest.mock as um
+        with um.patch.object(TH, '_announce_udp') as au, \
+                um.patch.object(TH, '_announce_http') as ah:
+            self.assertEqual(TH._announce_hints('a' * 40, ['noschema']), 'unknown')
+            au.assert_not_called(); ah.assert_not_called()
+
+
+class TestScrapeSubmitVeredictos(unittest.TestCase):
+    def setUp(self):
+        self._seed = dict(TH._SEED)
+        TH._SEED.clear()
+
+    def tearDown(self):
+        TH._SEED.clear()
+        TH._SEED.update(self._seed)
+
+    def test_seed_cero_no_es_vivo(self):
+        """sd > 0 -> veredicto vivo (Gt@357: >= metería los 0-seed)."""
+        import unittest.mock as um
+        h = 'a' * 40
+        with um.patch.object(TH, '_scrape_hashes', return_value={h: 0}), \
+                um.patch.object(TH, '_announce_hints', return_value='unknown'), \
+                um.patch.object(TH, '_dht_peers', return_value=0), \
+                um.patch.object(TH, '_seed_save'):
+            TH._scrape_submit([(h, [])])
+        self.assertEqual(TH._SEED[h][0], -1)         # no vivo: dead-unknown
+
+    def test_purga_mitad_mas_vieja(self):
+        """len(_SEED) > 4000 -> poda a la mitad (4000+1/Gt@377)."""
+        import unittest.mock as um
+        for i in range(4001):
+            TH._SEED[f'{i:040x}'] = (1, float(i))
+        h = 'a' * 40
+        with um.patch.object(TH, '_scrape_hashes', return_value={h: 5}), \
+                um.patch.object(TH, '_seed_save'):
+            TH._scrape_submit([(h, [])])
+        self.assertLessEqual(len(TH._SEED), 2002)
+
+    def test_ttl_borde_exacto_conocido(self):
+        """age == _TTL aún fresco (Gt@388: >= lo daría por caducado)."""
+        from freezegun import freeze_time
+        with freeze_time('2025-06-01 12:00:00'):
+            TH._SEED['a' * 40] = (9, time.time() - TH._TTL)
+            self.assertEqual(TH._hash_known('a' * 40), 9)
+
+    def test_ttl_pasado_desconocido(self):
+        from freezegun import freeze_time
+        with freeze_time('2025-06-01 12:00:00'):
+            TH._SEED['a' * 40] = (9, time.time() - TH._TTL - 1)
+            self.assertIsNone(TH._hash_known('a' * 40))
+
+
+class TestHashFilterProto(unittest.TestCase):
+    """_hash_filter: solo hash 40-hex válido y sources 'tracker:' -> urls."""
+
+    def _filt(self, streams):
+        return TH._hash_filter(streams)
+
+    def test_tracker_url_8_prefix(self):
+        """u[8:] quita 'tracker:' (8+1@417: perdería la 'u' de udp)."""
+        s = {'infoHash': 'a' * 40,
+             'sources': ['tracker:udp://h1:1337', 'tracker:http://h2']}
+        dead, todo = self._filt([s])
+        self.assertEqual(todo, [('a' * 40, ['udp://h1:1337', 'http://h2'])])
+
+    def test_sources_no_str_no_explotan(self):
+        """isinstance(u,str) and startswith (And@418: or -> crash en int)."""
+        s = {'infoHash': 'a' * 40, 'sources': [123, 'tracker:udp://h']}
+        dead, todo = self._filt([s])
+        self.assertEqual(todo, [('a' * 40, ['udp://h'])])
+
+    def test_hash_longitud_40(self):
+        """len(h) != 40 -> skip (Or@411/And@415)."""
+        dead, todo = self._filt([{'infoHash': 'a' * 39},
+                                 {'infoHash': 'a' * 41},
+                                 {'infoHash': 'a' * 40}])
+        self.assertEqual(len(todo), 1)
+
+
+class TestLotesHealth(unittest.TestCase):
+    def test_lotes_de_140(self):
+        """min(len,140) por petición y lote _CHUNK*7=140 (140+1/7+1/Add@446)."""
+        import unittest.mock as um
+        enviados = []
+        with um.patch.object(TH._POOL_BG, 'submit',
+                             lambda f, *a: enviados.append(a[0])):
+            streams = [{'infoHash': f'{i:040x}'} for i in range(200)]
+            TH._hash_health(streams)
+        self.assertEqual([len(x) for x in enviados], [140])   # resto: próxima req
+
+
+class TestScrapeChunks(unittest.TestCase):
+    def test_chunks_de_20(self):
+        """hashes[i:i+_CHUNK] — 21 hashes = 2 scrapes (Add@339: i-CHUNK vacío)."""
+        import unittest.mock as um
+        chunks = []
+        with um.patch.object(TH, '_scrape_tracker',
+                             side_effect=lambda h, p, c, *a: chunks.append(c) or {'x': 1}):
+            TH._scrape_hashes([f'{i:040x}' for i in range(21)])
+        self.assertEqual([len(c) for c in chunks], [20, 1])
+
+
+class TestProtocoloConst(unittest.TestCase):
+    def test_peer_id_20b(self):
+        """_PID = '-CF0001-' + 12B random = 20B (12+1@241, Add@242)."""
+        self.assertEqual(len(TH._PID), 20)
+        self.assertTrue(TH._PID.startswith(b'-CF0001-'))
+
+    def test_tx_randint_2e31(self):
+        """tx = random.randint(0, 2**31) — BEP15 (31+1@{209,218,252,260,263})."""
+        import unittest.mock as um
+        import struct
+        calls = []
+        class S:
+            def __init__(self): self.n = 0
+            def settimeout(self, t): pass
+            def sendto(self, b, dst): self.n += 1
+            def recvfrom(self, n):
+                if self.n == 1:
+                    return struct.pack('!IIQ', 0, 0, 1), None
+                return struct.pack('!II', 2, 0), None
+            def close(self): pass
+        with um.patch.object(TH.random, 'randint',
+                             side_effect=lambda a, b: calls.append((a, b)) or 0), \
+                um.patch.object(TH.socket, 'socket', return_value=S()), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'):
+            TH._scrape_tracker('t', 1, ['a' * 40])
+            TH._announce_udp('t', 1, 'a' * 40)
+        self.assertTrue(calls)
+        self.assertTrue(all(c == (0, 2**31) for c in calls))
+
+    def test_defaults_firma(self):
+        """Timeouts/caps de firma son contrato (3+1@129/164, 4+1@245)."""
+        import inspect
+        self.assertEqual(inspect.signature(TH._krpc).parameters['timeout'].default, 3)
+        self.assertEqual(inspect.signature(TH._dht_peers).parameters['cap'].default, 10)
+        self.assertEqual(inspect.signature(TH._dht_peers).parameters['timeout'].default, 3)
+        self.assertEqual(inspect.signature(TH._announce_udp).parameters['timeout'].default, 4)
+        self.assertEqual(inspect.signature(TH._announce_hints).parameters['cap'].default, 6)
+
+    def test_announce_connect_magic_y_recv(self):
+        """Connect BEP15 en announce: magic + recvfrom(2048/65535) (2048/65535+1)."""
+        import struct
+        import unittest.mock as um
+        sent, recv_n = [], []
+        class S:
+            def __init__(self): self.n = 0
+            def settimeout(self, t): pass
+            def sendto(self, b, dst): sent.append(b); self.n += 1
+            def recvfrom(self, n):
+                recv_n.append(n)
+                if self.n == 1:
+                    return struct.pack('!IIQ', 0,
+                                       struct.unpack('!I', sent[0][12:16])[0], 5), None
+                return struct.pack('!II', 1,
+                                   struct.unpack('!I', sent[1][12:16])[0]) + \
+                    struct.pack('!III', 0, 0, 3), None
+            def close(self): pass
+        with um.patch.object(TH.socket, 'socket', return_value=S()), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'):
+            TH._announce_udp('t', 1, 'a' * 40)
+        self.assertEqual(struct.unpack('!QII', sent[0][:16])[0], 0x41727101980)
+        self.assertEqual(recv_n, [2048, 65535])
+
+
+class TestSinkYFiltro(unittest.TestCase):
+    def setUp(self):
+        self._seed = dict(TH._SEED)
+        TH._SEED.clear()
+
+    def tearDown(self):
+        TH._SEED.clear()
+        TH._SEED.update(self._seed)
+
+    def test_conocido_fresco_no_reencola(self):
+        """known is None and h not in seen (And@415: or -> recola conocidos)."""
+        h = 'a' * 40
+        TH._SEED[h] = (5, time.time())               # veredicto fresco
+        dead, todo = TH._hash_filter([{'infoHash': h}])
+        self.assertEqual(todo, [])
+
+    def test_dead_sin_sources_no_se_hunde(self):
+        """sources and known in (-1,-2) (And@427: or hundiría sin hints)."""
+        h = 'a' * 40
+        TH._SEED[h] = (-1, time.time())
+        streams = [{'infoHash': h, 'x': 1}, {'infoHash': 'b' * 40}]
+        TH._hash_sink(streams)
+        self.assertEqual(streams[0]['infoHash'], h)  # sin sources: no se mueve
+
+    def test_menos2_si_se_hunde(self):
+        """known in (-1,-2): -2 (announce-dead) también se hunde (2+1@428)."""
+        h = 'a' * 40
+        TH._SEED[h] = (-2, time.time())
+        streams = [{'infoHash': h, 'sources': ['tracker:u']},
+                   {'infoHash': 'b' * 40}]
+        TH._hash_sink(streams)
+        self.assertEqual(streams[-1]['infoHash'], h)
+
+    def test_purga_borde_4000_no_poda(self):
+        """len(_SEED) > 4000 — exactamente 4000 no purga (Gt@377: >=)."""
+        import unittest.mock as um
+        for i in range(4000):
+            TH._SEED[f'{i:040x}'] = (1, float(i))
+        h = 'f' * 40
+        with um.patch.object(TH, '_scrape_hashes', return_value={h: 5}), \
+                um.patch.object(TH, '_seed_save'):
+            TH._scrape_submit([(h, [])])
+        self.assertEqual(len(TH._SEED), 4001)        # creció, sin poda

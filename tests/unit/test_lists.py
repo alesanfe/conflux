@@ -71,11 +71,29 @@ class TestListTrakt(unittest.TestCase):
         self.assertEqual(name, 'Mi Lista')
         self.assertEqual(items, [('movie', 'tt1'), ('series', 'tt2')])
 
+    def test_timeouts_8_y_10(self):
+        """meta timeout=8, items timeout=10 (@37/@39)."""
+        url = 'https://trakt.tv/users/foo/lists/x'
+        s, calls = fake_session({'json': {'name': 'L'}}, {'json': []})
+        with patch.object(L, '_session', return_value=s), \
+             patch.object(L, '_trakt_h', return_value={}):
+            L._list_trakt(url)
+        self.assertEqual([c[2].get('timeout') for c in calls], [8, 10])
+
     def test_url_mala_valueerror(self):
         self.assertRaises(ValueError, L._list_trakt, 'https://trakt.tv/otra')
 
 
 class TestTraktItemsTipo(unittest.TestCase):
+    def test_movie_sin_show_incluye(self):
+        """ids de movie OR show (Or@28: and -> exige ambos, salta movies)."""
+        rows = [{'type': 'movie',
+                 'movie': {'ids': {'imdb': 999}}},   # sin clave 'show'
+                {'type': 'show',
+                 'show': {'ids': {'imdb': 888}}}]
+        out = L._trakt_items(rows)
+        self.assertEqual(out, [('movie', 'tt999'), ('series', 'tt888')])
+
     def test_tipo_por_clave(self):
         rows = [{'movie': {'ids': {'imdb': 'tt1', 'trakt': 5}}},
                 {'show': {'ids': {'imdb': 'tt2'}}},
@@ -98,6 +116,28 @@ class TestListImdb(unittest.TestCase):
         self.assertEqual(items, [('movie', 'tt0137523'),
                                  ('series', 'tt0903747')])
 
+    def test_cap_200_items(self):
+        """splitlines()[1:201] — máx 200 items (201+1: 202 pasarían)."""
+        rows = ''.join(f'{i},tt{i:07d},x,x,,T,u,Feature Film,x,G\n'
+                       for i in range(1, 203))
+        csv = 'Pos,Const,Created,Modified,Description,Title,URL,Title Type,' \
+              'Director,Genres\n' + rows
+        s, _ = fake_session({'text': csv})
+        with patch.object(L, '_session', return_value=s):
+            _, items = L._list_imdb('https://imdb.com/list/ls123')
+        self.assertEqual(len(items), 200)
+
+    def test_fila_9_columnas_salta(self):
+        """len(c) > 9 — 9 columnas no tiene c[9] (Gt@57: >= la aceptaría)."""
+        csv = ('Pos,Const,Created,Modified,Description,Title,URL,Title Type,' +
+               'Director,Genres\n' +
+               '1,tt0137523,x,x,,Fight Club,u,Film,x\n' +      # 9 col -> fuera
+               '2,tt0137524,x,x,,Ok,u,Feature Film,x,Drama\n') # 10 col -> dentro
+        s, _ = fake_session({'text': csv})
+        with patch.object(L, '_session', return_value=s):
+            _, items = L._list_imdb('https://imdb.com/list/ls123')
+        self.assertEqual(items, [('movie', 'tt0137524')])
+
     def test_url_mala_valueerror(self):
         self.assertRaises(ValueError, L._list_imdb, 'https://imdb.com/x')
 
@@ -116,6 +156,16 @@ class TestListMdblist(unittest.TestCase):
             undo()
         self.assertEqual(name, 'Top')
         self.assertEqual(items, [('movie', 'tt1'), ('series', 'tt2')])
+
+    def test_timeout_10(self):
+        _, undo = cfg_swap(mdblist_key='K')
+        s, calls = fake_session({'json': {'name': 'X', 'items': []}})
+        try:
+            with patch.object(L, '_session', return_value=s):
+                L._list_mdblist('mdblist:777')
+        finally:
+            undo()
+        self.assertEqual(calls[0][2].get('timeout'), 10)
 
     def test_sin_key_valueerror(self):
         _, undo = cfg_swap(mdblist_key='')
@@ -176,6 +226,23 @@ class TestListMetasFlow(unittest.TestCase):
             restore(); undo()
         self.assertEqual(d['metas'][0]['name'], 'Película')
         self.assertTrue(any(cine in u for u in seen))
+
+    def test_fetch_timeout_8(self):
+        """metas via fetch(url, 8) (8+1@~109)."""
+        _, undo = cfg_swap(mdblist_key='K')
+        s, _ = fake_session({'json': {'name': 'X', 'items': [
+            {'imdb_id': 'tt111', 'mediatype': 'movie'}]}})
+        seen = []
+        def fake(url, t=8):
+            seen.append(t)
+            return {'meta': {'id': 'tt111'}}
+        restore = patch_fetch(fake)
+        try:
+            with patch.object(L, '_session', return_value=s):
+                L._list_metas('mdblist:5', 'movie')
+        finally:
+            restore(); undo()
+        self.assertEqual(seen, [8])
 
 
 class TestM3U(unittest.TestCase):
