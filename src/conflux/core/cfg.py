@@ -77,13 +77,14 @@ def _apply_extra_sources():
     URL en /configure la elimina al instante. Nombre = host (único, visible
     en /configure como fuente desactivable)."""
     from conflux.core.state import _SOURCES_BASE, SOURCES, Source   # local: state ya cargado
-    add = []
+    add: list = []
     for u in CFG.get('extra_sources') or []:
         b = str(u).strip().removesuffix('/manifest.json').rstrip('/')
         if not re.match(r'https?://', b):
             continue
         host = urllib.parse.urlsplit(b).hostname
-        if host and all(s.base != b for s in _SOURCES_BASE):       # sin duplicar la base
+        if host and all(s.base != b for s in _SOURCES_BASE) \
+                and all(s.base != b for s in add):                 # sin duplicar base ni extras
             add.append(Source(host, b))
     SOURCES[:] = _SOURCES_BASE + add                               # mutar in situ (identidad)
     from conflux.infra.mediafusion import maybe_provision          # local: core->infra
