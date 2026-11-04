@@ -49,8 +49,8 @@ def _cal_seed_ids(cine, kitsu, anise):
     fs = [_POOL_BG.submit(fetch, f"{cine}/catalog/movie/year/genre={y}"
                        f"{'&skip='+str(s) if s else ''}.json", 10)
           for y in (_YEARS[0], str(int(_YEARS[0]) + 1)) for s in (0, 50, 100)]
-    td = as_dict(fetch(tmdb_year(), 10))
-    return _cal_top_ids(fs_top, fs_sea, fs_air), fs, fs_amv, td
+    f_td = _POOL_BG.submit(fetch, tmdb_year(), 10)   # future: no bloquea la fase
+    return _cal_top_ids(fs_top, fs_sea, fs_air), fs, fs_amv, f_td
 
 
 def _cal_top_ids(fs_top, fs_sea, fs_air):
@@ -69,15 +69,29 @@ def _cat_ids(fut, prefix=''):
             if isinstance(m, dict) and str(m.get('id', '')).startswith(prefix)]
 
 
+def _fres(f, default=None):
+    """result() de una fase: si la fase lanzó, devuelve default — una fuente
+    caída no puede tumbar el calendario entero."""
+    try:
+        return f.result()
+    except Exception:
+        return default if default is not None else []
+
+
+def _cal_series_eps_cv(cv, seen, out):
+    """Respuesta calendar-videos ya resuelta -> metas con episodios fechados."""
+    for m in cv.get('metasDetailed') or []:
+        if isinstance(m, dict) and m.get('id') and m['id'] not in seen and m.get('videos'):
+            seen.add(m['id'])
+            out.append(m)
+
+
 def _cal_series_eps(cine, top_ids, seen, out):
     """calendar-videos upstream: TODOS los episodios fechados de los ids semilla."""
     if not top_ids:
         return
     cv = as_dict(fetch(f"{cine}/catalog/series/calendar-videos/calendarVideosIds={','.join(top_ids)}.json", 12))
-    for m in cv.get('metasDetailed') or []:
-        if isinstance(m, dict) and m.get('id') and m['id'] not in seen and m.get('videos'):
-            seen.add(m['id'])
-            out.append(m)
+    _cal_series_eps_cv(cv, seen, out)
 
 
 def _cal_year_films(fs, hoy, seen, out):
@@ -151,7 +165,12 @@ def _anime_eps_map(al):
 def _cal_anime_eps(cine, days, seen, out):
     """Anime con fecha REAL de emisión via AniList (gratis, sin key):
     AiringSchedule próximos N días -> episodios exactos, resueltos mal->tt."""
-    eps_by_tt = _anime_eps_map(_anilist_airing(days))
+    _cal_anime_done(cine, _anilist_airing(days), seen, out)
+
+
+def _cal_anime_done(cine, al, seen, out):
+    """AiringSchedules ya traídos -> episodios por tt + metas."""
+    eps_by_tt = _anime_eps_map(al)
     metas_tt = {m['id']: m for m in out}
     fmeta = [_POOL_BG.submit(fetch, f"{cine}/meta/series/{i}.json", 10) for i in eps_by_tt]
     for (tt, eps), f in zip(eps_by_tt.items(), fmeta, strict=True):
@@ -171,9 +190,14 @@ def _cal_anime_fill(tt, eps, meta_raw, metas_tt, seen, out):  # pylint: disable=
 def _cal_trakt(cine, days, hoy, seen, out):
     """Estrenos reales via Trakt (client_id gratis en config) + calendario
     PERSONAL (token OAuth): episodios de series seguidas y pelis watchlist."""
-    for mv in _trakt_movies(days):
+    _cal_trakt_done(cine, _trakt_movies(days), _trakt_my(days), hoy, seen, out)
+
+
+def _cal_trakt_done(cine, tm, my, hoy, seen, out):
+    """Datos Trakt ya traídos -> pelis + episodios personales."""
+    for mv in tm:
         _cal_add_film(mv, hoy, seen, out)
-    my_eps, my_films = _trakt_my(days)
+    my_eps, my_films = my
     for mv in my_films:
         _cal_add_film(mv, hoy, seen, out)
     _cal_my_eps(cine, my_eps, seen, out)
@@ -220,13 +244,22 @@ def _estrenos_cal(_extra=None):
     hoy = time.strftime('%Y-%m-%d')
     seen: set = set()
     out: list = []
-    # ids semilla: se regenera cada petición — temporada nueva = ids nuevos
-    top_ids, fs, fs_amv, td = _cal_seed_ids(cine, kitsu, anise)
-    _cal_series_eps(cine, top_ids, seen, out)
-    _cal_films(tmdb, fs, fs_amv, td, hoy, seen, out)
     days = _cfgget('calendar_months_ahead', 2) * 31        # _cfgget: override de perfil
-    _cal_anime_eps(cine, days, seen, out)
-    _cal_trakt(cine, days, hoy, seen, out)
+    # ids semilla: se regenera cada petición — temporada nueva = ids nuevos
+    top_ids, fs, fs_amv, f_td = _cal_seed_ids(cine, kitsu, anise)
+    # fases independientes YA en vuelo: el build pasa de sum(fases) a
+    # max(fases) — AniList/Trakt/calendar-videos solapan las pelis del año
+    f_cv = (_POOL_BG.submit(fetch, f"{cine}/catalog/series/calendar-videos/"
+            f"calendarVideosIds={','.join(top_ids)}.json", 12)
+            if top_ids else None)
+    f_al = _POOL_BG.submit(_anilist_airing, days)
+    f_tm = _POOL_BG.submit(_trakt_movies, days)
+    f_my = _POOL_BG.submit(_trakt_my, days)
+    if f_cv is not None:
+        _cal_series_eps_cv(as_dict(f_cv.result()), seen, out)
+    _cal_films(tmdb, fs, fs_amv, as_dict(f_td.result()), hoy, seen, out)
+    _cal_anime_done(cine, _fres(f_al), seen, out)
+    _cal_trakt_done(cine, _fres(f_tm), _fres(f_my, ([], [])), hoy, seen, out)
     # orden: próximo estreno primero (vista navegable + calendario)
     out.sort(key=lambda m: min(((v.get('released') or '9')[:10] for v in
                                 m.get('videos') or []
