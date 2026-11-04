@@ -354,25 +354,25 @@ def _scrape_submit(items):
     hints = dict(items)
     res = _scrape_hashes(hashes)
     now = t0 = time.time()
-    verdicts = {}
-    for h in hashes:                                 # ausentes del scrape también
-        if time.time() - t0 > 90:                    # budget: probes secuenciales
+    verdicts = {h: sd for h, sd in res.items() if sd > 0}
+    zero = [h for h in hashes if res.get(h, 0) == 0]     # 0 o ausente del scrape
+    hinted = [(h, hints[h]) for h in zero if hints.get(h)]
+    ann = {}
+    if hinted:                                       # announces en paralelo:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(8) as ex:            # pool local, no roba _POOL_BG
+            ann = dict(zip((h for h, _ in hinted),
+                           ex.map(lambda p: _announce_hints(p[0], p[1]), hinted)))
+    for h in zero:
+        if time.time() - t0 > 90:                    # budget: DHT es secuencial
             break                                    # el resto queda unknown -> retry
-        sd = res.get(h, 0)
-        if sd > 0:
-            verdicts[h] = sd
-        else:
-            urls = hints.get(h) or []
-            if urls:
-                st = _announce_hints(h, urls)
-                if st == 'alive':
-                    verdicts[h] = 99
-                elif st == 'dead':
-                    verdicts[h] = -2                   # sus trackers no lo ven
-                else:                                  # trackers caídos: DHT decide
-                    verdicts[h] = -1 if _dht_peers(h) == 0 else 99
-            else:
-                verdicts[h] = -1 if _dht_peers(h) == 0 else 99
+        st = ann.get(h)
+        if st == 'alive':
+            verdicts[h] = 99
+        elif st == 'dead':
+            verdicts[h] = -2                           # sus trackers no lo ven
+        else:                                        # sin hints o announce-unknown
+            verdicts[h] = -1 if _dht_peers(h) == 0 else 99
     with _SLOCK:
         if len(_SEED) > 4000:                       # cota: purga la mitad más vieja
             for h in sorted(_SEED, key=lambda h: _SEED[h][1])[:len(_SEED) // 2]:

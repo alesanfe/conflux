@@ -2,13 +2,14 @@
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import threading
+import time
 import urllib.parse
+from concurrent.futures import as_completed
 
 from conflux.core.cfg import _cfgget, _eff_disabled
 from conflux.core.state import (
     _DEAD_OPT,
     _POOL,
-    _POOL_BG,
     SOURCES,
     _cat_c,
     _cget,
@@ -51,7 +52,9 @@ def _search_targets(t):
 
 def _busqueda(utype, extra):
     """Búsqueda global: fan-out a TODOS los catálogos del tipo que soportan
-    'search' upstream y dedup por id canónico (imdb si resoluble)."""
+    'search' upstream y dedup por id canónico (imdb si resoluble).
+    Deadline global ~10s: los stragglers no retienen la respuesta (sus
+    resultados quedan en caché para la próxima vez igualmente)."""
     q = dict(urllib.parse.parse_qsl(extra or '')).get('search')
     if not q:
         return {'metas': []}
@@ -59,16 +62,35 @@ def _busqueda(utype, extra):
     seen: set = set()
     out: list = []
     e = urllib.parse.urlencode({'search': q})
-    for d in _POOL_BG.map(lambda x: fetch(f"{x[0]}/catalog/{x[1]}/{x[2]}/{e}.json", 8), targets):
-        _search_merge(d, utype, seen, out)
+    futs = [_POOL.submit(fetch, f"{b}/catalog/{t}/{c}/{e}.json", 8)
+            for b, t, c in targets]
+    t0 = time.time()
+    done = 0
+    try:
+        for f in as_completed(futs, timeout=10):
+            done += 1
+            try:
+                _search_merge(f.result(), utype, seen, out)
+            except Exception:
+                continue
+            el = time.time() - t0
+            if el > 2 and len(futs) - done <= 3:    # early-done: stragglers ~muertos
+                break                             # como _collect: no retener por 3
+            if el > 4 and len(out) >= 40:          # resultado sólido sin esperar más
+                break
+    except TimeoutError:
+        pass                                    # deadline: responde con lo que hay
     return {'metas': out}
 
 
-def _search_key(utype, mid):
+def _search_key(utype, m):
     """Clave dedup del meta: id canónico (tt resolviendo prefijos alien).
 
-    tt y prefijos no mapeables son gratis; los alien pasan por _resolve_sid
-    (fetch cacheado por (pref,base_id))."""
+    imdb_id del propio meta es gratis; tt y prefijos no mapeables también;
+    solo los alien sin imdb_id pasan por _resolve_sid (fetch cacheado)."""
+    mid = m['id']
+    if m.get('imdb_id'):
+        return m['imdb_id']
     return _resolve_sid(utype, mid) if _id_prefix(mid) in _PREFIX_SRC else mid
 
 
@@ -76,7 +98,7 @@ def _search_merge(d, utype, seen, out):
     """Metas de una respuesta -> out, dedup por id canónico (tt si resoluble)."""
     metas = [m for m in as_dict(d).get('metas') or []
              if isinstance(m, dict) and m.get('id')]
-    keys = _POOL.map(lambda m: _search_key(utype, m['id']), metas)
+    keys = _POOL.map(lambda m: _search_key(utype, m), metas)
     for m, k in zip(metas, keys):
         if k in seen:
             continue
