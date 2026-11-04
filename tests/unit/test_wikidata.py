@@ -64,6 +64,33 @@ class TestWikidata(unittest.TestCase):
         with patch.object(W, 'fetch', return_value={'query': {'search': []}}):
             self.assertEqual(W._wikidata('UCY'), {})
 
+    def test_purga_sobre_400(self):
+        """401 entradas -> purga las 200 más viejas antes de añadir (400+1, 200+1)."""
+        import time
+        W._wd_c.update({f'ch{i}': (time.time() - i, {}) for i in range(401)})
+        with patch.object(W, 'fetch', return_value=None):
+            W._wikidata('nuevo')
+        self.assertEqual(len(W._wd_c), 202)          # 401-200 purgados +1
+        self.assertIn('nuevo', W._wd_c)
+
+    def test_no_purga_en_400(self):
+        """Exactamente 400 -> NO purga: la cota es >400 no >=400 (Gt@27)."""
+        import time
+        W._wd_c.update({f'ch{i}': (time.time() - i, {}) for i in range(400)})
+        with patch.object(W, 'fetch', return_value=None):
+            W._wikidata('nuevo')
+        self.assertEqual(len(W._wd_c), 401)          # 400+1, sin purga
+
+    def test_ttl_24h_exacto_refresca(self):
+        """edad == 86400s -> caducado: < no <= (mutante Lt@31, freezegun)."""
+        import time
+        from freezegun import freeze_time
+        with freeze_time('2025-01-01 12:00:00'):
+            W._wd_c['UCX'] = (time.time() - 86400, {'country': 'JP'})
+            with patch.object(W, 'fetch', return_value=None) as f:
+                W._wikidata('UCX')
+            f.assert_called_once()                   # caducado -> refetch
+
 
 class TestWdCountry(unittest.TestCase):
     def test_resuelve_segunda_entidad(self):

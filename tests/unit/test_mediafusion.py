@@ -81,6 +81,44 @@ class TestProvision(unittest.TestCase):
         th.assert_called_once()
         self.assertTrue(th.call_args.kwargs.get('daemon'))
 
+    def test_no_duplica_con_source_previa(self):
+        """SOURCES ya tiene MediaFusion y _once=False -> no añade otra
+        (mutante Or@59: `_once or any()` -> and ignoraba el guarda)."""
+        st.SOURCES.append(st.Source('MediaFusion', 'https://x/SEC'))
+        self._run()
+        self.assertEqual(
+            len([s for s in st.SOURCES if s.name == 'MediaFusion']), 1)
+
+    def test_encrypt_post_y_parse(self):
+        """_encrypt real: POST a /encrypt-user-data, parsea encrypted_str
+        (mutantes Add@40 y Or@44 viven dentro, el resto lo mockea)."""
+        import json
+        resp = MagicMock()
+        resp.__enter__.return_value.read.side_effect = None
+        resp.__enter__.return_value = MagicMock(
+            read=MagicMock(return_value=json.dumps({'encrypted_str': 'S'}).encode()))
+        with patch('urllib.request.urlopen', return_value=resp) as uo:
+            self.assertEqual(mf._encrypt({'a': 1}), 'S')
+        self.assertTrue(uo.call_args[0][0].full_url.endswith('/encrypt-user-data'))
+
+    def test_fetch_manifest_url(self):
+        """_fetch_manifest real pide base+'/manifest.json' (mutante Add@49:
+        base-'/manifest.json' TypeErroraba dentro — y lo mockeaba todo)."""
+        import conflux.infra.net as net
+        with patch.object(net, 'fetch', return_value={'catalogs': []}) as f:
+            self.assertEqual(mf._fetch_manifest('http://mf/SEC'),
+                             {'catalogs': []})
+        self.assertEqual(f.call_args[0][0], 'http://mf/SEC/manifest.json')
+
+    def test_maybe_no_thread_si_ya_existe(self):
+        """SOURCES == [MediaFusion] solo -> maybe_provision NO lanza hilo
+        (mutante Eq@83: `s.name == 'MF'` -> `!=` — con otras fuentes en la
+        lista el comportamiento coincide y el mutante es invisible)."""
+        st.SOURCES[:] = [st.Source('MediaFusion', 'https://x/S')]
+        with patch('threading.Thread') as th:
+            mf.maybe_provision()
+        th.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

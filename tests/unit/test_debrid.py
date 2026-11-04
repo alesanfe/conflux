@@ -54,6 +54,16 @@ class TestResolve(unittest.TestCase):
         st.CFG['debrid_key'] = 'k'
         self.assertIsNone(db._db_resolve('noexiste', 'h', 0))
 
+    def test_key_vacia_no_llama_fn(self):
+        """key='' con provider válido -> None sin llamar al resolver
+        (mutante `not k or not fn`->and procedía con key vacía)."""
+        st.CFG['debrid_provider'] = 'real-debrid'
+        st.CFG['debrid_key'] = ''
+        m = unittest.mock.Mock(return_value='http://dl/x')
+        with unittest.mock.patch.dict(db._DB_RESOLVE, {'real-debrid': m}):
+            self.assertIsNone(db._db_resolve('real-debrid', 'h', 0))
+        m.assert_not_called()
+
 
 class TestVideoLinks(unittest.TestCase):
     def test_filtra_videos(self):
@@ -178,21 +188,59 @@ class TestDbResolvers(_DbBase):
         self.assertEqual(out, 'https://rd/dl')
         self.assertIn('addMagnet', calls[0][1])
 
-    def test_db_tb(self):
+    def test_db_rd_fi_igual_len_max(self):
+        """fi == len(fs) -> fuera de rango: cae al mayor vídeo (< no <=)."""
         s, _ = fake_session(
+            {'json': {'id': 't1'}},
+            {'json': {'files': [{'id': 2, 'name': 'v.mkv', 'bytes': 99}]}},
+            {'json': {}},
+            {'json': {'links': ['L1']}},
+            {'json': {'download': 'https://rd/dl'}})
+        with patch.object(db, '_session', return_value=s):
+            self.assertEqual(db._db_rd('k', self.H, 1), 'https://rd/dl')
+
+    def test_db_rd_segundo_video_link_correcto(self):
+        """fi=1 con 2 vídeos: unrestrict recibe links[1] (fs.index), no [0]
+        (mutantes Or/In@252 caían a links[0])."""
+        s, calls = fake_session(
+            {'json': {'id': 't1'}},
+            {'json': {'files': [{'id': 1, 'name': 'a.mkv', 'bytes': 1},
+                                {'id': 2, 'name': 'b.mkv', 'bytes': 2}]}},
+            {'json': {}},
+            {'json': {'links': ['L0', 'L2']}},
+            {'json': {'download': 'https://rd/dl2'}})
+        with patch.object(db, '_session', return_value=s):
+            out = db._db_rd('k', self.H, 1)
+        self.assertEqual(out, 'https://rd/dl2')
+        self.assertEqual(calls[4][2]['data']['link'], 'L2')   # unrestrict/link
+
+    def test_db_tb(self):
+        s, calls = fake_session(
             {'json': {'data': {'torrent_id': 9}}},
             {'json': {'data': {'link': 'https://tb/dl'}}})
         with patch.object(db, '_session', return_value=s):
             self.assertEqual(db._db_tb('k', self.H, 0), 'https://tb/dl')
+        self.assertEqual(calls[1][2]['params']['torrent_id'], 9)   # Or@263
+
+    def test_db_tb_data_string_directa(self):
+        """data como string URL (sin .link): el fallback `or data` debía
+        devolverla — BUG: `(data or {}).get('link')` crasheaba con
+        AttributeError antes de llegar al fallback."""
+        s, _ = fake_session(
+            {'json': {'data': {'torrent_id': 9}}},
+            {'json': {'data': 'https://tb/direct'}})
+        with patch.object(db, '_session', return_value=s):
+            self.assertEqual(db._db_tb('k', self.H, 0), 'https://tb/direct')
 
     def test_db_ad(self):
-        s, _ = fake_session(
+        s, calls = fake_session(
             {'json': {'data': {'magnets': [{'id': 'm1'}]}}},
             {'json': {'data': {'magnets': {'links': [
                 {'filename': 'v.mkv', 'link': 'L'}]}}}},
             {'json': {'data': {'link': 'https://ad/dl'}}})
         with patch.object(db, '_session', return_value=s):
             self.assertEqual(db._db_ad('k', self.H, 0), 'https://ad/dl')
+        self.assertEqual(calls[1][2]['params']['id'], 'm1')       # Or@276
 
     def test_db_ad_sin_video_none(self):
         s, _ = fake_session(
@@ -207,6 +255,20 @@ class TestDbResolvers(_DbBase):
             {'path': 'a/b.mkv', 'link': 'PL', 'size': 5}]}})
         with patch.object(db, '_session', return_value=s):
             self.assertEqual(db._db_pm('k', self.H, 0), 'PL')
+
+    def test_db_pm_fi_igual_len_max(self):
+        """fi == len(fs) -> max por size, no IndexError (Lt@299)."""
+        s, _ = fake_session({'json': {'content': [
+            {'path': 'a/b.mkv', 'link': 'PL', 'size': 5}]}})
+        with patch.object(db, '_session', return_value=s):
+            self.assertEqual(db._db_pm('k', self.H, 1), 'PL')
+
+    def test_db_ed_fi_igual_len_fallback(self):
+        """fi == len(files) -> files[0] como default (Lt@310)."""
+        s, _ = fake_session({'json': {'files': [
+            {'filename': 'v.mkv', 'url': 'EU'}]}})
+        with patch.object(db, '_session', return_value=s):
+            self.assertEqual(db._db_ed('k', self.H, 1), 'EU')
 
     def test_db_pm_sin_video_none(self):
         s, _ = fake_session({'json': {'content': [{'path': 'a.txt'}]}})
@@ -225,11 +287,23 @@ class TestDbResolvers(_DbBase):
             self.assertEqual(db._db_ed('k', self.H, 0), 'EL')
 
     def test_db_dl(self):
-        s, _ = fake_session(
+        s, calls = fake_session(
             {'json': {'value': {'id': 'i1'}}},
             {'json': {'value': [{'name': 'v.mkv', 'downloadUrl': 'DU'}]}})
         with patch.object(db, '_session', return_value=s):
             self.assertEqual(db._db_dl('k', self.H, 0), 'DU')
+        self.assertTrue(calls[0][2]['json']['async'])            # True@320
+        self.assertIn('/i1/', calls[1][1])                       # Or@322
+
+    def test_db_oc_en_cola_con_videos_none(self):
+        """status!=downloaded -> None aunque explore tenga vídeos (Or@336:
+        el `or` del guarda también corta con requestId presente)."""
+        s, _ = fake_session(
+            {'json': {'requestId': 'r1', 'status': 'created',
+                      'url': 'https://dl01.offcloud.com/cloud/download/r1'}},
+            {'json': [{'url': 'dir/f.mkv'}]})
+        with patch.object(db, '_session', return_value=s):
+            self.assertIsNone(db._db_oc('k', self.H, 0))
 
     def test_db_oc(self):
         """Offcloud: cloud(add magnet) downloaded -> explore -> mayor video."""
@@ -248,13 +322,15 @@ class TestDbResolvers(_DbBase):
             self.assertIsNone(db._db_oc('k', self.H, 0))
 
     def test_db_pio(self):
-        s, _ = fake_session(
+        s, calls = fake_session(
             {'json': {'transfer': {'id': 9, 'file_id': 100}}},
             {'json': {'files': [{'id': 7, 'name': 'v.mkv', 'size': 9},
                                 {'id': 8, 'name': 'n.txt', 'size': 1}]}})
         with patch.object(db, '_session', return_value=s):
             out = db._db_pio('k', self.H, 0)
         self.assertEqual(out, 'https://api.put.io/v2/files/7/download?oauth_token=k')
+        q = calls[1][2]['params']
+        self.assertEqual((q['parent_id'], q['per_page']), (100, 200))  # Or/200@367
 
     def test_db_pio_sin_video_none(self):
         s, _ = fake_session(
@@ -290,7 +366,91 @@ class TestDbResolvers(_DbBase):
         st.CFG['debrid_provider'] = 'real-debrid'
         s, _ = fake_session(RuntimeError('api caída'))
         with patch.object(db, '_session', return_value=s):
-            self.assertIsNone(db._db_resolve('real-debrid', self.H, 0))
+            self.is_none = db._db_resolve('real-debrid', self.H, 0)
+            self.assertIsNone(self.is_none)
+
+
+class TestUsenet(_DbBase):
+    """_db_usenet — torbox createusenetdownload -> mylist -> requestdl."""
+
+    def test_sin_torbox_none(self):
+        st.CFG.clear()
+        self.assertIsNone(db._db_usenet('https://x/y.nzb'))
+
+    def test_flujo_completo(self):
+        st.CFG['debrid_provider'] = 'torbox'
+        s, calls = fake_session(
+            {'json': {'data': {'usenetdownload_id': 7}}},
+            {'json': {'data': [{'usenetdownload_id': 7, 'files': [
+                {'id': 3, 'name': 'v.mkv', 'size': 9}]}]}},
+            {'json': {'data': {'link': 'https://tb/nzb'}}})
+        with patch.object(db, '_session', return_value=s):
+            out = db._db_usenet('https://x/y.nzb')
+        self.assertEqual(out, 'https://tb/nzb')
+        q = calls[2][2]['params']
+        self.assertEqual(q['usenet_id'], 7)
+        self.assertEqual(q['file_id'], 3)              # vídeo mayor elegido
+
+    def test_fsel_solo_videos_no_otros(self):
+        """mylist con txt más grande que el mkv: file_id sigue siendo el
+        vídeo (mutante Or@420 elegía del listado SIN filtrar)."""
+        st.CFG['debrid_provider'] = 'torbox'
+        s, calls = fake_session(
+            {'json': {'data': {'usenetdownload_id': 7}}},
+            {'json': {'data': [{'usenetdownload_id': 7, 'files': [
+                {'id': 3, 'name': 'v.mkv', 'size': 9},
+                {'id': 8, 'name': 'big.txt', 'size': 999}]}]}},
+            {'json': {'data': {'link': 'https://tb/nzb'}}})
+        with patch.object(db, '_session', return_value=s):
+            db._db_usenet('https://x/y.nzb')
+        self.assertEqual(calls[2][2]['params']['file_id'], 3)
+
+    def test_mylist_otro_item_no_id(self):
+        """El item se busca por usenetdownload_id==uid (mutante Eq@416)."""
+        st.CFG['debrid_provider'] = 'torbox'
+        s, calls = fake_session(
+            {'json': {'data': {'usenetdownload_id': 7}}},
+            {'json': {'data': [{'usenetdownload_id': 99, 'files': [
+                {'id': 1, 'name': 'otro.mkv', 'size': 1}]}]}},
+            {'json': {'data': {'link': 'https://tb/nzb'}}})
+        with patch.object(db, '_session', return_value=s):
+            db._db_usenet('https://x/y.nzb')
+        self.assertNotIn('file_id', calls[2][2]['params'])  # uid 7 no está
+
+    def test_sin_uid_none(self):
+        st.CFG['debrid_provider'] = 'torbox'
+        s, _ = fake_session({'json': {'data': {}}})
+        with patch.object(db, '_session', return_value=s):
+            self.assertIsNone(db._db_usenet('https://x/y.nzb'))
+
+
+class TestDbStream(_DbBase):
+    """_db_stream — /dp/: resuelve y re-abre con headers de validación."""
+
+    def test_reenvia_solo_headers_validacion(self):
+        """Range/If-* se reenvían; el resto no (mutante In@441)."""
+        st.CFG['debrid_provider'] = 'real-debrid'
+        s, calls = fake_session({'json': {}})
+        with patch.object(db, '_db_resolve', return_value='https://cdn.x/f'), \
+                patch.object(db, '_session', return_value=s):
+            db._db_stream('real-debrid', 'h', 0,
+                          {'Range': 'bytes=0-1', 'If-None-Match': 'e',
+                           'User-Agent': 'u', 'Cookie': 'secret'})
+        fwd = calls[0][2]['headers']
+        self.assertEqual(fwd, {'Range': 'bytes=0-1', 'If-None-Match': 'e'})
+        self.assertTrue(calls[0][2]['stream'])           # stream=True (True@442)
+
+    def test_session_por_host_resuelto(self):
+        st.CFG['debrid_provider'] = 'real-debrid'
+        s, _ = fake_session({'json': {}})
+        with patch.object(db, '_db_resolve', return_value='https://cdn.ej.com/f'), \
+                patch.object(db, '_session', return_value=s) as m:
+            db._db_stream('real-debrid', 'h', 0, {})
+        m.assert_called_once_with('cdn.ej.com')          # no 'debrid' (Or@439)
+
+    def test_sin_url_none(self):
+        with patch.object(db, '_db_resolve', return_value=None):
+            self.assertIsNone(db._db_stream('real-debrid', 'h', 0, {}))
 
 
 class TestResolveFi(unittest.TestCase):
@@ -394,3 +554,162 @@ class TestMultiDebrid(unittest.TestCase):
         db._db_mark_one('torbox', s)
         self.assertTrue(s['name'].startswith('⚡ '))
         self.assertNotIn('[', s['name'])
+
+
+class TestBatchCaps(_DbBase):
+    """miss[:40] (o [:20] en debrid-link): los checkers trocean el lote —
+    el hash 41 nunca viaja ni se evalúa (mutantes const 40+1/20+1)."""
+    H41 = ['%040x' % i for i in range(41)]
+
+    def test_rd_batch_40(self):
+        s, calls = fake_session({'json': {}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_rd('k', self.H41)
+        self.assertNotIn(self.H41[40], calls[0][1])
+        self.assertEqual(len(db._DB_OK), 40)
+
+    def test_tb_batch_40(self):
+        s, calls = fake_session({'json': {'data': {}}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_tb('k', self.H41)
+        self.assertNotIn(self.H41[40], calls[0][1])
+        self.assertEqual(len(db._DB_OK), 40)
+
+    def test_ad_batch_40(self):
+        s, calls = fake_session({'json': {'data': {'magnets': []}}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_ad('k', self.H41)
+        self.assertEqual(len(calls[0][2]['data']), 40)
+        self.assertEqual(len(db._DB_OK), 40)
+
+    def test_pm_batch_40(self):
+        s, calls = fake_session({'json': {'response': []}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_pm('k', self.H41)
+        self.assertEqual(len(calls[0][2]['data']), 40)
+
+    def test_ed_batch_40(self):
+        s, calls = fake_session({'json': []})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_ed('k', self.H41)
+        self.assertEqual(len(calls[0][2]['json']['urls']), 40)
+        self.assertEqual(len(db._DB_OK), 40)
+
+    def test_oc_batch_40(self):
+        s, calls = fake_session({'json': {}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_oc('k', self.H41)
+        self.assertEqual(len(calls[0][2]['data']), 40)
+        self.assertEqual(len(db._DB_OK), 40)
+
+    def test_dl_batch_20(self):
+        s, calls = fake_session({'json': {'value': True}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_dl('k', self.H41[:21])
+        self.assertEqual(len(calls), 20)             # una petición por magnet
+        self.assertEqual(len(db._DB_OK), 20)
+
+    def test_pio_batch_40(self):
+        s, _ = fake_session({'json': {'transfers': []}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_pio('k', self.H41)
+        self.assertEqual(len(db._DB_OK), 40)
+
+
+class TestCheckersEdges(_DbBase):
+    """Ramas blandas de los checkers (mutantes boolop/cmp/const)."""
+    H = '7' * 40
+
+    def test_pm_flags_menos_que_miss(self):
+        """response más corto que miss: zip lenient rellena lo que hay
+        (mutante strict=False->True lanzaba ValueError -> todo miss)."""
+        s, _ = fake_session({'json': {'response': [True]}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_pm('k', [self.H, 'b' * 40])
+        self.assertTrue(db._DB_OK[self.H])
+
+    def test_ed_data_vacia_results(self):
+        """data:[] + results:[hit] -> results se usa (mutante Or->And)."""
+        s, _ = fake_session({'json': {'data': [], 'results': [
+            {'url': f'magnet:?xt=urn:btih:{self.H}', 'cached': True}]}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_ed('k', [self.H])
+        self.assertTrue(db._DB_OK[self.H])
+
+    def test_ed_cached_ausente_es_true(self):
+        """Item sin clave 'cached' -> default True (mutante True->False)."""
+        s, _ = fake_session({'json': [
+            {'url': f'magnet:?xt=urn:btih:{self.H}'}]})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_ed('k', [self.H])
+        self.assertTrue(db._DB_OK[self.H])
+
+    def test_ed_hash_ausente_no_hit(self):
+        """Hash no devuelto por el checker -> False, no hit (mutante In->NotIn)."""
+        s, _ = fake_session({'json': [
+            {'url': 'magnet:?xt=urn:btih:' + 'z' * 40, 'cached': True}]})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_ed('k', [self.H])
+        self.assertFalse(db._DB_OK[self.H])
+
+    def test_oc_valor_true_directo(self):
+        """Offcloud: valor booleano (no dict) True -> hit (Is/True@135)."""
+        s, _ = fake_session({'json': {
+            f'magnet:?xt=urn:btih:{self.H}': True}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_oc('k', [self.H])
+        self.assertTrue(db._DB_OK[self.H])
+
+    def test_oc_status_no_cached_miss(self):
+        """status 'downloading' (dict) no es 'cached' -> miss."""
+        s, _ = fake_session({'json': {
+            f'magnet:?xt=urn:btih:{self.H}': {'status': 'downloading'}}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_oc('k', [self.H])
+        self.assertFalse(db._DB_OK[self.H])
+
+    def test_pio_per_page_100(self):
+        s, calls = fake_session({'json': {'transfers': []}})
+        with patch.object(db, '_session', return_value=s):
+            db._dbc_pio('k', [self.H])
+        self.assertEqual(calls[0][2]['params']['per_page'], 100)
+
+
+class TestDbCfgEdge(_DbBase):
+    def test_provider_vacio_con_key_no_cfg(self):
+        """provider='' con key -> NO se añade: exige p AND k (And@32)."""
+        st.CFG['debrid_provider'] = ''
+        self.assertEqual(db._db_cfgs(), [])
+
+    def test_avail_sin_cfgs_no_explota(self):
+        """Sin providers: {} sin tocar la red (mutante `cfgs and miss`->or
+        lanzaba ThreadPoolExecutor(max_workers=0) -> ValueError)."""
+        st.CFG.clear()
+        self.assertEqual(db._db_avail_map(['a' * 40]), {})
+
+    def test_db_ok_cap_5000(self):
+        """_DB_OK >5000 -> se vacía y re-chequea (Gt/5000+1@169)."""
+        db._DB_OK.update({'%040x' % i: 'rd' for i in range(5001)})
+        st.CFG['debrid_provider'] = 'real-debrid'
+        s, _ = fake_session({'json': {}})
+        with patch.object(db, '_session', return_value=s):
+            db._db_avail_map(['a' * 40])
+        self.assertLess(len(db._DB_OK), 5000)        # purgado y repoblado
+
+    def test_db_ok_exacto_5000_no_purga(self):
+        """Exactamente 5000 -> NO purga: la cota es >5000 no >=5000 (Gt@169)."""
+        db._DB_OK.update({'%040x' % i: 'rd' for i in range(5000)})
+        s, _ = fake_session({'json': {}})
+        with patch.object(db, '_session', return_value=s):
+            db._db_avail_map(['b' * 40])
+        self.assertEqual(len(db._DB_OK), 5001)       # 5000 + el nuevo
+
+
+class TestMarkEdge(_DbBase):
+    def test_nombre_original_conservado(self):
+        """'⚡ ' + tag + nombre — el nombre NO se pierde (Or@224)."""
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='k',
+                      debrid_providers={'torbox': 'k2'})
+        s = {'infoHash': 'h', 'name': 'YTS', 'fileIdx': 0}
+        db._db_mark_one('torbox', s)
+        self.assertTrue(s['name'].endswith('YTS'))

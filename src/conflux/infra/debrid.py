@@ -264,7 +264,8 @@ def _db_tb(k, h, fi):
     lnk = s.get('https://api.torbox.app/v1/api/torrents/requestdl',
                 params={'token': k, 'torrent_id': tid, 'file_id': fi},
                 headers=h_, timeout=10).json()
-    return (lnk.get('data') or {}).get('link') or (lnk.get('data'))
+    d = lnk.get('data')
+    return (d.get('link') or d) if isinstance(d, dict) else d
 
 
 def _db_ad(k, h, fi):

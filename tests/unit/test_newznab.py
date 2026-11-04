@@ -50,6 +50,24 @@ class TestNewznab(unittest.TestCase):
         finally:
             undo()
 
+    def test_url_vacia_no_pide(self):
+        """newznab_url='' pero key+via ok -> [] sin llamar a _session
+        (mutante Or@90 enmascarado por el except de red)."""
+        s, _ = fake_session({'content': _XML})
+        _, undo = cfg_swap(**{**self.CFG, 'newznab_url': ''})
+        try:
+            with patch.object(nz, '_session', return_value=s) as m:
+                self.assertEqual(nz._newznab('movie', 'tt0137523'), [])
+            m.assert_not_called()
+        finally:
+            undo()
+
+    def test_movie_con_se_no_manda_season(self):
+        """stype=movie no añade season/ep aunque el sid traiga :S:E (And@96)."""
+        _, calls = self._run('movie', 'tt0137523:1:2')
+        self.assertNotIn('season', calls[0][2]['params'])
+        self.assertNotIn('ep', calls[0][2]['params'])
+
     def test_sin_torbox_vacio(self):
         """Usenet solo se emite con debrid torbox (los NZB se resuelven ahí)."""
         _, undo = cfg_swap(**{**self.CFG, 'debrid_provider': 'real-debrid'})
@@ -71,10 +89,26 @@ class TestNewznab(unittest.TestCase):
         self.assertEqual(len(out), 1)          # item sin enclosure filtrado
         s = out[0]
         self.assertEqual(s['name'], 'Usenet')
+        self.assertEqual(s['title'], 'Movie.1080p')  # title real, no 'usenet' (Or@111)
         self.assertIn('/nzb/', s['url'])
         link = base64.urlsafe_b64decode(s['url'].rsplit('/', 1)[-1] + '==').decode()
         self.assertEqual(link, 'https://nz.example/get/x.nzb')
         self.assertEqual(s['behaviorHints']['videoSize'], 2000)
+
+    def test_size_de_enclosure_length(self):
+        """Sin attr size: sz cae a enclosure@length (mutante IsNot@112)."""
+        xml = b"""<?xml version="1.0"?><rss><channel><item>
+          <title>X</title>
+          <enclosure url="https://nz.example/y.nzb" length="1500"/>
+        </item></channel></rss>"""
+        s, _ = fake_session({'content': xml})
+        _, undo = cfg_swap(**self.CFG)
+        try:
+            with patch.object(nz, '_session', return_value=s):
+                out = nz._newznab('movie', 'tt0137523')
+        finally:
+            undo()
+        self.assertEqual(out[0]['behaviorHints']['videoSize'], 1500)
 
     def test_error_red_vacio(self):
         s, _ = fake_session(Exception('down'))
@@ -116,6 +150,34 @@ class TestNntp(unittest.TestCase):
                 self.assertIsNone(nz._nntp_server(), miss)
             finally:
                 undo()
+
+    def test_defaults_port_ssl_conns(self):
+        """Sin nntp_port/ssl/connections -> 563, nntps, 5 conns (563+1, 5+1)."""
+        _, undo = cfg_swap(newznab_url='', newznab_key='',
+                           nntp_host='h', nntp_user='u', nntp_pass='p')
+        try:
+            self.assertEqual(nz._nntp_server(), 'nntps://u:p@h:563/5')
+        finally:
+            undo()
+
+    def test_port_y_conns_invalidos_default(self):
+        """port/conns no numéricos -> 563/5 (fallbacks del int())."""
+        _, undo = cfg_swap(**{**self.CFG, 'nntp_port': 'abc',
+                              'nntp_connections': 'xyz'})
+        try:
+            self.assertEqual(nz._nntp_server(),
+                             'nntps://u:p@news.ej.com:563/5')
+        finally:
+            undo()
+
+    def test_conns_cero_clamp_a_uno(self):
+        """conns=0 -> max(1, 0) = 1 (mutante Max->Min lo dejaba en 0)."""
+        _, undo = cfg_swap(**{**self.CFG, 'nntp_connections': 0})
+        try:
+            self.assertEqual(nz._nntp_server(),
+                             'nntps://u:p@news.ej.com:563/1')
+        finally:
+            undo()
 
     def test_nntp_solo_sin_torbox(self):
         """Sin debrid pero con NNTP: emite la variante nativa (nzbUrl)."""
@@ -234,6 +296,38 @@ class TestSabnzbd(unittest.TestCase):
         link = base64.urlsafe_b64decode(
             out[0]['url'].rsplit('/', 1)[-1] + '==').decode()
         self.assertEqual(link, 'https://nz.example/get/x.nzb')
+
+    def test_cfg_url_vacia_con_key_none(self):
+        """url='' con key sí -> None: el guarda exige AMBAS (mutante And@64)."""
+        _, undo = cfg_swap(**{**self.CFG, 'sabnzbd_url': ''})
+        try:
+            self.assertIsNone(nz._sab_cfg())
+        finally:
+            undo()
+
+    def test_add_no_http_no_llama(self):
+        """nzb_url no-http -> None sin llamar a _session (mutante Or@70:
+        el except de red lo enmascaraba — verificar que NO se pide)."""
+        s, _ = fake_session({'json': {'status': True}})
+        _, undo = cfg_swap(**self.CFG)
+        try:
+            with patch.object(nz, '_session', return_value=s) as m:
+                self.assertIsNone(nz._sab_add('javascript:x'))
+            m.assert_not_called()
+        finally:
+            undo()
+
+    def test_add_caido_health_fail(self):
+        """Excepción de red -> _health(False) registrado (mutante False->True)."""
+        import conflux.core.state as st
+        s, _ = fake_session(Exception('down'))
+        _, undo = cfg_swap(**self.CFG)
+        try:
+            with patch.object(nz, '_session', return_value=s):
+                nz._sab_add('https://x/y.nzb')
+        finally:
+            undo()
+        self.assertGreaterEqual(st.HEALTH['SABnzbd']['fail'], 1)
 
     def test_las_tres_vias_a_la_vez(self):
         """TorBox + NNTP + SABnzbd: tres variantes del mismo item."""
