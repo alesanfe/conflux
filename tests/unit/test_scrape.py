@@ -91,6 +91,7 @@ class TestEztv(unittest.TestCase):
         with patch.object(sc, '_session', return_value=s):
             out = sc._sc_eztv('series', 'tt0944947:1:2')
         self.assertEqual(calls[0][2]['params']['imdb_id'], '0944947')  # imdb[2:]
+        self.assertEqual(calls[0][2].get('timeout'), 10)               # 10+1@87
         self.assertEqual(len(out), 1)
         self.assertIn('S01E02', out[0]['title'])
         self.assertEqual(out[0]['behaviorHints']['seeders'], 33)
@@ -426,6 +427,21 @@ class TestRss(unittest.TestCase):
         s, _ = fake_session({'content': b'<rss><channel></channel></rss>'})
         with patch.object(sc, '_session', return_value=s):
             self.assertEqual(sc._sc_rss('https://f/x', 'movie', 'tt1'), [])
+
+    def test_tipo_no_soportado_no_pide(self):
+        """stype fuera de movie/series/anime -> [] SIN fetch (Or@239:
+        `and` dejaría pasar el gate y pediría al feed)."""
+        s, _ = fake_session({'content': _RSS})
+        with patch.object(sc, '_session', return_value=s) as msess:
+            self.assertEqual(sc._sc_rss('https://f/x', 'channel', 'tt1'), [])
+        msess.assert_not_called()
+
+    def test_sin_sid_no_pide(self):
+        """sid falsy -> [] SIN fetch (segundo or del mismo gate)."""
+        s, _ = fake_session({'content': _RSS})
+        with patch.object(sc, '_session', return_value=s) as msess:
+            self.assertEqual(sc._sc_rss('https://f/x', 'movie', ''), [])
+        msess.assert_not_called()
 
 
 if __name__ == '__main__':

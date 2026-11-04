@@ -723,6 +723,15 @@ class TestCollectSkipGuard(unittest.TestCase):
              mock.patch.object(S, '_skip_manifest', return_value=None):
             self.assertIsNone(S._collect_skip(0, 'movie', 'tt1', set()))
 
+    def test_cooldown_borde_justo_expira(self):
+        """t == cd[0] -> expirado -> None (Lt@61: <= lo contaría vigente)."""
+        now = time.time()
+        st.COOLDOWN['Foo'] = (now, 'cuota')
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, '_skip_manifest', return_value=None), \
+             mock.patch.object(S.time, 'time', return_value=now):
+            self.assertIsNone(S._collect_skip(0, 'movie', 'tt1', set()))
+
 
 class TestQuotaHit(unittest.TestCase):
     """_quota_hit: solo dicts con título que matchea el regex de cuota."""
@@ -1161,9 +1170,11 @@ class TestUrlHealth(unittest.TestCase):
         self.assertEqual(len(ss), 2)
 
     def test_poda_a_2001(self):
-        for i in range(1001):
+        """2001 entradas exactas > 2000 -> poda (2000+1@458: >2001 la saltaría)."""
+        for i in range(1000):
             S._URL_BAD[f'http://b{i}'] = (1, 0.0)
-            S._URL_OK[f'http://o{i}'] = 0.0               # 2002 > 2000 -> poda
+        for i in range(1001):
+            S._URL_OK[f'http://o{i}'] = 0.0               # 2001 total
         with mock.patch.object(S, '_url_prune') as p, \
              mock.patch.object(S._POOL_BG, 'submit'):
             S._url_health([])
@@ -1612,3 +1623,53 @@ class TestMetrics(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestCollectScMut(unittest.TestCase):
+    """_collect_sc (scrapers integrados): except aislado + usable = no-spam."""
+
+    def test_exception_repr_truncado_100(self):
+        """log_ev err=repr(e)[:100] (100+1@173 -> 101 chars)."""
+        with mock.patch.object(S, '_scraper',
+                               side_effect=ValueError('x' * 200)), \
+             mock.patch.object(S, 'log_ev') as le:
+            name, ss, n = S._collect_sc('YTS', 'movie', 'tt1')
+        self.assertEqual((name, ss, n), ('YTS', [], 0))
+        self.assertEqual(le.call_args.kwargs.get('err')
+                         or le.call_args[1].get('err'), repr(ValueError('x' * 200))[:100])
+        self.assertEqual(len(le.call_args[1].get('err')), 100)
+
+    def test_usable_filtra_spam_y_no_dicts(self):
+        """sum(isinstance and not _spam): 2 ok / 1 spam / 1 str -> 2
+        (not-elim@175 contaría el spam; And->Or@175 contaría los str)."""
+        ss = [{'title': 'ok 1080p'}, {'title': 'ok2 720p'}, 'rueda',
+              {'title': 'upgrade to premium'}]
+        with mock.patch.object(S, '_scraper', return_value=ss):
+            name, out, usable = S._collect_sc('YTS', 'movie', 'tt1')
+        self.assertEqual((name, out), ('YTS', ss))
+        self.assertEqual(usable, 2)
+
+
+class TestRexBadMut(unittest.TestCase):
+    def test_pat_truncado_60(self):
+        """log_ev pat=p[:60] (60+1@272 -> 61 chars en el log)."""
+        from tests import cfg_swap
+        _, undo = cfg_swap(k_mut_test=['(' + 'a' * 70])   # _strs exige lista
+        try:
+            with mock.patch.object(S, '_pcfg', return_value=None), \
+                 mock.patch.object(S, 'log_ev') as le:
+                S._rex_pats('k_mut_test')
+            self.assertEqual(len(le.call_args[1].get('pat')), 60)
+        finally:
+            undo()
+
+
+class TestRowkeyMut(unittest.TestCase):
+    def test_k2_es_qscore_de_r5(self):
+        """len(r)>5 -> _qscore(r[5]) en k[2] (5+1@350: >6 -> {} -> k[2]=0;
+        Gt@350: la fila len-6 usa r[5] igual)."""
+        from conflux.domain.text import _qscore
+        f = {'codec': 'X265', 'es': False}   # 'es' lo exige _seed_score
+        k = S._rowkey(('out', '1080P', 7, 2.0, 1, f))
+        self.assertEqual(k[2], -_qscore(f))
+        self.assertNotEqual(k[2], 0)

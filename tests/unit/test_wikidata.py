@@ -44,7 +44,7 @@ class TestWikidata(unittest.TestCase):
         }
         seen = []
         def fake_fetch(url, t=6):
-            seen.append(url)
+            seen.append((url, t))
             for k, spec in s_payloads.items():
                 if k in url:
                     return spec['json']
@@ -54,6 +54,20 @@ class TestWikidata(unittest.TestCase):
         self.assertEqual(out['website'], 'https://web.com')
         self.assertEqual(out['year'], '2005')
         self.assertEqual(out['social'][0]['url'], 'https://x.com/canal')
+        # timeouts: search 6s, entity 8s (6+1@35 / 8+1@38)
+        self.assertEqual(seen[0][1], 6)
+        self.assertEqual(seen[1][1], 8)
+
+    def test_wd_country_timeout_6(self):
+        """La segunda EntityData va con timeout=6 (6+1@57)."""
+        claims = {'P17': _claim({'id': 'Q30'})}
+        seen = []
+        def fake_fetch(url, t=0):
+            seen.append(t)
+            return {'entities': {'Q30': {'labels': {'en': {'value': 'US'}}}}}
+        with patch.object(W, 'fetch', fake_fetch):
+            W._wd_country(claims)
+        self.assertEqual(seen, [6])
 
     def test_cache_hit_sin_fetch(self):
         W._wd_c['UCX'] = (W.time.time(), {'country': 'JP'})

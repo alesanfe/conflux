@@ -111,6 +111,8 @@ class TestNewznab(unittest.TestCase):
         self.assertEqual(out[0]['behaviorHints']['videoSize'], 1500)
 
     def test_error_red_vacio(self):
+        import conflux.core.state as st
+        fails = st.HEALTH.get('Newznab', {}).get('fail', 0)
         s, _ = fake_session(Exception('down'))
         _, undo = cfg_swap(**self.CFG)
         try:
@@ -118,6 +120,33 @@ class TestNewznab(unittest.TestCase):
                 self.assertEqual(nz._newznab('movie', 'tt0137523'), [])
         finally:
             undo()
+        # _health('Newznab', False,...) — mutante False->True@153 lo inflaría 'ok'
+        self.assertEqual(st.HEALTH['Newznab']['fail'], fails + 1)
+
+    def test_timeout_10_y_health_ok(self):
+        """GET al indexer con timeout=10 (10+1@147) y _health(True) al ok
+        (mutante True->False@150 lo mandaría a 'fail')."""
+        import conflux.core.state as st
+        oks = st.HEALTH.get('Newznab', {}).get('ok', 0)
+        _, calls = self._run()
+        self.assertEqual(calls[0][2].get('timeout'), 10)
+        self.assertEqual(st.HEALTH['Newznab']['ok'], oks + 1)
+
+    def test_cap_30_streams(self):
+        """out[:30] — 31 items -> 30 streams exactos (mutante 30+1@151)."""
+        items = ''.join(
+            f'<item><title>T{i}</title>'
+            f'<enclosure url="https://nz.example/{i}.nzb" length="1"/></item>'
+            for i in range(31))
+        xml = f'<?xml version="1.0"?><rss><channel>{items}</channel></rss>'.encode()
+        s, _ = fake_session({'content': xml})
+        _, undo = cfg_swap(**self.CFG)
+        try:
+            with patch.object(nz, '_session', return_value=s):
+                out = nz._newznab('movie', 'tt0137523')
+        finally:
+            undo()
+        self.assertEqual(len(out), 30)
 
 
 class TestNntp(unittest.TestCase):
@@ -152,10 +181,15 @@ class TestNntp(unittest.TestCase):
                 undo()
 
     def test_defaults_port_ssl_conns(self):
-        """Sin nntp_port/ssl/connections -> 563, nntps, 5 conns (563+1, 5+1)."""
+        """Sin nntp_port/ssl/connections -> 563, nntps, 5 conns (563+1, 5+1).
+        cfg_swap hace MERGE: hay que hacer pop de las claves reales para
+        ejercitar el branch del default (True@46 / 563+1@47)."""
+        import conflux.core.state as st
         _, undo = cfg_swap(newznab_url='', newznab_key='',
                            nntp_host='h', nntp_user='u', nntp_pass='p')
         try:
+            for k in ('nntp_port', 'nntp_ssl', 'nntp_connections'):
+                st.CFG.pop(k, None)
             self.assertEqual(nz._nntp_server(), 'nntps://u:p@h:563/5')
         finally:
             undo()
@@ -259,6 +293,7 @@ class TestSabnzbd(unittest.TestCase):
         self.assertEqual(p['mode'], 'addurl')
         self.assertEqual(p['name'], 'https://nz.example/get/x.nzb')
         self.assertEqual(p['apikey'], 'sk')
+        self.assertEqual(calls[0][2].get('timeout'), 10)   # 10+1@77
 
     def test_add_rechazado_o_caído_none(self):
         s, _ = fake_session({'json': {'status': False}})

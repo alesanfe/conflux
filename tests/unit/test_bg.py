@@ -70,6 +70,41 @@ class TestTraktSync(unittest.TestCase):
         self.assertEqual(r.call_args[1].get('check'), False)
         le.assert_called_once_with('trakt_sync', rc=3, out='locked')
 
+    def test_kwargs_subproceso(self):
+        """capture_output/text/timeout son contrato (mutantes: sin captura
+        -> out=''; text->False -> bytes en el log; timeout distinto)."""
+        bg.CFG['trakt_access_token'] = 'tok'
+        with patch.object(bg.os.path, 'exists', return_value=True), \
+                patch.object(bg.subprocess, 'run',
+                             return_value=MagicMock(returncode=0, stdout='ok')) as r, \
+                patch.object(bg, 'log_ev'):
+            bg._trakt_sync()
+        kw = r.call_args[1]
+        self.assertIs(kw['capture_output'], True)
+        self.assertIs(kw['text'], True)
+        self.assertEqual(kw['timeout'], 300)
+
+    def test_out_cap_200(self):
+        """stdout se loguea strip()[:200] (200+1@32)."""
+        bg.CFG['trakt_access_token'] = 'tok'
+        with patch.object(bg.os.path, 'exists', return_value=True), \
+                patch.object(bg.subprocess, 'run',
+                             return_value=MagicMock(returncode=0,
+                                                    stdout='x' * 300)), \
+                patch.object(bg, 'log_ev') as le:
+            bg._trakt_sync()
+        self.assertEqual(le.call_args[1]['out'], 'x' * 200)
+
+    def test_err_cap_100(self):
+        """repr(e)[:100] en el except de _trakt_sync (100+1)."""
+        bg.CFG['trakt_access_token'] = 'tok'
+        with patch.object(bg.os.path, 'exists', return_value=True), \
+                patch.object(bg.subprocess, 'run',
+                             side_effect=OSError('e' * 300)), \
+                patch.object(bg, 'log_ev') as le:
+            bg._trakt_sync()
+        self.assertEqual(len(le.call_args[1]['err']), 100)
+
     def test_excepcion_no_muere_daemon(self):
         bg.CFG['trakt_access_token'] = 'tok'
         with patch.object(bg.os.path, 'exists', return_value=True), \
@@ -108,13 +143,20 @@ class TestRefresher(unittest.TestCase):
             if n[0] > 2:
                 raise _StopLoop
         with patch.object(bg.time, 'sleep', fake_sleep), \
-                patch.object(bg, 'refresh_manifests', side_effect=RuntimeError('x')), \
-                patch.object(bg, 'epg_kick', side_effect=RuntimeError('x')), \
-                patch.object(bg, '_trakt_sync', side_effect=RuntimeError('x')), \
-                patch.object(bg, 'log_ev'):
+                patch.object(bg, 'refresh_manifests',
+                             side_effect=RuntimeError('x' * 300)), \
+                patch.object(bg, 'epg_kick',
+                             side_effect=RuntimeError('x' * 300)), \
+                patch.object(bg, '_trakt_sync',
+                             side_effect=RuntimeError('x' * 300)), \
+                patch.object(bg, 'log_ev') as le:
             with self.assertRaises(_StopLoop):
                 bg._refresher()                       # 2 ticks pese a todo fallando
         self.assertEqual(n[0], 3)
+        # repr(e)[:100] en los 3 except del ciclo (100+1@61/65/69)
+        errs = {c.args[0]: len(c[1]['err']) for c in le.call_args_list}
+        self.assertEqual(errs, {'refresh_err': 100, 'epg_err': 100,
+                                'trakt_sync_err': 100})
 
 
 if __name__ == '__main__':

@@ -110,6 +110,47 @@ class TestProvision(unittest.TestCase):
                              {'catalogs': []})
         self.assertEqual(f.call_args[0][0], 'http://mf/SEC/manifest.json')
 
+    def test_urlopen_timeout_15(self):
+        """_encrypt -> urlopen(req, timeout=15) (mutante 15+1@43)."""
+        import json
+        resp = MagicMock()
+        resp.__enter__.return_value = MagicMock(
+            read=MagicMock(return_value=json.dumps({'encrypted_str': 'S'}).encode()))
+        with patch('urllib.request.urlopen', return_value=resp) as uo:
+            mf._encrypt({'a': 1})
+        self.assertEqual(uo.call_args.kwargs.get('timeout'), 15)
+
+    def test_fetch_manifest_timeout_15(self):
+        """fetch(base+'/manifest.json', 15) — segundo arg posicional
+        (mutante 15+1@49)."""
+        import conflux.infra.net as net
+        with patch.object(net, 'fetch', return_value={'catalogs': []}) as f:
+            mf._fetch_manifest('http://mf/SEC')
+        self.assertEqual(f.call_args[0][1], 15)
+
+    def test_log_warning_trunca_100(self):
+        """str(e)[:100] en el warning de provision (mutante 100+1@78)."""
+        with patch.object(mf, '_log') as lg:
+            self._run(enc_fail=OSError('x' * 150))
+        self.assertEqual(len(lg.warning.call_args[0][1]), 100)
+
+    def test_provision_con_otras_fuentes(self):
+        """SOURCES con fuente no-MF no impide provisionar (mutante Eq@59:
+        `s.name == 'MediaFusion'` -> `!=` en el primer guarda hace
+        early-return siempre que haya cualquier fuente)."""
+        st.SOURCES[:] = [st.Source('Otra', 'http://o')]
+        self._run()
+        self.assertTrue(any(s.name == 'MediaFusion' for s in st.SOURCES))
+
+    def test_once_inicial_false(self):
+        """_once arranca a False al cargar el módulo (mutante False@33:
+        setUp lo resetea y lo enmascara — hay que observar un exec nuevo)."""
+        spec = importlib.util.spec_from_file_location('mf_fresh',
+                                                      os.path.abspath(_p))
+        m2 = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m2)
+        self.assertFalse(m2._once)
+
     def test_maybe_no_thread_si_ya_existe(self):
         """SOURCES == [MediaFusion] solo -> maybe_provision NO lanza hilo
         (mutante Eq@83: `s.name == 'MF'` -> `!=` — con otras fuentes en la

@@ -284,7 +284,30 @@ class TestOptionsYReply(unittest.TestCase):
         h = self._h()
         h.headers = {'Accept-Encoding': 'gzip'}
         h.reply({'ok': 1})
+        h.send_response.assert_called_with(200)        # code=200 default (200+1@67)
         self.assertNotIn('Content-Encoding', self._hdrs(h))
+
+    def test_handler_timeout_30(self):
+        """H.timeout=30s: cliente que conecta y calla no retiene el hilo
+        (30+1@63)."""
+        self.assertEqual(srv.H.timeout, 30)
+
+    def test_log_message_fmt_y_ua_cap(self):
+        """log_message -> log_ev(msg=fmt%args, ua=ua[:60])
+        (Mod@66: el %% -> otro binop rompe; 60+1@66: ua[:61])."""
+        h = self._h()
+        h.headers = {'User-Agent': 'U' * 100}
+        with MagicMock() as _:
+            pass
+        import unittest.mock as um
+        with um.patch.object(srv, 'log_ev') as le:
+            srv.H.log_message(h, 'GET %s HTTP/1.1', '/stream/x')
+        self.assertEqual(le.call_args[1].get('msg'), 'GET /stream/x HTTP/1.1')
+        self.assertEqual(len(le.call_args[1].get('ua')), 60)
+
+    def test_request_queue_size_64(self):
+        """Backlog del kernel = 64 (64+1@403)."""
+        self.assertEqual(srv._Srv.request_queue_size, 64)
 
     def test_reply_pipe_roto_no_propaga(self):
         h = self._h()
@@ -393,13 +416,15 @@ class TestDbProxy(unittest.TestCase):
     def test_pasa_status_headers_y_chunks(self):
         import unittest.mock as um
         h = self._h()
-        with um.patch.object(srv, '_db_stream', return_value=self._resp()):
+        resp = self._resp()
+        with um.patch.object(srv, '_db_stream', return_value=resp):
             h._db_proxy('real-debrid', 'a' * 40, '0')
         h.send_response.assert_called_with(206)
         hdrs = {c.args[0] for c in h.send_header.call_args_list}
         self.assertIn('Content-Range', hdrs)
         self.assertNotIn('X-Skip', hdrs)              # solo headers Content-*
         self.assertEqual(h.wfile.write.call_count, 2)
+        resp.iter_content.assert_called_once_with(1 << 16)   # 64KB (16+1@279)
 
     def test_sin_stream_404(self):
         import unittest.mock as um
@@ -477,6 +502,15 @@ class TestFormYHtml(unittest.TestCase):
         h.send_response.assert_called_with(200)
         hdrs = {c.args[0]: c.args[1] for c in h.send_header.call_args_list}
         self.assertIn('text/html', hdrs['Content-Type'])
+
+    def test_html_xml_default_200(self):
+        """_html/_xml sin code -> send_response(200) (200+1@294 y 200+1@303)."""
+        h = self._h()
+        h._html('<h1>ok</h1>')
+        h.send_response.assert_called_with(200)
+        h.send_response.reset_mock()
+        h._xml('<rss/>')
+        h.send_response.assert_called_with(200)
 
     def test_form_content_length_no_numerico(self):
         """Content-Length: abc -> ValueError -> ln=0 -> form vacío (no crash)."""

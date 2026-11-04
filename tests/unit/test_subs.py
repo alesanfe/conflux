@@ -243,6 +243,7 @@ class TestOsLogin(unittest.TestCase):
         finally:
             undo()
         self.assertEqual(len(calls), 1, 'segundo login debio usar cache')
+        self.assertEqual(calls[0][2].get('timeout'), 8)   # POST login (8+1@84)
         self.assertEqual(sub._OS_TOK['token'], 'JWT')
 
     def test_respuesta_sin_token_none(self):

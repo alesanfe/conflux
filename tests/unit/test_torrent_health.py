@@ -1320,3 +1320,226 @@ class TestSinkYFiltro(unittest.TestCase):
                 um.patch.object(TH, '_seed_save'):
             TH._scrape_submit([(h, [])])
         self.assertEqual(len(TH._SEED), 4001)        # creció, sin poda
+
+
+class TestWireFormatMut(unittest.TestCase):
+    """Mutantes wire-format UDP/announce — padding, close-spy, randint bounds."""
+
+    def _scrape_sock(self, pad=b'', closed_flag=False):
+        import struct
+        class FakeSock:
+            def __init__(self, *a):
+                self._n = 0
+                self.closed = False
+            def settimeout(self, t): pass
+            def close(self): self.closed = True
+            def sendto(self, b, dst):
+                self._tx = struct.unpack('!I', b[12:16])[0]
+                self._n += 1
+            def recvfrom(self, n):
+                if self._n == 1:
+                    return struct.pack('!IIQ', 0, self._tx, 12345) + pad, None
+                return struct.pack('!II', 2, self._tx) + \
+                    struct.pack('!III', 9, 0, 0) * 2, None
+        return FakeSock
+
+    def test_scrape_connect_padding_16(self):
+        """Connect-response >16B: r0[:16] parsea igual (16+1@214 -> r0[:17]
+        hace unpack('!IIQ', 17B) -> error -> {})."""
+        import unittest.mock as um
+        h1 = 'aa' * 20
+        with um.patch.object(TH.socket, 'socket', self._scrape_sock(pad=b'JUNK')), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'):
+            r = TH._scrape_tracker('t.test', 1, [h1])
+        self.assertEqual(r.get(h1), 9)
+
+    def test_scrape_cierra_socket(self):
+        """El finally cierra s (IsNot@229: `is not None` -> `is None`
+        dejaría el socket abierto)."""
+        import unittest.mock as um
+        cls = self._scrape_sock()
+        inst = cls()
+        with um.patch.object(TH.socket, 'socket', return_value=inst), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'):
+            TH._scrape_tracker('t.test', 1, ['aa' * 20])
+        self.assertTrue(inst.closed)
+
+    def _announce_sock(self, pad=b''):
+        import struct
+        class FakeSock:
+            def __init__(self, *a):
+                self._n = 0
+                self.closed = False
+            def settimeout(self, t): pass
+            def close(self): self.closed = True
+            def sendto(self, b, dst):
+                self._tx = struct.unpack('!I', b[12:16])[0]
+                self._n += 1
+            def recvfrom(self, n):
+                if self._n == 1:
+                    return struct.pack('!IIQ', 0, self._tx, 999) + pad, None
+                return struct.pack('!II', 1, self._tx) + \
+                    struct.pack('!III', 1800, 3, 7) + b'\x00' * 12, None
+        return FakeSock
+
+    def test_announce_connect_padding_16(self):
+        """Igual que scrape: r0[:16] sobre respuesta de 20B (16+1@257)."""
+        import unittest.mock as um
+        with um.patch.object(TH.socket, 'socket', self._announce_sock(pad=b'XXXX')), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'):
+            r = TH._announce_udp('t.test', 1, 'a' * 40)
+        self.assertEqual(r, {'seeds': 7, 'leechers': 3, 'peers': 2})
+
+    def test_announce_cierra_socket(self):
+        """El finally cierra s (IsNot@277)."""
+        import unittest.mock as um
+        inst = self._announce_sock()()
+        with um.patch.object(TH.socket, 'socket', return_value=inst), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'):
+            TH._announce_udp('t.test', 1, 'a' * 40)
+        self.assertTrue(inst.closed)
+
+    def test_announce_randint_bounds(self):
+        """tx/tx2/numwant siempre randint(0, 2**31) (31+1@260 y 31+1@263:
+        un bound 2**32 rompe el handshake en trackers estrictos)."""
+        import unittest.mock as um
+        calls = []
+        def fake_randint(a, b):
+            calls.append((a, b))
+            return 1
+        with um.patch.object(TH.socket, 'socket', self._announce_sock()), \
+                um.patch.object(TH.socket, 'gethostbyname', return_value='1.2.3.4'), \
+                um.patch.object(TH.random, 'randint', fake_randint):
+            TH._announce_udp('t.test', 1, 'a' * 40)
+        self.assertTrue(calls)
+        for c in calls:
+            self.assertEqual(c, (0, 2**31))
+
+
+class TestSeedSaveMut(unittest.TestCase):
+    def test_seed_save_basename(self):
+        """dirname('seed.json')='' -> dir='.' (Or@69: `and` daría dir=''
+        y mkstemp fallaría -> no se escribe nada)."""
+        import os
+        import tempfile
+        old_last = TH._LAST_SAVE[0]
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as td:
+            os.chdir(td)
+            try:
+                TH._LAST_SAVE[0] = 0.0
+                TH._seed_save('seed.json')
+                self.assertTrue(os.path.exists('seed.json'))
+            finally:
+                os.chdir(cwd)
+                TH._LAST_SAVE[0] = old_last
+
+
+class TestScrapeSubmitMut(unittest.TestCase):
+    def test_zero_hashes_se_anuncian(self):
+        """res.get(h,0)==0 -> zero -> hinted -> announce (Eq@358: `!=0`
+        metería los vivos en `zero` y saltaría el announce del hash real)."""
+        import unittest.mock as um
+        h = 'c' * 40
+        ann_calls = []
+        old_seed = dict(TH._SEED)
+        try:
+            TH._SEED.clear()
+            with um.patch.object(TH, '_scrape_hashes', return_value={h: 0}), \
+                    um.patch.object(TH, '_announce_hints',
+                                    side_effect=lambda *a: (ann_calls.append(a), 'alive')[1]), \
+                    um.patch.object(TH, '_dht_peers',
+                                    side_effect=AssertionError('no DHT: tiene hints')), \
+                    um.patch.object(TH, '_seed_save'):
+                TH._scrape_submit([(h, ['tracker:http://t/a'])])
+            self.assertEqual(len(ann_calls), 1)
+            self.assertEqual(TH._SEED[h][0], 99)      # 'alive' -> 99
+        finally:
+            TH._SEED.clear()
+            TH._SEED.update(old_seed)
+
+
+class TestCfgGate(unittest.TestCase):
+    """_hash_health: gate `not streams or not _cfgget('torrent_health', True)`."""
+
+    def test_ausente_default_activo(self):
+        """Sin la clave en CFG -> default True -> filtra muertos (True@438:
+        default False lo dejaría todo quieto)."""
+        import conflux.core.state as st
+        h = 'd' * 40
+        old = dict(TH._SEED)
+        try:
+            TH._SEED.clear()
+            TH._SEED[h] = (-1, time.time())
+            had = 'torrent_health' in st.CFG
+            old_v = st.CFG.get('torrent_health')
+            st.CFG.pop('torrent_health', None)
+            try:
+                streams = [{'infoHash': h}]
+                TH._hash_health(streams)
+                self.assertEqual(streams, [])        # activo: el muerto sale
+            finally:
+                if had:
+                    st.CFG['torrent_health'] = old_v
+        finally:
+            TH._SEED.clear()
+            TH._SEED.update(old)
+
+    def test_desactivado_conserva_muertos(self):
+        """torrent_health=False -> return temprano: los muertos SE QUEDAN
+        (Or@438: `and` no retornaba y los filtraba igualmente)."""
+        import conflux.core.state as st
+        h = 'e' * 40
+        old = dict(TH._SEED)
+        try:
+            TH._SEED.clear()
+            TH._SEED[h] = (-1, time.time())
+            had = 'torrent_health' in st.CFG
+            old_v = st.CFG.get('torrent_health')
+            st.CFG['torrent_health'] = False
+            try:
+                streams = [{'infoHash': h}]
+                TH._hash_health(streams)
+                self.assertEqual(len(streams), 1)    # desactivado: se conserva
+            finally:
+                if had:
+                    st.CFG['torrent_health'] = old_v
+                else:
+                    st.CFG.pop('torrent_health', None)
+        finally:
+            TH._SEED.clear()
+            TH._SEED.update(old)
+
+
+class TestDhtBudget(unittest.TestCase):
+    """`time.time() - t0 > 90` corta el loop DHT (90+1@367, Gt@367)."""
+
+    def _run(self, elapsed_iter2):
+        import unittest.mock as um
+        h1, h2 = '1' * 40, '2' * 40
+        times = iter([1000.0, 1001.0, 1000.0 + elapsed_iter2])
+        dht_calls = []
+        old = dict(TH._SEED)
+        try:
+            TH._SEED.clear()
+            with um.patch.object(TH, '_scrape_hashes', return_value={h1: 0, h2: 0}), \
+                    um.patch.object(TH, '_announce_hints', return_value=None), \
+                    um.patch.object(TH, '_dht_peers',
+                                    side_effect=lambda h: dht_calls.append(h) or 0), \
+                    um.patch.object(TH, '_seed_save'), \
+                    um.patch.object(TH.time, 'time', side_effect=lambda: next(times)):
+                TH._scrape_submit([(h1, []), (h2, [])])
+        finally:
+            TH._SEED.clear()
+            TH._SEED.update(old)
+        return dht_calls
+
+    def test_budget_90_corta(self):
+        """elapsed=91 > 90 -> break: solo 1 _dht_peers (mutante 90+1@367:
+        >91 dejaría pasar la 2ª)."""
+        self.assertEqual(len(self._run(91.0)), 1)
+
+    def test_budget_exacto_90_no_corta(self):
+        """elapsed=90 NO es >90 -> sigue: 2 _dht_peers (mutante Gt@367:
+        >=90 cortaría)."""
+        self.assertEqual(len(self._run(90.0)), 2)

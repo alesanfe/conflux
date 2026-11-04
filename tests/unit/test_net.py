@@ -57,6 +57,21 @@ class TestFetch(unittest.TestCase):
         self.assertTrue(m.return_value.get.call_args[1].get('stream'))  # True@68
         r.raw.read.assert_called_once_with(6_000_001, decode_content=True)
 
+    def test_timeout_default_7(self):
+        """fetch(url) sin timeout -> get(timeout=7) (mutante 7+1@60)."""
+        with patch.object(net, '_session') as m:
+            m.return_value.get.return_value = self._resp(b'{"a":1}')
+            net.fetch('http://x.com/')
+        self.assertEqual(m.return_value.get.call_args[1].get('timeout'), 7)
+
+    def test_backoff_sleep_03(self):
+        """Entre reintentos sleep(0.3) exacto (mutante 0.3+1@80)."""
+        with patch.object(net, '_session') as m, \
+                patch.object(net.time, 'sleep') as sl:
+            m.return_value.get.side_effect = Exception('down')
+            net.fetch('http://x.com/')
+        sl.assert_called_once_with(0.3)
+
     def test_body_6mb_exacto_parsea(self):
         """len == 6_000_000 -> SÍ parsea: la cota es >6M no >= (Gt@71)."""
         body = b'{"a":"' + b'x' * (6_000_000 - 8) + b'"}'

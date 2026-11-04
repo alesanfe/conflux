@@ -227,6 +227,33 @@ class TestSearch(unittest.TestCase):
         first = body.index('name="seeders" value="200"')   # seeds desc
         self.assertLess(first, body.index('name="seeders" value="199"'))
 
+    def test_cat_2000_movie(self):
+        """cat=2000 en la rama movie (2000+1@116: el literal movie->2001)."""
+        _, undo = cfg_swap(torzapi_key='k')
+        try:
+            code, body, _ = self._run(
+                {'t': ['movie'], 'apikey': ['k'], 'imdbid': ['tt0137523']},
+                rows=[_row()])
+        finally:
+            undo()
+        self.assertIn('name="category" value="2000"', body)
+
+    def test_fila_len3_orden_seeds(self):
+        """len(r)>2 -> seeds=r[2] (2+1@130 -> >3: la fila corta valdría 0,
+        quedaría fuera del cap y saldrían los 200 items válidos)."""
+        rows = [_row(ih=f'{i:040x}', seeds=i + 1, title=f'T{i}')
+                for i in range(200)]
+        rows.insert(0, ('corta', 'x', 999))          # len-3, seeds 999 -> 1ª
+        _, undo = cfg_swap(torzapi_key='k')
+        try:
+            code, body, _ = self._run(
+                {'t': ['movie'], 'apikey': ['k'], 'imdbid': ['tt0137523']},
+                rows=rows)
+        finally:
+            undo()
+        # la corta gana un slot del top-200 pero no emite item -> 199
+        self.assertEqual(body.count('<item>'), 199)
+
     def test_item_usenet(self):
         nzb = 'https://idx/get/x.nzb'
         b64 = base64.urlsafe_b64encode(nzb.encode()).decode().rstrip('=')
@@ -242,6 +269,14 @@ class TestSearch(unittest.TestCase):
 
 
 class TestNzbLink(unittest.TestCase):
+    def test_padding_b64_len15(self):
+        """'=' * (-len(b) % 4): len(b)=15 -> 1 pad (4+1@66 -> %5 daría 0:
+        15 chars no múltiplo de 4 -> decode error -> '')."""
+        nzb = 'https://a.b'                       # 11B -> b64 15 chars
+        b64 = base64.urlsafe_b64encode(nzb.encode()).decode().rstrip('=')
+        self.assertEqual(len(b64) % 4, 3)
+        self.assertEqual(T._nzb_link({'url': f'http://h/nzb/{b64}'}), nzb)
+
     def test_nzburl_directo(self):
         self.assertEqual(T._nzb_link({'nzbUrl': 'https://x/y.nzb'}), 'https://x/y.nzb')
 

@@ -62,6 +62,16 @@ class TestMetaRace(unittest.TestCase):
         f2.set_result({'meta': {'id': 'tt1'}})
         self.assertEqual(M._meta_race([f1, f2]), {'meta': {'id': 'tt1'}})
 
+    def test_as_completed_timeout_45(self):
+        """as_completed(futs, timeout=4.5): el budget de la carrera es
+        4.5s, no otro (4.5+1@19)."""
+        from concurrent.futures import Future
+        f = Future()
+        f.set_result(None)
+        with patch.object(M, 'as_completed', return_value=[f]) as ac:
+            M._meta_race([f])
+        self.assertEqual(ac.call_args.kwargs.get('timeout'), 4.5)
+
 
 class TestHandleMeta(unittest.TestCase):
     def test_cache_hit(self):
