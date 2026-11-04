@@ -72,8 +72,38 @@ jobs:
       - run: pip install -r requirements.txt && pip install -r requirements-dev.txt
       # toda la suite es hermética: la e2e replaya fixtures VCR grabados
       # (live con CONFLUX_E2E_LIVE=1 / scripts/record_e2e.py regenera)
-      - run: coverage run -m unittest discover -s tests -t .
+      - run: coverage run scripts/test_times.py --nomem --junit junit.xml --history history.jsonl
       - run: coverage report --include='src/*' --fail-under=80
+      - name: artefactos de test (junit + historial de tiempos)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            junit.xml
+            history.jsonl
+          if-no-files-found: ignore
+      - name: resumen de tiempos
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, pathlib
+          p = pathlib.Path('history.jsonl')
+          rows = [json.loads(x) for x in p.read_text().splitlines()
+                  if x.strip()] if p.exists() else []
+          if rows:
+              r = rows[-1]
+              print('### Test times')
+              print(f"{r['tests']} tests en {r['total']:.1f}s — "
+                    f"p50 {r['p50']*1000:.0f}ms p95 {r['p95']:.2f}s "
+                    f"p99 {r['p99']:.2f}s · fallos {r['failed']}")
+              top = sorted(r.get('per_test', {}).items(),
+                           key=lambda kv: -kv[1])[:5]
+              print('')
+              for tid, secs in top:
+                  print(f"- `{secs:.2f}s` {tid.split('.')[-1]}")
+          PY
 
   docker:
     runs-on: ubuntu-latest

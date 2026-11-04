@@ -1,0 +1,23 @@
+name: live
+# Canary contra upstreams REALES — el CI normal replaya fixtures VCR
+# herméticos; este job pega a internet de verdad y avisa si un upstream
+# cambia de contrato (drift que los fixtures no pueden ver).
+on:
+  workflow_dispatch:            # bajo demanda
+  schedule:
+    - cron: '0 6 * * 1'         # lunes 06:00 UTC
+
+jobs:
+  e2e-real:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt && pip install -r requirements-dev.txt
+      - run: python -m unittest tests.e2e -v
+        env:
+          CONFLUX_E2E_LIVE: '1'

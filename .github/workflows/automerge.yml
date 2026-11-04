@@ -1,0 +1,21 @@
+name: dependabot-automerge
+# Auto-merge SOLO para bumps de github_actions (los workflows se auto-
+# validan en la propia corrida del PR). Los bumps pip NO: el bot no
+# sincroniza requirements.txt (lock con hashes) — quedan desincronizados
+# como pasó en PR#6; hay que hacerlo a mano.
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]' &&
+        startsWith(github.event.pull_request.head.ref, 'dependabot/github_actions/')
+    steps:
+      - run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
