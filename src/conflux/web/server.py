@@ -8,7 +8,9 @@ import hmac
 import json
 import re
 import signal
+import socket
 import ssl
+import sys
 import threading
 import time
 import urllib.parse
@@ -393,6 +395,39 @@ ROUTES = [
      lambda m: handle_meta(m.group(1), m.group(2))),
 ]
 
+class _Srv(ThreadingHTTPServer):
+    """Hilos daemon + pool acotado: >MAX_CONNS conexiones esperan en el
+    backlog del kernel (un burst no crea hilos ilimitados)."""
+    daemon_threads = True   # sin hilos zombie
+    request_queue_size = 64              # backlog: el cliente espera, no muere
+    _sem = threading.Semaphore(int(CFG.get('max_connections', 64)))
+
+    def server_bind(self):
+        """Windows: SO_REUSEADDR permite doble bind silencioso sobre el mismo
+        puerto (≈SO_REUSEPORT) -> dos instancias sirven código distinto a la
+        vez y `bind_fail` jamás dispara. SO_EXCLUSIVEADDRUSE lo prohíbe;
+        en POSIX el kernel ya rechaza el segundo listen bind."""
+        if sys.platform == 'win32':
+            self.allow_reuse_address = False   # REUSEADDR tras EXCLUSIVE -> EINVAL
+            self.socket.setsockopt(
+                socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+    def process_request(self, request, client_address):
+        self._sem.acquire()
+        try:
+            super().process_request(request, client_address)
+        except Exception:                                  # noqa: BLE001 — spawn falló: liberar
+            self._sem.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._sem.release()
+
+
 def main():
     """Arranque: manifests cacheados si hay -> refresh bg; si no, fetch en vivo."""
     cached = _load_manifests_cache()
@@ -406,28 +441,8 @@ def main():
     threading.Thread(target=_refresher, daemon=True).start()
     threading.Thread(target=_prefetch_catalogs, daemon=True).start()   # caché caliente antes del 1er cliente
 
-    class Srv(ThreadingHTTPServer):
-        """Hilos daemon + pool acotado: >MAX_CONNS conexiones esperan en el
-        backlog del kernel (un burst no crea hilos ilimitados)."""
-        daemon_threads = True   # sin hilos zombie
-        request_queue_size = 64              # backlog: el cliente espera, no muere
-        _sem = threading.Semaphore(int(CFG.get('max_connections', 64)))
-
-        def process_request(self, request, client_address):
-            self._sem.acquire()
-            try:
-                super().process_request(request, client_address)
-            except Exception:                                  # noqa: BLE001 — spawn falló: liberar
-                self._sem.release()
-                raise
-
-        def process_request_thread(self, request, client_address):
-            try:
-                super().process_request_thread(request, client_address)
-            finally:
-                self._sem.release()
     try:
-        srv = Srv(('127.0.0.1', PORT), H)
+        srv = _Srv(('127.0.0.1', PORT), H)
     except OSError as e:
         # pythonw muere sin consola: sin esta línea un puerto ocupado no deja
         # rastro en conflux.log y el proceso viejo sigue sirviendo código stale

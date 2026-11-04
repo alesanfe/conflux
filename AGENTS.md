@@ -293,6 +293,11 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   `/en/` re-inyecta user:pass@ en el 302 — creds fuera del manifest.
 - Put.io cached = `transfers/list` con btih en `source` y COMPLETED/SEEDING
   (no hay instant-check público). Offcloud: `/api/cloud`+`explore`+`/api/cache`.
+- `_Srv.server_bind`: en Windows `SO_REUSEADDR` actúa como SO_REUSEPORT →
+  una 2ª instancia bindea el mismo puerto SIN error y comparte tráfico con
+  código stale (la guarda `bind_fail` nunca podía disparar). En win32 se
+  usa `SO_EXCLUSIVEADDRUSE` (+ `allow_reuse_address=False` antes de super —
+  REUSEADDR tras EXCLUSIVE = EINVAL). Regresión: `TestDobleBind`.
 - Disyuntor por host en `fetch()`: `_fails[host]=(strikes,ts)` cuenta fallos
   CONSECUTIVOS (éxito resetea); ≥HOST_OPEN (4) -> fail-fast HOST_CD (60s) sin
   tocar la red. Los hosts muertos (Fenix/Frost...) no cuestan timeout en

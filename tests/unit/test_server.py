@@ -631,7 +631,7 @@ class TestMain(unittest.TestCase):
         with um.patch.object(srv, '_load_manifests_cache', return_value=[{'x': 1}]), \
              um.patch.object(srv, 'refresh_manifests') as rf, \
              um.patch.object(srv, 'threading', faketh), \
-             um.patch.object(srv, 'ThreadingHTTPServer', self._fakesrv(made)), \
+             um.patch.object(srv, '_Srv', self._fakesrv(made)), \
              um.patch.object(srv, 'CFG', {}):
             srv.main()
         rf.assert_not_called()                       # cache -> refresh en bg, no en línea
@@ -644,7 +644,7 @@ class TestMain(unittest.TestCase):
         with um.patch.object(srv, '_load_manifests_cache', return_value=None), \
              um.patch.object(srv, 'refresh_manifests') as rf, \
              um.patch.object(srv, 'threading', faketh), \
-             um.patch.object(srv, 'ThreadingHTTPServer', self._fakesrv(made)), \
+             um.patch.object(srv, '_Srv', self._fakesrv(made)), \
              um.patch.object(srv, 'CFG', {}):
             srv.main()
         rf.assert_called_once()
@@ -654,7 +654,7 @@ class TestMain(unittest.TestCase):
         made, faketh, _ = [], *self._faketh()
         with um.patch.object(srv, '_load_manifests_cache', return_value=[{}]), \
              um.patch.object(srv, 'threading', faketh), \
-             um.patch.object(srv, 'ThreadingHTTPServer',
+             um.patch.object(srv, '_Srv',
                             self._fakesrv(made, OSError('busy'))):
             with self.assertRaises(SystemExit):
                 srv.main()
@@ -665,7 +665,7 @@ class TestMain(unittest.TestCase):
         ctx = MagicMock()
         with um.patch.object(srv, '_load_manifests_cache', return_value=[{}]), \
              um.patch.object(srv, 'threading', faketh), \
-             um.patch.object(srv, 'ThreadingHTTPServer', self._fakesrv(made)), \
+             um.patch.object(srv, '_Srv', self._fakesrv(made)), \
              um.patch.object(srv, 'CFG', {'tls_cert': 'c.pem', 'tls_key': 'k.pem'}), \
              um.patch.object(srv.ssl, 'SSLContext', return_value=ctx):
             srv.main()
@@ -683,7 +683,7 @@ class TestMain(unittest.TestCase):
             handlers[sig] = h
         with um.patch.object(srv, '_load_manifests_cache', return_value=[{}]), \
              um.patch.object(srv, 'threading', faketh), \
-             um.patch.object(srv, 'ThreadingHTTPServer', self._fakesrv(made)), \
+             um.patch.object(srv, '_Srv', self._fakesrv(made)), \
              um.patch.object(srv, 'CFG', {}), \
              um.patch.object(srv.signal, 'signal', side_effect=reg), \
              um.patch.object(srv, '_atomic_json') as aj, \
@@ -748,3 +748,21 @@ class TestWiringNuevasRutas(unittest.TestCase):
         finally:
             undo()
         h.send_response.assert_called_with(401)
+
+
+class TestDobleBind(unittest.TestCase):
+    """BUG (Windows): SO_REUSEADDR permite doble bind silencioso sobre el
+    mismo puerto -> dos instancias sirven código distinto a la vez (la
+    guarda `bind_fail` de main() nunca podía disparar). _Srv debe usar
+    SO_EXCLUSIVEADDRUSE en win32 (en POSIX el kernel ya rechaza el
+    segundo listen bind). Regresión: instancias stale en :9700."""
+
+    def test_segunda_instancia_rechazada(self):
+        h_cls = srv.H
+        s1 = srv._Srv(('127.0.0.1', 0), h_cls)
+        try:
+            port = s1.server_address[1]
+            with self.assertRaises(OSError):
+                srv._Srv(('127.0.0.1', port), h_cls)
+        finally:
+            s1.server_close()
