@@ -81,6 +81,18 @@ def _get_retry(port, path, tries=3, timeout=60):
     return code, d
 
 
+def _wait_ready(port, timeout=3):
+    """Readiness real en vez de sleep fijo: poll hasta que el servidor
+    responda (arranca en ~10ms; el sleep(0.3) quemaba tiempo siempre)."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            _get(port, '/health', timeout=1)
+            return
+        except Exception:
+            time.sleep(0.01)
+
+
 @unittest.skipIf(not _LIVE and not _FX,
                  'sin fixture: scripts/record_e2e.py, o live con CONFLUX_E2E_LIVE=1')
 class ServerE2E(unittest.TestCase):
@@ -110,7 +122,7 @@ class ServerE2E(unittest.TestCase):
         cls.port = cls.httpd.server_address[1]
         cls.th = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
         cls.th.start()
-        time.sleep(0.3)
+        _wait_ready(cls.port)
 
     @classmethod
     def tearDownClass(cls):

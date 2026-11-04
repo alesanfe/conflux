@@ -31,7 +31,8 @@ class TestFetch(unittest.TestCase):
             self.assertEqual(net.fetch('http://x.com/'), {'a': 1})
 
     def test_fetch_json_mal(self):
-        with patch.object(net, '_session') as m:
+        with patch.object(net, '_session') as m, \
+                patch.object(net.time, 'sleep'):
             m.return_value.get.return_value = self._resp(b'not json')
             self.assertIsNone(net.fetch('http://x.com/'))
 
@@ -41,7 +42,8 @@ class TestFetch(unittest.TestCase):
             self.assertIsNone(net.fetch('http://x.com/'))
 
     def test_fetch_error_reintenta_y_none(self):
-        with patch.object(net, '_session') as m:
+        with patch.object(net, '_session') as m, \
+                patch.object(net.time, 'sleep'):
             m.return_value.get.side_effect = Exception('down')
             self.assertIsNone(net.fetch('http://x.com/'))
             self.assertEqual(m.return_value.get.call_count, 2)
@@ -61,7 +63,8 @@ class TestDisyuntorHost(unittest.TestCase):
     def test_fallos_acumulan_strikes(self):
         import requests
         s, _ = fake_session(requests.ConnectionError('x'))
-        with patch.object(net, '_session', return_value=s):
+        with patch.object(net, '_session', return_value=s), \
+                patch.object(net.time, 'sleep'):      # retry-sleep real fuera
             for _ in range(2):
                 self.assertIsNone(net.fetch('http://dead.host/x', 1))
         # 2 llamadas x 2 intentos = 4 strikes
@@ -79,7 +82,8 @@ class TestDisyuntorHost(unittest.TestCase):
         import requests
         net._fails['dead.host'] = (4, time.time() - 61)   # cooldown expirado
         s, calls = fake_session(requests.ConnectionError('x'))
-        with patch.object(net, '_session', return_value=s):
+        with patch.object(net, '_session', return_value=s), \
+                patch.object(net.time, 'sleep'):
             net.fetch('http://dead.host/x', 1)
         self.assertTrue(calls, 'tras HOST_CD debe reintentar')
 

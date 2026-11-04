@@ -13,6 +13,7 @@ import statistics
 import threading
 import time
 import unittest
+import urllib.request
 from http.server import ThreadingHTTPServer
 
 import conflux.core.state as st
@@ -88,7 +89,14 @@ class PerfE2E(unittest.TestCase):
         cls.port = cls.httpd.server_address[1]
         cls.th = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
         cls.th.start()
-        time.sleep(0.3)
+        t0 = time.time()                               # readiness: poll, no sleep fijo
+        while time.time() - t0 < 3:
+            try:
+                urllib.request.urlopen(
+                    f'http://127.0.0.1:{cls.port}/health', timeout=1).close()
+                break
+            except Exception:
+                time.sleep(0.01)
 
     @classmethod
     def tearDownClass(cls):

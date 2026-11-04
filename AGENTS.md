@@ -13,6 +13,8 @@ python3 scripts/test_times.py [N] [dir] [--all]      # timer+memoria por test, p
                                                      # agregado por paquete; --mem ranking memoria
 python3 scripts/test_times.py --save base.json       # baseline; --compare base.json = regresiones
                                                      # (normaliza por factor de carga de la maquina)
+python3 scripts/test_times.py --jobs 9               # paralelo por paquete (~10s wall vs 22s serial);
+                                                     # guarda/compara baseline en el mismo modo
 python3 scripts/test_times.py --nomem                # sin tracemalloc (~40% mas rapido)
 # HYP_EXAMPLES=200 python3 -m unittest discover -s tests/property -t .  # property exhaustivo
 coverage run -m unittest discover -s tests -t . && python3 scripts/cov_gate.py [80]
