@@ -342,8 +342,8 @@ def _db_usenet(k, nzb_url):
             return None
         m = s.get('https://api.torbox.app/v1/api/usenet/mylist',
                   headers=h_, timeout=10).json()
-        item = next((x for x in (m.get('data') or [])
-                     if x.get('usenetdownload_id') == uid), {})
+        item: dict = next((x for x in (m.get('data') or [])
+                           if x.get('usenetdownload_id') == uid), {})
         fs = [f for f in item.get('files', [])
               if str(f.get('name', '')).lower().endswith(_VIDEO_EXT)]
         fsel = max(fs or item.get('files', []), key=lambda f: f.get('size', 0), default=None)

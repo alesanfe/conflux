@@ -1,0 +1,18 @@
+[importlinter]
+root_packages =
+    conflux
+
+[importlinter:contract:capas]
+name = Capas estrictas: web -> app -> domain -> infra -> core
+type = layers
+layers =
+    web
+    app
+    domain
+    infra
+    core
+containers =
+    conflux
+ignore_imports =
+    conflux.infra.epg -> conflux.domain.lists
+    conflux.core.cfg -> conflux.infra.mediafusion

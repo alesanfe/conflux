@@ -40,7 +40,7 @@ def _encrypt(cfg: dict) -> str:
         _HOST + '/encrypt-user-data',
         data=json.dumps(cfg).encode(),
         headers={'Content-Type': 'application/json'})
-    with urllib.request.urlopen(req, timeout=15) as r:           # noqa: S310 — host fijo
+    with urllib.request.urlopen(req, timeout=15) as r:           # noqa: S310 — host fijo  # nosec B310
         return str(json.load(r).get('encrypted_str') or '')
 
 

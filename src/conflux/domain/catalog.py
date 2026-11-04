@@ -310,7 +310,7 @@ def handle_catalog(stype, cid, extra):
         _cat_norm(d)
         empty = not (d.get('metas') or d.get('metasDetailed'))
         if empty0 and req_only_g:                    # su miembro/opción vino vacío
-            _DEAD_OPT.add((cid, req_g.lower()))      # label pedida (grp y directos)
+            _DEAD_OPT.add((cid, req_g.lower() if req_g else ''))   # label pedida
         if empty and not extra:                      # servido sin params = base muerto
             _DEAD_OPT.add((cid, ''))
         _fix_metas(d)

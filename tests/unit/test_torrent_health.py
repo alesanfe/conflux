@@ -75,7 +75,8 @@ class TestHashHealth(unittest.TestCase):
         self.assertEqual(out, [vivo, muerto])       # se mantiene pero hundido
 
     def test_persist_roundtrip(self):
-        import tempfile, os
+        import tempfile
+        import os
         TH._SEED[H_LIVE] = (9, time.time())
         with tempfile.TemporaryDirectory() as td:
             p = os.path.join(td, 's.json')
@@ -318,7 +319,6 @@ class TestKrpc(unittest.TestCase):
     """_krpc/_dht_nodes/_dht_peers con sockets falsos."""
 
     def test_krpc_respuesta_r(self):
-        import unittest.mock as um
         tid_holder = []
         class FakeSock:
             def sendto(self, b, dst):
@@ -403,7 +403,8 @@ class TestSeedPersist(unittest.TestCase):
         TH._SEED.update(self._seed)
 
     def test_load_corrupto_no_muere(self):
-        import tempfile, os
+        import tempfile
+        import os
         with tempfile.NamedTemporaryFile('w', delete=False, suffix='.json') as f:
             f.write('{{{{no json')
             path = f.name
@@ -416,7 +417,8 @@ class TestSeedPersist(unittest.TestCase):
     def test_persist_roundtrip_borde_ttl(self):
         """freezegun: el veredicto persistido sobrevive justo antes del TTL y
         se descarta en el borde exacto (now-ts < _TTL)."""
-        import tempfile, os
+        import tempfile
+        import os
         from freezegun import freeze_time
         h = 'c' * 40
         with tempfile.TemporaryDirectory() as td, freeze_time() as ft:
@@ -434,7 +436,9 @@ class TestSeedPersist(unittest.TestCase):
             self.assertNotIn(h, TH._SEED)
 
     def test_load_salta_caducados(self):
-        import tempfile, os, json
+        import tempfile
+        import os
+        import json
         old = time.time() - TH._TTL - 10
         with tempfile.NamedTemporaryFile('w', delete=False, suffix='.json') as f:
             json.dump({'a' * 40: [5, time.time()], 'b' * 40: [3, old]}, f)
@@ -447,7 +451,9 @@ class TestSeedPersist(unittest.TestCase):
         self.assertNotIn('b' * 40, TH._SEED)
 
     def test_save_throttle_60s(self):
-        import tempfile, os, json
+        import tempfile
+        import os
+        import json
         TH._LAST_SAVE[0] = time.time()               # recién guardado -> no escribe
         with tempfile.TemporaryDirectory() as td:
             p = os.path.join(td, 's.json')

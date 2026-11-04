@@ -32,12 +32,34 @@ where = ["src"]
 [tool.ruff]
 src = ["src", "tests"]
 
+[tool.ruff.lint]
+# El codigo se escribio contra ruff 0.14 (pre-commit v0.14.0): defaults
+# E4/E7/E9/F. Sin select explicito, ruff >=0.15 amplia las reglas por
+# defecto y marca ~160 avisos preexistentes — el select lo hace
+# determinista entre versiones.
+select = ["E4", "E7", "E9", "F"]
+# Estilo compacto deliberado del repo: `import a, b` y `x; y` en una linea.
+ignore = ["E401", "E702"]
+
+[tool.ruff.lint.per-file-ignores]
+# Bootstraps: sys.path/stubs deben ir antes de los imports de modulo.
+"tests/__init__.py" = ["E402"]
+"tests/unit/test_debrid.py" = ["E402"]
+"tests/unit/test_trakt.py" = ["E402"]
+"scripts/record_e2e.py" = ["E402"]
+
 [tool.pylint.main]
 source-roots = "src"
 
 [tool.pytest.ini_options]
 pythonpath = "src"
 testpaths = "tests"
+
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
 
 [tool.mypy]
 files = ["src/conflux"]

@@ -32,7 +32,7 @@ def _torznab(stype, sid):
         return []
 
 
-_TZ_IDS = {'ts': 0.0, 'ids': None}   # indexers habilitados en Prowlarr (cache 600s)
+_TZ_IDS: dict = {'ts': 0.0, 'ids': None}   # indexers habilitados en Prowlarr (cache 600s)
 
 
 def _tz_prowlarr_ids(base, key):

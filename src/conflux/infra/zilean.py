@@ -33,8 +33,12 @@ def _zilean(stype, sid):
             f'{base}/dmm/filtered', params=q, timeout=10).json()
     except Exception:                                    # noqa: BLE001 — indexer caído -> 0
         return []
-    items = d if isinstance(d, list) else (d.get('results') or d.get('data') or []) \
-        if isinstance(d, (list, dict)) else []
+    if isinstance(d, list):
+        items = d
+    elif isinstance(d, dict):
+        items = d.get('results') or d.get('data') or []
+    else:
+        items = []
     out = []
     for it in items:
         if not isinstance(it, dict):
@@ -43,7 +47,7 @@ def _zilean(stype, sid):
         name = (it.get('filename') or it.get('raw_title') or it.get('title') or '')
         if not h or not name:
             continue
-        s = {'name': 'Zilean', 'title': str(name),
+        s: dict = {'name': 'Zilean', 'title': str(name),
              'infoHash': str(h).lower(),
              'behaviorHints': {'cached': True}}          # DMM = ya en caché debrid
         sz = _num(it.get('filesize') or it.get('size') or it.get('bytes'))

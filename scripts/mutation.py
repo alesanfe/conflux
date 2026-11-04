@@ -18,7 +18,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 FOCUS = {
@@ -163,7 +162,6 @@ def main():
     tests = args[1] if len(args) > 1 else FOCUS.get(
         str(mod).replace('\\', '/').split('conflux/')[-1], 'tests/unit')
     src = mod.read_text(encoding='utf-8')
-    tree = ast.parse(src)
     total = count_mutants(ast.parse(src))
     print(f'{mod}: {total} mutantes posibles, tests: {tests} '
           f'(max {maxn}, timeout {timeout}s)')

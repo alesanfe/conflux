@@ -279,7 +279,22 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
 
 ## Controles de calidad (todos en verde en CI)
 
-- Linters: ruff · pylint ≥9.5 · xenon avg A · mypy `check_untyped_defs` · bandit -ll
+- Linters: ruff (select E4/E7/E9/F explícito en pyproject — ruff>=0.15 amplía
+  defaults si no se fija) · pylint ≥9.5 · xenon `--max-absolute D --max-modules C
+  --max-average B` (ratchet al estado actual — endurecer al refactorizar) ·
+  mypy `check_untyped_defs` · bandit -ll
+- Cobertura con `branch=true`: cov_gate reporta transiciones `linea->linea` sin
+  ejercitar además del % por archivo
+- Arquitectura: `lint-imports` con contrato de capas en `.importlinter`
+  (`tests/contract/test_architecture.py`) — deriva web->app->domain->infra->core = fallo
+- Fuzzing API: `test_schemathesis_no_5xx` genera ~2000 casos desde
+  `docs/openapi.yaml` contra el server e2e (solo GET; `SCHEM_TIME` para budget)
+- Hypothesis stateful: `tests/property/test_prop_stateful.py` modela el
+  disyuntor por host (`RuleBasedStateMachine`) — secuencias fail/ok/tick
+- Orden: `test_times.py --shuffle [--seed N]` aleatoriza clases+tests (estilo
+  pytest-randomly); `--junit`/`--history` para tendencias en CI
+- `pip install -r requirements-dev.txt` NO incluye el lock: requirements.txt va
+  con hashes (`--require-hashes` se globaliza) — instalar en dos pasos
 - Cobertura ≥80% gate (scripts/check.sh y CI; actual ~94%)
 - Auth opcional: `admin_token` en config.json protege /admin /configure POST /reload
   (`?token=` o `X-Admin-Token`, compare_digest); vacío = abierto (loopback)

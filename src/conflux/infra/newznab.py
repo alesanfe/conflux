@@ -50,7 +50,7 @@ def _newznab(stype, sid):
             if not link.startswith('http'):
                 continue
             b64 = base64.urlsafe_b64encode(link.encode()).decode().rstrip('=')
-            s = {'name': 'Usenet', 'title': it.findtext('title') or 'usenet',
+            s: dict = {'name': 'Usenet', 'title': it.findtext('title') or 'usenet',
                  'url': f'http://127.0.0.1:{PORT}/nzb/{b64}',
                  'behaviorHints': {'bingeGroup': 'usenet'}}
             sz = _num(attrs.get('size') or (enc.get('length') if enc is not None else 0))

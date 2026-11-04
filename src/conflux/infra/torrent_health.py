@@ -91,12 +91,12 @@ def _bdec(b, i=0):
         return out, i + 1
     if t == b'd':
         i += 1
-        out = {}
+        dic = {}
         while b[i:i + 1] != b'e':
             k, i = _bdec(b, i)
             v, i = _bdec(b, i)
-            out[k] = v
-        return out, i + 1
+            dic[k] = v
+        return dic, i + 1
     j = b.index(b':', i)
     n = int(b[i:j])
     return b[j + 1:j + 1 + n], j + 1 + n
@@ -123,7 +123,7 @@ _NID = random.randbytes(20) if hasattr(random, 'randbytes') else \
     bytes(random.getrandbits(8) for _ in range(20))
 _DHT_BOOT = [('router.bittorrent.com', 6881), ('router.utorrent.com', 6881),
              ('dht.transmissionbt.com', 6881)]
-_DHT_NODES = []          # (ip, port) — aprendidos via find_node; LRU 64
+_DHT_NODES: list[tuple[str, int]] = []   # (ip, port) — aprendidos via find_node; LRU 64
 
 
 def _krpc(s, addr, q, args, timeout=3):
@@ -292,7 +292,7 @@ def _announce_http(url, infohash, timeout=5):
         sep = '&' if '?' in url else '?'
         req = urllib.request.Request(url + sep + q, headers={
             'User-Agent': 'qBittorrent/4.6.0'})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # nosec B310 (caller restringe a http/https)
             d, _ = _bdec(r.read(65536))
         if not isinstance(d, dict):
             return None
@@ -311,7 +311,7 @@ def _announce_hints(infohash, urls, cap=6):
     """Anuncia a los trackers hinteados (máx cap): 'alive' | 'dead' | 'unknown'.
     dead = >=2 trackers respondieron y ninguno ve swarm (el cliente tampoco
     podría unirse); unknown = todos timeout (tracker caído != torrent muerto)."""
-    alive, answered, tried = False, 0, 0
+    answered, tried = 0, 0
     for u in urls[:cap]:
         tried += 1
         m = re.match(r'(udp|https?)://([^/?]+)', u)

@@ -16,7 +16,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
 _LOG_FILE = os.environ.get('CONFLUX_LOG', os.path.join(_ROOT, 'conflux.log'))
 
-_handlers = []
+_handlers: list[logging.Handler] = []
 if sys.stderr is not None:                            # consola si la hay (pythonw: None)
     _handlers.append(logging.StreamHandler())
 try:

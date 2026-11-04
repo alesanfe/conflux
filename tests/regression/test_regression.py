@@ -293,7 +293,8 @@ class TestSynthOrphansBug(unittest.TestCase):
     fantasma aún ruteables (routing huérfano invisible en el manifest)."""
 
     def test_build_reset_limpia_routing(self):
-        import tempfile, os
+        import tempfile
+        import os
         import conflux.domain.manifest as MF
         import conflux.core.state as st
         tf = tempfile.NamedTemporaryFile(suffix='.m3u', delete=False)
@@ -373,7 +374,9 @@ class TestManifestCacheAlignment(unittest.TestCase):
     (routing equivocado hasta el refresh). Ahora va por nombre."""
 
     def _cache(self, payload):
-        import json, tempfile, os
+        import json
+        import tempfile
+        import os
         import conflux.domain.sources as SO
         fd, p = tempfile.mkstemp(suffix='.json')
         with os.fdopen(fd, 'w') as f:
@@ -387,7 +390,6 @@ class TestManifestCacheAlignment(unittest.TestCase):
             os.unlink(p)
 
     def test_alinea_por_nombre_no_posicion(self):
-        import conflux.domain.sources as SO
         import conflux.core.state as st
         # disco: orden INVERSO al de SOURCES — por índice saldría cruzado
         disk = {s.name: {'id': f'id.{s.name}'} for s in reversed(st.SOURCES)}
@@ -414,7 +416,6 @@ class TestUrlHealthBug(unittest.TestCase):
     caduco de CDN no podía revivir nunca."""
 
     def _health(self, bad_entry, url='http://cdn.example/f.mp4'):
-        import time as tm
         from unittest.mock import patch
         import conflux.app.stream as S
         sent = []

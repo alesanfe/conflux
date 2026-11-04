@@ -27,7 +27,8 @@ def _trakt_sync():
         return
     try:
         r = subprocess.run([sys.executable, _SYNC_SCRIPT], capture_output=True,
-                           timeout=300, text=True, check=False)
+                           timeout=300, text=True, errors='replace',
+                           check=False)
         log_ev('trakt_sync', rc=r.returncode, out=(r.stdout or r.stderr or '').strip()[:200])
     except Exception as e:                                        # noqa: BLE001 — el daemon no debe morir
         log_ev('trakt_sync_err', err=repr(e)[:100])

@@ -16,6 +16,10 @@ Uso:
     python scripts/test_times.py --mem           # ranking por MEMORIA pico en vez de tiempo
     python scripts/test_times.py --junit rep.xml # JUnit XML (CI: trends/flaky)
     python scripts/test_times.py --history h.jsonl  # 1 fila/corrida + drift
+    python scripts/test_times.py --shuffle [--seed N]  # orden aleatorio por
+                                                 #   clase + intra-clase; el
+                                                 #   seed se imprime para
+                                                 #   reproducir ordenes malos
                                                  #   vs corrida anterior
 
 Mide por test: duracion (perf_counter, incluye setUp/tearDown), pico de
@@ -140,7 +144,7 @@ def _history(path, times, mems, outcomes, total):
     if os.path.exists(path):
         try:
             with open(path, encoding='utf-8') as f:
-                lines = [l for l in f if l.strip()]
+                lines = [ln for ln in f if ln.strip()]
             if lines:
                 prev = json.loads(lines[-1])
         except (OSError, ValueError):
@@ -310,6 +314,30 @@ def _run_json(start, out_path, with_mem, jobfile=None):
     return 0 if res.wasSuccessful() else 1
 
 
+def _shuffle_suite(suite, seed):
+    """Aleatoriza el orden estilo pytest-randomly: baraja el orden de las
+    CLASES y el orden de tests dentro de cada clase (la clase sigue siendo
+    unidad contigua -> setUpClass corre una vez). Mismo seed = mismo orden."""
+    import random
+    flat = []
+    stack = [suite]
+    while stack:
+        t = stack.pop()
+        if isinstance(t, unittest.TestSuite):
+            stack += list(t)
+        else:
+            flat.append(t)
+    groups: dict = {}
+    for t in flat:
+        groups.setdefault(type(t), []).append(t)
+    rnd = random.Random(seed)
+    order = list(groups.values())
+    rnd.shuffle(order)
+    for g in order:
+        rnd.shuffle(g)
+    return unittest.TestSuite([t for g in order for t in g])
+
+
 def _test_modules(start):
     """Modulos test_*.py bajo `start` -> nombres dotted (tests.unit.test_x).
     El FICHERO es la unidad de sharding: un import+setup por worker
@@ -420,8 +448,10 @@ def main():
                   if '--history' in args else None)
     jobs_v = args[args.index('--jobs') + 1] if '--jobs' in args else None
     jobs = int(jobs_v) if jobs_v else 0
+    shuffle = '--shuffle' in args
+    seed_v = args[args.index('--seed') + 1] if '--seed' in args else None
     consumed = {a for a in (save_to, compare_to, json_out, jobfile, jobs_v,
-                          junit_to, history_to) if a}
+                          junit_to, history_to, seed_v) if a}
     pos = [a for a in args if not a.startswith('--') and a not in consumed]
     top = int(pos[0]) if pos and pos[0].isdigit() else 15
     start = (pos[1] if len(pos) > 1
@@ -441,6 +471,11 @@ def main():
         sys.exit(rc)
 
     suite = unittest.TestLoader().discover(start, top_level_dir='.')
+    if shuffle:
+        import random
+        seed = int(seed_v) if seed_v else random.randrange(2**32)
+        suite = _shuffle_suite(suite, seed)
+        print(f'orden aleatorio: --seed {seed}', file=sys.stderr)
     runner = TimedRunner(verbosity=1)
     runner.top = top
     runner.show_all = show_all

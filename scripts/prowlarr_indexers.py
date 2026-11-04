@@ -80,7 +80,8 @@ def main():
     st, schemas = _req("GET", base, key, "/indexer/schema", timeout=60)
     if st != 200:
         sys.exit(f"no se pudieron listar schemas ({st})")
-    norm = lambda s: "".join(c for c in s.lower() if c.isalnum())
+    def norm(s):
+        return "".join(c for c in s.lower() if c.isalnum())
     by_name = {}
     for s in schemas:
         for k in (s.get("definitionName"), s.get("name")):

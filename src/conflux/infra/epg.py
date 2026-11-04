@@ -37,7 +37,7 @@ class _ChkRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_ChkRedirect())
 
 _LOCK = threading.Lock()
-_STATE = {'fetched': 0.0, 'map': {}, 'days': {}}
+_STATE: dict = {'fetched': 0.0, 'map': {}, 'days': {}}
 _LOAD_LOCK = threading.Lock()
 _LOADING = [False]
 

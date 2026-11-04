@@ -42,7 +42,7 @@ def _en_item(it, base_url):
         return None
     link = f'{base_url}/{urllib.parse.quote(f"{h}{ext}/{fn}{ext}")}'
     b64 = base64.urlsafe_b64encode(link.encode()).decode().rstrip('=')
-    s = {'name': 'Easynews', 'title': f'{fn}{ext}',
+    s: dict = {'name': 'Easynews', 'title': f'{fn}{ext}',
          'url': f'http://127.0.0.1:{PORT}/en/{b64}',
          'behaviorHints': {'bingeGroup': 'easynews'}}
     try:

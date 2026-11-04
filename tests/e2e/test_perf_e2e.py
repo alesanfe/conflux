@@ -9,7 +9,6 @@ acotan el overhead del proxy, no la red upstream.
 import concurrent.futures as cf
 import json
 import os
-import statistics
 import threading
 import time
 import unittest

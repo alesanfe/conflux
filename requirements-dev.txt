@@ -1,5 +1,5 @@
--r requirements.txt
-
+# Deps de runtime: requirements.txt (lock con hashes) — instalar ANTES en un
+# pip install aparte: su --require-hashes se globalizaria a esta lista sin hashes.
 pylint==4.1.3
 ruff==0.17.3
 radon==6.0.1
@@ -17,3 +17,4 @@ detect-secrets==1.5.0
 mutmut==3.8.1
 freezegun==1.5.5
 schemathesis==4.31.1
+import-linter==2.7
