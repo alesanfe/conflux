@@ -206,3 +206,140 @@ class TestCfgUrlKeys(unittest.TestCase):
         self.assertFalse(ok('stream_prefetch', 0))       # int no es bool
         self.assertFalse(ok('stream_max_gb', 10**9))     # fuera de cota
         self.assertFalse(ok('calendar_months_ahead', 99))
+
+
+class TestCfgUrlB64(unittest.TestCase):
+    """_profile con /cfg/<b64>: whitelist + passthrough si roto."""
+
+    def _h(self):
+        return srv.H.__new__(srv.H)
+
+    def test_cfg_b64_valida_filtra(self):
+        import base64
+        import json
+        cfg = {'stream_langs': ['es'], 'admin_token': 'x', 'epg_url': 'evil'}
+        b = base64.urlsafe_b64encode(json.dumps(cfg).encode()).decode().rstrip('=')
+        h = self._h()
+        out = h._profile(f'/cfg/{b}/stream/movie/tt.json')
+        self.assertEqual(out, '/stream/movie/tt.json')
+        self.assertEqual(srv._PROF.cfg, {'stream_langs': ['es']})  # fuera-keys podadas
+
+    def test_cfg_b64_rota_passthrough(self):
+        h = self._h()
+        p = h._profile('/cfg/no_es_b64_valido!!/stream/x')
+        self.assertEqual(p, '/cfg/no_es_b64_valido!!/stream/x')
+        self.assertIsNone(srv._PROF.cfg)
+
+    def test_cfg_no_dict_passthrough(self):
+        import base64
+        b = base64.urlsafe_b64encode(b'[1,2,3]').decode().rstrip('=')
+        h = self._h()
+        self.assertEqual(h._profile(f'/cfg/{b}/s/x'), f'/cfg/{b}/s/x')
+        self.assertIsNone(srv._PROF.cfg)
+
+
+class TestOptionsYReply(unittest.TestCase):
+    """do_OPTIONS CORS + reply gzip/broken-pipe."""
+
+    def _h(self):
+        h = srv.H.__new__(srv.H)
+        h.send_response = MagicMock()
+        h.send_header = MagicMock()
+        h.end_headers = MagicMock()
+        h.wfile = MagicMock()
+        h.headers = {}
+        return h
+
+    def _hdrs(self, h):
+        return {c.args[0]: c.args[1] for c in h.send_header.call_args_list}
+
+    def test_options_cors(self):
+        h = self._h()
+        h.do_OPTIONS()
+        h.send_response.assert_called_with(204)
+        hdrs = self._hdrs(h)
+        self.assertEqual(hdrs['Access-Control-Allow-Origin'], '*')
+        self.assertEqual(hdrs['Access-Control-Allow-Private-Network'], 'true')
+
+    def test_reply_grande_comprime(self):
+        h = self._h()
+        h.headers = {'Accept-Encoding': 'br, gzip'}
+        h.reply({'data': 'x' * 3000})
+        hdrs = self._hdrs(h)
+        self.assertEqual(hdrs['Content-Encoding'], 'gzip')
+        import gzip
+        body = h.wfile.write.call_args[0][0]
+        self.assertEqual(gzip.decompress(body)[:7], b'{"data"')
+
+    def test_reply_pequena_sin_gzip(self):
+        h = self._h()
+        h.headers = {'Accept-Encoding': 'gzip'}
+        h.reply({'ok': 1})
+        self.assertNotIn('Content-Encoding', self._hdrs(h))
+
+    def test_reply_pipe_roto_no_propaga(self):
+        h = self._h()
+        h.wfile.write.side_effect = BrokenPipeError()
+        h.reply({'ok': 1})                          # Stremio cortó: silencio
+
+
+class TestRedirectsEspeciales(unittest.TestCase):
+    """/en/ easynews creds y /nzb/ usenet: decode b64 + 404 si inválido."""
+
+    def _h(self, path):
+        h = srv.H.__new__(srv.H)
+        h.path = path
+        h.headers = {}
+        h._redir = MagicMock(return_value=None)
+        return h
+
+    def test_en_b64_roto_404(self):
+        _, undo = cfg_swap(easynews_user='u', easynews_pass='p')
+        try:
+            h = self._h('/en/%%%basura%%%')
+            h.do_GET()
+            h._redir.assert_called_with(None)
+        finally:
+            undo()
+
+    def test_en_con_creds_inyecta_auth(self):
+        import base64
+        link = base64.urlsafe_b64encode(b'https://members.easynews.com/dl/x.mkv').decode().rstrip('=')
+        _, undo = cfg_swap(easynews_user='u s', easynews_pass='p')
+        try:
+            h = self._h('/en/' + link)
+            h.do_GET()
+            u = h._redir.call_args[0][0]
+            self.assertIn('u%20s:p@members.easynews.com', u)
+        finally:
+            undo()
+
+    def test_en_sin_creds_404(self):
+        import base64
+        link = base64.urlsafe_b64encode(b'https://x/y').decode().rstrip('=')
+        _, undo = cfg_swap(easynews_user='', easynews_pass='')
+        try:
+            h = self._h('/en/' + link)
+            h.do_GET()
+            h._redir.assert_called_with(None)       # sin creds no se sirve el link
+        finally:
+            undo()
+
+    def test_nzb_link_valido_llama_resolver(self):
+        import base64
+        link = base64.urlsafe_b64encode(b'https://nzb.example/get/1').decode().rstrip('=')
+        _, undo = cfg_swap(debrid_key='k')
+        try:
+            import unittest.mock as um
+            h = self._h('/nzb/' + link)
+            with um.patch.object(srv, '_db_usenet', return_value='https://tb/redir') as du:
+                h.do_GET()
+            du.assert_called_once_with('k', 'https://nzb.example/get/1')
+            h._redir.assert_called_with('https://tb/redir')
+        finally:
+            undo()
+
+    def test_nzb_b64_roto_404(self):
+        h = self._h('/nzb/%%%mal%%%')
+        h.do_GET()
+        h._redir.assert_called_with(None)
