@@ -19,6 +19,13 @@ class TestInfra(unittest.TestCase):
         self.assertEqual(px.res_types(m, 'stream'), {'movie'})
         self.assertIsNone(px.res_types(m, 'meta'))
 
+    def test_res_prefixes_no_dict(self):
+        """isinstance(r, dict) and ... — entrada no-dict se salta sin .get
+        (mutante And@86: 'x'.get -> AttributeError)."""
+        from conflux.domain import sources as _s
+        self.assertIsNone(_s.res_prefixes({'resources': ['x']}, 'stream'))
+        self.assertIsNone(_s.res_prefixes({'resources': [None]}, 'stream'))
+
 
 class TestResolveSid(unittest.TestCase):
     def setUp(self):
@@ -52,6 +59,7 @@ class TestResolveSid(unittest.TestCase):
             px._resolve_sid('series', 'kitsu:49847:2')
             px._resolve_sid('series', 'kitsu:49847:2')
             self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][1], 4)                  # mutante 4+1@104
         finally:
             _sources.fetch = _net.fetch = orig
 
@@ -161,6 +169,7 @@ class TestRefreshManifests(unittest.TestCase):
         self.assertIn('http://b/manifest.json', urls[1])
         retry = [u for u, t in zip(urls, timeouts) if t == 20]
         self.assertEqual(retry, ['http://b/manifest.json'])   # solo la fallida
+        self.assertEqual(timeouts[:2], [10, 10])              # mutante 10+1@49
 
 
 class TestVideoSeAbsEp(unittest.TestCase):

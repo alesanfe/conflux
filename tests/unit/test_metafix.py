@@ -236,6 +236,18 @@ class TestDeadVideos(unittest.TestCase):
         with patch.object(mf, '_session', return_value=s):
             dead = mf._dead_videos(vids)
         self.assertEqual(dead, {'v:A'})
+        self.assertEqual(s.head.call_args.kwargs['timeout'], 4)   # mutante 4+1@180
+
+    def test_cap_40(self):
+        """vids[:40] — 41 candidatos -> solo 40 HEAD (mutante 40+1@184)."""
+        class _R:
+            status_code = 200
+        s = MagicMock()
+        s.head.side_effect = lambda url, **kw: _R()
+        vids = [{'id': f'v:{i}'} for i in range(41)]
+        with patch.object(mf, '_session', return_value=s):
+            mf._dead_videos(vids)
+        self.assertEqual(s.head.call_count, 40)
 
     def test_error_red_no_mata(self):
         import requests

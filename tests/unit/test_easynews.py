@@ -120,10 +120,10 @@ class TestEasynews(unittest.TestCase):
 
     def test_happy_path(self):
         _meta()
-        s, _ = fake_session({'json': {'downURL': 'https://f', 'dlFarm': 'a',
-                                      'dlPort': 'b', 'data': [
-                                          {'hash': 'h1', 'filename': 'bb.mkv',
-                                           'ext': '.mkv', 'size': '999'}]}})
+        s, calls = fake_session({'json': {'downURL': 'https://f', 'dlFarm': 'a',
+                                          'dlPort': 'b', 'data': [
+                                              {'hash': 'h1', 'filename': 'bb.mkv',
+                                               'ext': '.mkv', 'size': '999'}]}})
         _, undo = cfg_swap(easynews_user='u', easynews_pass='p')
         try:
             with patch.object(en, '_session', return_value=s):
@@ -131,6 +131,7 @@ class TestEasynews(unittest.TestCase):
         finally:
             undo()
         self.assertEqual(len(out), 1)
+        self.assertEqual(calls[0][2]['timeout'], 10)   # mutante 10+1@80
         self.assertIn('/en/', out[0]['url'])
         self.assertGreaterEqual(st.HEALTH['Easynews']['ok'], 1)   # mutante True@86
 

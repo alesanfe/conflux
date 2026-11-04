@@ -144,6 +144,7 @@ class TestQscoreContrato(unittest.TestCase):
         sc = [q({'srctype': s}) for s in orden]
         self.assertEqual(sc, sorted(sc, reverse=True))
         self.assertEqual(q({'srctype': 'BDREMUX'}), q({'srctype': 'REMUX'}))
+        self.assertGreater(q({'srctype': 'WEB-DL'}), 0)      # mutante Or@72
 
     def test_hdr_codec_audio_orden(self):
         q = self.T._qscore
@@ -345,6 +346,29 @@ class TestSkipManifest(unittest.TestCase):
     def test_emoji_alarma_es_spam(self):
         self.assertTrue(px._spam({'title': '⚠️ premium only'}))
         self.assertTrue(px._spam({'name': '🔒 locked', 'title': 'ok'}))
+
+    def test_spam_title_vacio_mira_description(self):
+        """title='' (falsy) se salta y raw0 sale de description (mutante And@319)."""
+        self.assertTrue(px._spam({'title': '', 'description': '⚠️ premium'}))
+        self.assertFalse(px._spam({'title': '', 'description': 'ok', 'name': 'ok'}))
+
+    def test_ef_text_ignora_name_no_str(self):
+        """parts filtra no-str: name=123 no rompe el join (mutante And@172)."""
+        import conflux.domain.text as T
+        _bh, _raw, text = T._ef_text({'title': 'ok', 'name': 123})
+        self.assertEqual(text, 'ok')
+
+    def test_norm_stream_size_crudo(self):
+        """f['size'] or 0 — size parseado llega a la tupla (mutante Or@301)."""
+        s = {'infoHash': 'a' * 40, 'title': 'Movie 💾1.4 GB'}
+        _out, _res, _seeds, size, *_ = px.norm_stream(s, 'T')
+        self.assertAlmostEqual(size, 1.4)
+
+    def test_id_prefix_sid_con_digitos(self):
+        """(sid or '').split(':')[0] — sid sin letra inicial va al fallback
+        (mutante Or@314: '24sk:x' -> '' en vez de '24sk')."""
+        self.assertEqual(px._id_prefix('24sk:x'), '24sk')
+        self.assertEqual(px._id_prefix('24sk'), '24sk')
 
 
 class TestDisplayT1(unittest.TestCase):

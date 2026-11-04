@@ -44,6 +44,7 @@ class TestZilean(unittest.TestCase):
         self.assertEqual(params['ImdbId'], 'tt0944947')
         self.assertEqual(params['Season'], '1')
         self.assertEqual(params['Episode'], '2')
+        self.assertEqual(calls[0][2]['timeout'], 10)   # mutante 10+1@59
 
     def test_items_filtrados(self):
         items = [{'infoHash': 'H' * 40, 'filename': 'x.mkv', 'filesize': '100'},

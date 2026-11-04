@@ -138,6 +138,13 @@ class TestMfNcDeadOpt(unittest.TestCase):
             self.assertEqual(g['options'], ['b'])               # 'a' muerta fuera
             o = next(e for e in nc['extra'] if e['name'] == 'otro')
             self.assertEqual(o['options'], ['z'])   # no-genre NUNCA se filtra
+
+            # And@126: con _DEAD_OPT poblado y catálogo SIN 'extra', el `or`
+            # entraría al `for e in nc['extra']` -> TypeError sobre None.
+            st._DEAD_OPT.clear(); st._DEAD_OPT.update({('sx_movie_c2', 'a')})
+            c2 = {'id': 'c2', 'type': 'movie', 'name': 'C2'}
+            nc2 = MF._mf_nc(src, c2, 'sx_movie_c2')
+            self.assertNotIn('extra', nc2)
         finally:
             st._DEAD_OPT.clear(); st._DEAD_OPT.update(old)
 

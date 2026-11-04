@@ -380,6 +380,21 @@ class TestSynthCal(unittest.TestCase):
             C._synth_cal('series', None, None, 'k')
         self.assertIsNotNone(st._cget(st._cat_c, ('estrenoscal', 2)))
 
+    def test_default_meses_2_sin_cfg(self):
+        """_cfgget('calendar_months_ahead', 2): sin la clave la clave de caché
+        usa 2 (mutante 2+1@163 — el CFG real trae el valor y lo enmascara)."""
+        import conflux.core.state as st
+        saved = st.CFG.pop('calendar_months_ahead', None)
+        try:
+            st._cset(st._cat_c, ('estrenoscal', 2), {'metasDetailed': [{}] * 25})
+            with patch.object(C, '_estrenos_cal') as ec:
+                out, _, _ = C._synth_cal('series', None, None, 'k')
+            ec.assert_not_called()
+            self.assertEqual(len(out['metasDetailed']), 25)
+        finally:
+            if saved is not None:
+                st.CFG['calendar_months_ahead'] = saved
+
     def test_none_a_metas_vacio(self):
         with patch.object(C, '_estrenos_cal', return_value=None):
             out, _, _ = C._synth_cal('series', None, None, 'k')

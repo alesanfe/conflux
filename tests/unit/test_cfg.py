@@ -46,6 +46,12 @@ class TestCoerce(unittest.TestCase):
         self.assertEqual(cfg._coerce('m3u_path', None), '')      # "k":null no propaga None
         self.assertEqual(cfg._coerce('trakt_expires', None), 0)
 
+    def test_clave_sin_default_pasa_intacta(self):
+        """d is None -> return v: clave fuera de _CFG_DEFAULTS no se toca
+        (mutante Or@29: caería a `return d` -> None)."""
+        self.assertEqual(cfg._coerce('clave_que_no_existe', 'abc'), 'abc')
+        self.assertEqual(cfg._coerce('clave_que_no_existe', 7), 7)
+
 
 class TestEffDisabled(unittest.TestCase):
     def test_eff_disabled_lista(self):
