@@ -141,6 +141,12 @@ class TestDeadOptGrp(unittest.TestCase):
         self.assertEqual(real, 'real1')          # fallback: primer miembro
         self.assertNotIn('genre=', extra)
 
+    def test_base_salta_a_miembro_vivo(self):
+        import conflux.core.state as st
+        st._DEAD_OPT.add(('sg_tst_grp', 'vivo'))
+        ut, real, extra = C._cat_grp_extra('sg_tst_grp', None)
+        self.assertEqual(real, 'real2')          # 1º muerto -> sirve el vivo
+
     def test_label_viva_intacta(self):
         ut, real, extra = C._cat_grp_extra('sg_tst_grp', 'genre=Muerto')
         self.assertEqual(real, 'real2')

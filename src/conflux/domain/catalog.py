@@ -108,7 +108,12 @@ def _cat_grp_extra(cid, extra):
     if g and (cid, g.lower()) in _DEAD_OPT:           # label muerta -> base del grupo
         g = None
     y = kv.pop('year', None)                          # picker año (members con genre=año)
-    utype, real, wants, forced = _GRP[cid].get(g) or next(iter(_GRP[cid].values()))
+    entry = _GRP[cid].get(g)
+    if entry is None:                                 # base: primer miembro VIVO
+        entry = next((v for k, v in _GRP[cid].items()
+                      if (cid, k.lower()) not in _DEAD_OPT),
+                     next(iter(_GRP[cid].values())))
+    utype, real, wants, forced = entry
     if wants:
         kv['genre'] = y or _YR_OPTS[cid][0]     # sin año: el más reciente
     if forced:
@@ -220,6 +225,34 @@ def _cat_fix_extra(base, utype, real, extra):
     return extra
 
 
+def _grp_failover(cid, base, real, kv, d):
+    """Miembro del grupo caído (None) o vacío -> prueba los demás miembros
+    en orden y sirve el primero con metas. 'Events' 503/[] no debe dejar el
+    grupo entero en Oops! mientras otro miembro (DLStreams) tenga contenido."""
+    if isinstance(d, dict) and (d.get('metas') or d.get('metasDetailed')):
+        return d
+    seen, tried = {real}, set()
+    for _label, (ut, r, wants, forced) in _GRP[cid].items():
+        if r in seen:
+            continue
+        seen.add(r)
+        kv2 = dict(kv)
+        kv2.pop('genre', None)                        # el genre era del miembro caído
+        if wants:
+            kv2['genre'] = _YR_OPTS[cid][0]
+        if forced:
+            kv2['genre'] = forced
+        tail = urllib.parse.urlencode(kv2, safe=',')
+        tail = f"/{urllib.parse.quote(tail, safe='=&,:')}" if tail else ''
+        tried.add(r)
+        d2 = fetch(f"{base}/catalog/{ut}/{urllib.parse.quote(r, safe='')}{tail}.json", 7)
+        if isinstance(d2, dict) and (d2.get('metas') or d2.get('metasDetailed')):
+            return d2
+        if isinstance(d2, dict):                     # 200-vacío: último recurso
+            d = d2
+    return d
+
+
 def _cat_norm(d):
     """Respuesta catálogo -> contrato: metas/metasDetailed solo listas de dicts."""
     for k in ('metas', 'metasDetailed'):
@@ -245,6 +278,9 @@ def handle_catalog(stype, cid, extra):
     extra = _cat_fix_extra(base, utype, real, extra)
     tail = f"/{urllib.parse.quote(extra, safe='=&,:')}" if extra else ''
     d = fetch(f"{base}/catalog/{utype}/{urllib.parse.quote(real, safe='')}{tail}.json", 7)
+    if cid in _GRP:
+        kv = dict(urllib.parse.parse_qsl(extra or ''))
+        d = _grp_failover(cid, base, real, kv, d)
     if isinstance(d, dict):
         _cat_norm(d)
         dead_g = None
