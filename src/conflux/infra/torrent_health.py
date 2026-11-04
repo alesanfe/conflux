@@ -18,8 +18,12 @@ import struct
 import threading
 import time
 
+import os
+
 from conflux.core.cfg import _cfgget
-from conflux.core.state import _POOL_BG
+from conflux.core.state import _POOL_BG, _ROOT
+
+_SEED_PATH = os.path.join(_ROOT, '.seed-cache.json')
 
 _TRACKERS = [('open.demonii.com', 1337), ('tracker.torrent.eu.org', 451),
              ('open.stealth.si', 80), ('tracker.dler.org', 6969)]
@@ -30,6 +34,41 @@ _TMO = 4                 # s por intento de tracker
 
 _SEED: dict = {}         # infohash_lower -> (seeds, ts) — -1 = muerto confirmado (0 tracker + 0 DHT)
 _SLOCK = threading.Lock()
+_LAST_SAVE = [0.0]       # throttle de persistencia
+
+
+def _seed_load(path):
+    """Carga veredictos persistidos (no caducados) -> evita re-scrape frío."""
+    try:
+        import json
+        import os
+        if not os.path.exists(path):
+            return
+        data = json.load(open(path, encoding='utf-8'))
+        now = time.time()
+        for h, (sd, ts) in data.items():
+            if isinstance(sd, int) and now - ts < _TTL:
+                _SEED[h] = (sd, ts)
+    except Exception:
+        pass
+
+
+def _seed_save(path):
+    """Persiste veredictos (tmp+rename, throttle 60s)."""
+    now = time.time()
+    if now - _LAST_SAVE[0] < 60:
+        return
+    _LAST_SAVE[0] = now
+    try:
+        import json
+        import os
+        import tempfile
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or '.', suffix='.tmp')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(_SEED, f)
+        os.replace(tmp, path)
+    except Exception:
+        pass
 
 
 # ---- bencode mínimo (KRPC DHT) ----
@@ -224,6 +263,7 @@ def _scrape_submit(hashes):
                 _SEED.pop(h, None)
         for h, sd in verdicts.items():
             _SEED[h] = (sd, now)
+    _seed_save(_SEED_PATH)                           # sobrevive reinicios
 
 
 def _hash_known(h):
@@ -260,5 +300,15 @@ def _hash_health(streams):
     if dead:
         streams[:] = [s for s in streams
                       if str(s.get('infoHash') or '').lower() not in dead]
+    sink = [i for i, s in enumerate(streams)
+            if s.get('sources')
+            and _hash_known(str(s.get('infoHash') or '').lower()) == -1]
+    if 0 < len(sink) < len(streams):               # muertos-con-hints al fondo:
+        sset = set(sink)                           # sort estable: orden relativo intacto
+        streams[:] = [s for i, s in enumerate(streams) if i not in sset] + \
+                     [streams[i] for i in sink]
     for i in range(0, min(len(todo), 140), _CHUNK * 7):   # ~140 hashes por lote
         _POOL_BG.submit(_scrape_submit, todo[i:i + _CHUNK * 7])
+
+
+_seed_load(_SEED_PATH)                             # veredictos persistidos al import

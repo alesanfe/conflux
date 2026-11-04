@@ -66,6 +66,25 @@ class TestHashHealth(unittest.TestCase):
         self.assertEqual(out, [s])                    # caducado: no es dead
         self.assertEqual(len(self._todo), 1)          # y se re-scrapea
 
+    def test_muerto_con_hints_al_fondo(self):
+        TH._SEED[H_PRIV] = (-1, time.time())
+        vivo = self._st(H_LIVE)
+        muerto = self._st(H_PRIV, sources=['tracker:udp://x'])
+        out = [muerto, vivo]
+        TH._hash_health(out)
+        self.assertEqual(out, [vivo, muerto])       # se mantiene pero hundido
+
+    def test_persist_roundtrip(self):
+        import tempfile, os
+        TH._SEED[H_LIVE] = (9, time.time())
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, 's.json')
+            TH._LAST_SAVE[0] = 0
+            TH._seed_save(p)
+            TH._SEED.clear()
+            TH._seed_load(p)
+        self.assertEqual(TH._SEED[H_LIVE][0], 9)
+
     def test_mixto(self):
         TH._SEED[H_DEAD] = (-1, time.time())
         TH._SEED[H_LIVE] = (3, time.time())
