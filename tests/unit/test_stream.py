@@ -1,7 +1,10 @@
 # pylint: disable=missing-docstring,protected-access,import-outside-toplevel,multiple-statements,unused-argument,invalid-name,redefined-outer-name,expression-not-assigned,too-many-public-methods,duplicate-code,non-ascii-name,wrong-import-position
 """Unit tests conflux.app.stream — /stream + collect."""
+import collections
 import threading
+import time
 import unittest
+from unittest import mock
 
 import conflux.app.stream as S
 import conflux.core.state as st
@@ -637,6 +640,820 @@ class TestStreamMaxGb(unittest.TestCase):
             self.assertEqual(len(S._rows_out(rows)), 2)
         finally:
             undo()
+
+
+_Src = collections.namedtuple('_Src', 'name base')
+
+
+class TestCollectSkipGuard(unittest.TestCase):
+    """_collect_skip: cada motivo de skip es un guarda distinto — los mutantes
+    de comparación los funden; estos tests los separan."""
+
+    def setUp(self):
+        self._man = list(st.manifests)
+        self._cd = dict(st.COOLDOWN)
+
+    def tearDown(self):
+        st.manifests[:] = self._man
+        st.COOLDOWN.clear(); st.COOLDOWN.update(self._cd)
+
+    def test_deshabilitada(self):
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, '_skip_manifest', return_value=None):
+            r = S._collect_skip(0, 'movie', 'tt1', {'Foo'})
+        self.assertEqual(r, 'deshabilitada')
+
+    def test_manifest_mas_corto_no_indexa(self):
+        """i >= len(manifests) -> m=None sin IndexError."""
+        st.manifests[:] = []
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, '_skip_manifest', return_value=None) as sm:
+            r = S._collect_skip(0, 'movie', 'tt1', set())
+        sm.assert_called_once_with(None, 'movie', 'tt1')
+        self.assertIsNone(r)
+
+    def test_skip_manifest_gana(self):
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, '_skip_manifest', return_value='sin stream'):
+            self.assertEqual(S._collect_skip(0, 'movie', 'tt1', set()), 'sin stream')
+
+    def test_cooldown_vigente_salta(self):
+        st.COOLDOWN['Foo'] = (time.time() + 60, 'cuota')
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, '_skip_manifest', return_value=None):
+            self.assertEqual(S._collect_skip(0, 'movie', 'tt1', set()),
+                             'en espera (cuota)')
+
+    def test_cooldown_caducado_pasa(self):
+        st.COOLDOWN['Foo'] = (time.time() - 1, 'cuota')   # ts pasado -> toca fetch
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, '_skip_manifest', return_value=None):
+            self.assertIsNone(S._collect_skip(0, 'movie', 'tt1', set()))
+
+
+class TestQuotaHit(unittest.TestCase):
+    """_quota_hit: solo dicts con título que matchea el regex de cuota."""
+
+    def test_titulo_cuota(self):
+        self.assertTrue(S._quota_hit([{'title': 'Daily limit reached!'}]))
+        self.assertTrue(S._quota_hit([{'title': 'quota'}]))
+
+    def test_titulo_normal_no(self):
+        self.assertFalse(S._quota_hit([{'title': 'F.2024.1080p.WEBRip'}]))
+
+    def test_no_dict_y_sin_titulo(self):
+        self.assertFalse(S._quota_hit(['no-dict', {'x': 1}, {'title': None}]))
+
+
+class TestCollectOne(unittest.TestCase):
+    """_collect_one: skip -> health solo si no es 'deshabilitada'; cuota ->
+    disyuntor 12h; usable cuenta solo dicts no-spam."""
+
+    def setUp(self):
+        self._cd = dict(st.COOLDOWN)
+
+    def tearDown(self):
+        st.COOLDOWN.clear(); st.COOLDOWN.update(self._cd)
+
+    def test_deshabilitada_sin_health(self):
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, '_collect_skip', return_value='deshabilitada'), \
+             mock.patch.object(S, '_health') as h:
+            self.assertEqual(S._collect_one(0, 'movie', 'tt1', set()), ('Foo', [], 0))
+        h.assert_not_called()
+
+    def test_skip_registra_health(self):
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, '_collect_skip', return_value='en espera (x)'), \
+             mock.patch.object(S, '_health') as h:
+            S._collect_one(0, 'movie', 'tt1', set())
+        h.assert_called_once_with('Foo', True, 'en espera (x)', 0)
+
+    def test_cuota_12h_y_cero_usable(self):
+        t0 = time.time()
+        ss = [{'title': 'daily limit reached'}, {'title': 'ok'}]
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, '_collect_skip', return_value=None), \
+             mock.patch.object(S, '_collect_fetch', return_value=('Foo', {}, ss)), \
+             mock.patch.object(S, '_health') as h:
+            self.assertEqual(S._collect_one(0, 'movie', 'tt1', set()), ('Foo', [], 0))
+        cd = st.COOLDOWN['Foo']
+        self.assertEqual(cd[1], 'cuota')
+        self.assertGreaterEqual(cd[0], t0 + st.COOLDOWN_T - 1)   # futuro, no pasado
+        self.assertLessEqual(cd[0], time.time() + st.COOLDOWN_T + 1)
+        h.assert_called_once_with('Foo', True, 'cuota agotada → espera 12h', 0)
+
+    def test_usable_excluye_spam_y_no_dicts(self):
+        ss = [{'title': 'ok 1080p'}, {'title': 'upgrade to premium'}, 'rueda', 7]
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, '_collect_skip', return_value=None), \
+             mock.patch.object(S, '_collect_fetch', return_value=('Foo', {}, ss)), \
+             mock.patch.object(S, '_health'):
+            name, out, usable = S._collect_one(0, 'movie', 'tt1', set())
+        self.assertEqual(usable, 1)
+        self.assertEqual(out, ss)
+
+
+class TestCollectHealth(unittest.TestCase):
+    """_collect_health: disyuntor solo si d is None Y streak >= FAIL_STREAK."""
+
+    def setUp(self):
+        self._cd, self._h = dict(st.COOLDOWN), dict(st.HEALTH)
+
+    def tearDown(self):
+        st.COOLDOWN.clear(); st.COOLDOWN.update(self._cd)
+        st.HEALTH.clear(); st.HEALTH.update(self._h)
+
+    def test_ok_reporta_y_no_cooldown(self):
+        st.HEALTH['Foo'] = {'streak': 99}
+        with mock.patch.object(S, '_health') as h:
+            S._collect_health('Foo', {'streams': []},
+                              [{'title': 'a'}, {'title': 'upgrade premium'}, 'x'])
+        h.assert_called_once_with('Foo', True, '', 1)      # usable sin spam
+        self.assertNotIn('Foo', st.COOLDOWN)               # d!=None: nunca cooldown
+
+    def test_fallo_bajo_umbral_sin_cooldown(self):
+        st.HEALTH['Foo'] = {'streak': 0}
+        with mock.patch.object(S, '_health') as h:
+            S._collect_health('Foo', None, [])
+        h.assert_called_once_with('Foo', False, 'timeout/error', 0)
+        self.assertNotIn('Foo', st.COOLDOWN)
+
+    def test_fallo_en_umbral_dispara(self):
+        st.HEALTH['Foo'] = {'streak': st.FAIL_STREAK}
+        t0 = time.time()
+        with mock.patch.object(S, '_health'):
+            S._collect_health('Foo', None, [])
+        cd = st.COOLDOWN['Foo']
+        self.assertEqual(cd[1], 'fallos')
+        self.assertGreaterEqual(cd[0], t0 + st.FAIL_CD_T - 1)
+
+
+class TestCollectFetch(unittest.TestCase):
+    """_collect_fetch: URL quoted con ':' safe, timeout configurable, ss robusto."""
+
+    def test_url_y_timeout_config(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(source_timeout=9)
+        try:
+            with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+                 mock.patch.object(S, 'fetch', return_value={'streams': []}) as f:
+                S._collect_fetch(0, 'movie', 'tt1:2:3')
+            self.assertEqual(f.call_args[0][0],
+                             'http://b/stream/movie/tt1:2:3.json')
+            self.assertEqual(f.call_args[0][1], 9)
+        finally:
+            undo()
+
+    def test_timeout_default(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(source_timeout=0)
+        try:
+            with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+                 mock.patch.object(S, 'fetch', return_value=None) as f:
+                name, d, ss = S._collect_fetch(0, 'movie', 'tt1')
+            self.assertEqual(f.call_args[0][1], S.STREAM_TIMEOUT)
+            self.assertEqual(ss, [])
+        finally:
+            undo()
+
+    def test_streams_no_lista_a_vacio(self):
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, 'fetch', return_value={'streams': 'str'}):
+            self.assertEqual(S._collect_fetch(0, 'movie', 'tt1')[2], [])
+
+
+class TestCollectMergeServed(unittest.TestCase):
+    """_collect_merge: _SERVED contabiliza por resolución con fallback 'SD'."""
+
+    def setUp(self):
+        self._sv = dict(st._SERVED)
+        st._SERVED.clear()
+
+    def tearDown(self):
+        st._SERVED.clear(); st._SERVED.update(self._sv)
+
+    def _state(self):
+        return {'rows': [], 'seen': set(), 'contrib': {},
+                'done': threading.Event(), 'lock': threading.Lock()}
+
+    def test_served_buckets(self):
+        S._collect_merge(self._state(), 'Foo', [
+            {'title': 'F 1080p x264', 'url': 'http://x/1'},
+            {'title': 'F cam', 'url': 'http://x/2'}])
+        sv = st._SERVED['Foo']
+        self.assertEqual(sv['n'], 2)
+        self.assertEqual(sv['res'].get('1080P'), 1)
+        self.assertEqual(sv['res'].get('SD'), 1)       # sin res -> bucket SD, no ''
+
+    def test_no_dict_ignorado(self):
+        stt = self._state()
+        S._collect_merge(stt, 'Foo', ['rueda', 7, {'title': 'ok', 'url': 'http://x'}])
+        self.assertEqual(len(stt['rows']), 1)
+
+
+class TestCollectWorkers(unittest.TestCase):
+    """_collect_tz/zl/nz/en: excepción -> (name, [], 0) + log truncado;
+    éxito -> usable sin spam/no-dicts."""
+
+    WORKERS = [('_collect_tz', '_torznab', 'Torznab'),
+               ('_collect_zl', '_zilean', 'Zilean'),
+               ('_collect_nz', '_newznab', 'Newznab'),
+               ('_collect_en', '_easynews', 'Easynews')]
+
+    def test_excepcion_aislada_y_log_truncado(self):
+        for worker, dep, name in self.WORKERS:
+            with self.subTest(worker=worker), \
+                 mock.patch.object(S, dep, side_effect=RuntimeError('x' * 500)), \
+                 mock.patch.object(S, 'log_ev') as lg:
+                out = getattr(S, worker)('movie', 'tt1')
+            self.assertEqual(out, (name, [], 0))
+            self.assertEqual(len(lg.call_args[1]['err']), 100)   # repr[:100]
+
+    def test_usable_sin_spam(self):
+        ss = [{'title': 'ok'}, {'title': 'free trial premium'}, 'x']
+        for worker, dep, name in self.WORKERS:
+            with self.subTest(worker=worker), \
+                 mock.patch.object(S, dep, return_value=ss):
+                self.assertEqual(getattr(S, worker)('m', 'i'), (name, ss, 1))
+
+
+class _Fut:
+    def __init__(self, val=None, err=None):
+        self._v, self._e = val, err
+
+    def result(self):
+        if self._e:
+            raise self._e
+        return self._v
+
+
+class _SeqPool:
+    """_POOL falso: futures pre-cocinados en orden de submit."""
+
+    def __init__(self, results):
+        self._r = list(results)
+
+    def submit(self, fn, *a):
+        return _Fut(self._r.pop(0))
+
+
+class TestCollectInternals(unittest.TestCase):
+    """_collect: timer casi-done, errores de worker tolerados, estado final."""
+
+    def setUp(self):
+        self._inf = dict(S._inflight)
+        self._cc = dict(S._cache)
+
+    def tearDown(self):
+        S._inflight.clear(); S._inflight.update(self._inf)
+        S._cache.clear(); S._cache.update(self._cc)
+
+    def _state(self):
+        return {'rows': [], 'seen': set(), 'contrib': {},
+                'done': threading.Event(), 'lock': threading.Lock()}
+
+    def test_worker_roto_log_y_continua(self):
+        # 1 fuente + 4 workers = 5 submits; el 2º (tz) lanza -> log + continue
+        futs = [_Fut(('Src0', [{'title': 'x', 'url': 'http://x'}], 1)),
+                _Fut(err=RuntimeError('y' * 300)),
+                _Fut(('Z', [], 0)), _Fut(('N', [], 0)), _Fut(('E', [], 0))]
+        state = self._state()
+        with mock.patch.object(S, 'SOURCES', [_Src('S0', 'http://b')]), \
+             mock.patch.object(S, '_POOL'), \
+             mock.patch.object(S, '_resolve_sid', side_effect=lambda t, i: i), \
+             mock.patch.object(S._POOL, 'submit', side_effect=lambda *a: futs.pop(0)), \
+             mock.patch.object(S, 'as_completed', side_effect=lambda fs, **k: list(fs)), \
+             mock.patch.object(S, 'log_ev') as lg:
+            S._collect(('movie', 'tt1', ()), state)
+        self.assertTrue(state['done'].is_set())
+        self.assertIn('Src0', state['contrib'])
+        err = next(c[1]['err'] for c in lg.call_args_list
+                   if c[0][0] == 'src_worker')
+        self.assertEqual(len(err), 100)
+        self.assertNotIn(('movie', 'tt1', ()), S._inflight)
+
+    def test_nearly_done_solo_con_3_stragglers(self):
+        """El timer despierta solo cuando quedan <=3: ni antes ni con 4."""
+        timers = []
+
+        class FT:
+            def __init__(self, d, fn):
+                timers.append(fn)
+                self.daemon = None
+            def start(self):
+                pass
+            def cancel(self):
+                pass
+
+        results = [(f'S{i}', [], 1) for i in range(6)]   # 2 fuentes + 4 workers
+        state = self._state()
+
+        def fake_ac(fs, **k):
+            cb = timers[0]
+            for i, f in enumerate(fs):
+                yield f
+                pend = len(fs) - (i + 1)
+                if pend == 4:
+                    cb()                                   # 4 pendientes: no despierta
+                    self.assertFalse(state['done'].is_set())
+                if pend == 3:
+                    cb()                                   # 3 pendientes: despierta
+                    self.assertTrue(state['done'].is_set())
+
+        faketh = type('T', (), {'Timer': FT, 'Event': threading.Event,
+                                'Lock': threading.Lock, 'Thread': threading.Thread})
+        with mock.patch.object(S, 'SOURCES',
+                               [_Src('A', 'http://a'), _Src('B', 'http://b')]), \
+             mock.patch.object(S, 'threading', faketh), \
+             mock.patch.object(S, '_resolve_sid', side_effect=lambda t, i: i), \
+             mock.patch.object(S._POOL, 'submit',
+                               side_effect=lambda *a: _Fut(results.pop(0))), \
+             mock.patch.object(S, 'as_completed', side_effect=fake_ac):
+            S._collect(('movie', 'tt2', ()), state)
+        self.assertTrue(state['done'].is_set())
+
+
+class TestEnsureCollect(unittest.TestCase):
+    """_ensure_collect: misma key -> mismo state; nueva -> state + hilo."""
+
+    def setUp(self):
+        self._inf = dict(S._inflight)
+
+    def tearDown(self):
+        S._inflight.clear(); S._inflight.update(self._inf)
+
+    def test_misma_key_mismo_state(self):
+        ev = threading.Event()
+        with mock.patch.object(S, '_collect', side_effect=lambda *a: ev.set()):
+            s1 = S._ensure_collect(('movie', 'tt9', ()))
+            s2 = S._ensure_collect(('movie', 'tt9', ()))
+            ev.wait(2)
+        self.assertIs(s1, s2)
+        self.assertEqual(len(S._inflight), 1)
+
+
+class TestUrlTodo(unittest.TestCase):
+    """_url_todo: http externo sin veredicto reciente -> candidata (cap 15)."""
+
+    def setUp(self):
+        self._bad, self._ok = dict(S._URL_BAD), dict(S._URL_OK)
+        S._URL_BAD.clear(); S._URL_OK.clear()   # veredictos de otros tests fuera
+
+    def tearDown(self):
+        S._URL_BAD.clear(); S._URL_BAD.update(self._bad)
+        S._URL_OK.clear(); S._URL_OK.update(self._ok)
+
+    def _now(self):
+        return time.time()
+
+    def test_candidatas_basicas(self):
+        now = self._now()
+        out = S._url_todo([{'url': 'http://cdn.x/f.mkv'}], now)
+        self.assertEqual(out, ['http://cdn.x/f.mkv'])
+
+    def test_no_http_y_loopback_fuera(self):
+        now = self._now()
+        out = S._url_todo([{'url': 'magnet:?xt=x'},
+                           {'url': 'http://127.0.0.1:9700/en/abc'}], now)
+        self.assertEqual(out, [])
+
+    def test_veredicto_reciente_bloquea(self):
+        now = self._now()
+        S._URL_BAD['http://a/1'] = (2, now - 1799)        # <1800s: no reintenta
+        S._URL_BAD['http://a/2'] = (2, now - 1801)        # >1800s: reintenta
+        S._URL_OK['http://a/3'] = now - 60                # OK reciente: no
+        S._URL_OK['http://a/4'] = now - 1801              # OK viejo: sí
+        out = S._url_todo([{'url': f'http://a/{i}'} for i in (1, 2, 3, 4)], now)
+        self.assertEqual(out, ['http://a/2', 'http://a/4'])
+
+    def test_cap_15(self):
+        now = self._now()
+        out = S._url_todo([{'url': f'http://a/{i}'} for i in range(20)], now)
+        self.assertEqual(len(out), 15)
+
+
+class TestUrlHead(unittest.TestCase):
+    """_url_head: <400 vivo; >=400 muerte segura; excepción -> +1 strike."""
+
+    def setUp(self):
+        self._bad, self._ok = dict(S._URL_BAD), dict(S._URL_OK)
+        S._URL_BAD.clear(); S._URL_OK.clear()   # veredictos de otros tests fuera
+
+    def tearDown(self):
+        S._URL_BAD.clear(); S._URL_BAD.update(self._bad)
+        S._URL_OK.clear(); S._URL_OK.update(self._ok)
+
+    def _sess(self, status):
+        class R:
+            status_code = status
+        class Sn:
+            def head(self_, u, **kw):
+                self_.kw = kw
+                return R()
+        return Sn()
+
+    def test_vivo_marca_ok(self):
+        sn = self._sess(399)
+        S._URL_BAD['http://a/x'] = (1, 1)
+        with mock.patch.object(S, '_session', return_value=sn):
+            S._url_head('http://a/x')
+        self.assertIn('http://a/x', S._URL_OK)
+        self.assertNotIn('http://a/x', S._URL_BAD)
+        self.assertEqual(sn.kw, {'timeout': 3, 'allow_redirects': True})
+
+    def test_400_muerte_segura(self):
+        sn = self._sess(400)
+        with mock.patch.object(S, '_session', return_value=sn):
+            S._url_head('http://a/y')
+        st_, _ = S._URL_BAD['http://a/y']
+        self.assertEqual(st_, 2)                          # 4xx: muerte directa
+
+    def test_excepcion_suma_strike(self):
+        S._URL_BAD['http://a/z'] = (1, 0)
+        with mock.patch.object(S, '_session', side_effect=TimeoutError):
+            S._url_head('http://a/z')
+        st_, _ = S._URL_BAD['http://a/z']
+        self.assertEqual(st_, 2)                          # 1+1 strikes
+
+
+class TestUrlPrune(unittest.TestCase):
+    """_url_prune: elimina la mitad más vieja de cada veredicto."""
+
+    def setUp(self):
+        self._bad, self._ok = dict(S._URL_BAD), dict(S._URL_OK)
+        S._URL_BAD.clear(); S._URL_OK.clear()   # veredictos de otros tests fuera
+
+    def tearDown(self):
+        S._URL_BAD.clear(); S._URL_BAD.update(self._bad)
+        S._URL_OK.clear(); S._URL_OK.update(self._ok)
+
+    def test_mitad_vieja_fuera(self):
+        for i in range(4):
+            S._URL_BAD[f'http://b{i}'] = (2, float(i))    # ts crecientes
+            S._URL_OK[f'http://o{i}'] = float(i)
+        S._url_prune()
+        self.assertEqual(sorted(S._URL_BAD), ['http://b2', 'http://b3'])
+        self.assertEqual(sorted(S._URL_OK), ['http://o2', 'http://o3'])
+
+
+class TestUrlHealth(unittest.TestCase):
+    """_url_health: muertos (st>=2, reciente) fuera; resto -> HEAD async."""
+
+    def setUp(self):
+        self._bad, self._ok = dict(S._URL_BAD), dict(S._URL_OK)
+        S._URL_BAD.clear(); S._URL_OK.clear()   # veredictos de otros tests fuera
+
+    def tearDown(self):
+        S._URL_BAD.clear(); S._URL_BAD.update(self._bad)
+        S._URL_OK.clear(); S._URL_OK.update(self._ok)
+
+    def test_muerto_reciente_sale(self):
+        now = time.time()
+        S._URL_BAD['http://dead'] = (2, now)
+        ss = [{'url': 'http://dead'}, {'url': 'magnet:?x'}]
+        with mock.patch.object(S._POOL_BG, 'submit'):
+            S._url_health(ss)
+        self.assertEqual([s['url'] for s in ss], ['magnet:?x'])
+
+    def test_muerto_viejo_o_strike_no_sale(self):
+        now = time.time()
+        S._URL_BAD['http://old'] = (2, now - 1801)        # veredicto caduco
+        S._URL_BAD['http://half'] = (1, now)              # 1 strike: aún vivo
+        ss = [{'url': 'http://old'}, {'url': 'http://half'}]
+        with mock.patch.object(S._POOL_BG, 'submit'):
+            S._url_health(ss)
+        self.assertEqual(len(ss), 2)
+
+    def test_poda_a_2001(self):
+        for i in range(1001):
+            S._URL_BAD[f'http://b{i}'] = (1, 0.0)
+            S._URL_OK[f'http://o{i}'] = 0.0               # 2002 > 2000 -> poda
+        with mock.patch.object(S, '_url_prune') as p, \
+             mock.patch.object(S._POOL_BG, 'submit'):
+            S._url_health([])
+        p.assert_called_once()
+
+    def test_sin_poda_a_2000(self):
+        for i in range(1000):
+            S._URL_BAD[f'http://b{i}'] = (1, 0.0)
+            S._URL_OK[f'http://o{i}'] = 0.0               # =2000: no poda
+        with mock.patch.object(S, '_url_prune') as p, \
+             mock.patch.object(S._POOL_BG, 'submit'):
+            S._url_health([])
+        p.assert_not_called()
+
+    def test_candidatas_a_head(self):
+        ss = [{'url': 'http://cdn/1'}, {'url': 'http://cdn/2'}]
+        with mock.patch.object(S._POOL_BG, 'submit') as sb:
+            S._url_health(ss)
+        self.assertEqual(sb.call_count, 2)
+
+
+class TestScoringContrato(unittest.TestCase):
+    """Contrato numérico del ranking: cada constante/índice cuenta."""
+
+    def test_seed_score_es_500(self):
+        r = ({'title': 't'}, '1080P', 10, 1.0, False, {'es': True}, 's')
+        self.assertEqual(S._seed_score(r), 510)
+        r2 = ({'title': 't'}, '1080P', 10, 1.0, False, {'es': False}, 's')
+        self.assertEqual(S._seed_score(r2), 10)
+
+    def test_seed_score_preferred_300(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_preferred=['remux'])
+        try:
+            r = ({'title': 'x REMUX', 'name': 'n'}, '1080P', 10, 1.0, False,
+                 {'es': False}, 's')
+            self.assertEqual(S._seed_score(r), 310)
+        finally:
+            undo()
+
+    def test_sort_seeds_usa_boost(self):
+        from tests import cfg_swap
+        def mk(t, s, u):
+            return S.norm_stream({'title': t, 'url': u, 'name': 'x'}, 't')
+        rows = [mk('G.2024.1080p', 0, 'http://x/a'),
+                mk('F.2024.1080p', 0, 'http://x/b')]
+        _, undo = cfg_swap(stream_sort=['seeds'], stream_preferred=['G.2024'])
+        try:
+            rr = S._rows_out(rows)
+            self.assertEqual(rr[0]['url'], 'http://x/a')  # boost gana a seeds=0 igualados
+        finally:
+            undo()
+
+    def test_sort_size_descendente(self):
+        from tests import cfg_swap
+        def mk(sz):
+            return ({'name': 'x', 'title': 't', 'url': f'http://x/{sz}'},
+                    '1080P', 0, sz, 0, {'es': False}, 's')
+        _, undo = cfg_swap(stream_sort=['size'])
+        try:
+            rr = S._rows_out([mk(1.0), mk(9.0)])
+            self.assertIn('9.0', rr[0]['url'])
+        finally:
+            undo()
+
+    def test_sort_order_exacto(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_sort=['seeds'])
+        try:
+            self.assertEqual(S._sort_order(),
+                             ('seeds', 'res', 'cached', 'quality', 'size'))
+        finally:
+            undo()
+
+    def test_rowkey_tupla(self):
+        f = {'es': True}
+        r = ('out', '1080P', 7, 2.0, 1, f, 's')
+        k = S._rowkey(r)
+        self.assertEqual(k[0], -RANK['1080P'])
+        self.assertEqual(k[1], -1)                     # cached
+        self.assertEqual(k[3], -(7 + 500))             # seeds + es boost
+        self.assertEqual(k[4], -2.0)                   # size
+
+
+class TestLangRows(unittest.TestCase):
+    """_lang_rows: sin override solo añade el es-boost horneado; con override
+    re-evalúa el texto y re-etiqueta si cambió."""
+
+    def test_sin_override_es_boost(self):
+        r = S.norm_stream({'title': 'F.2024.1080p', 'url': 'http://x', 'name': 'n'},
+                          't')
+        out, res, seeds, size, cached, q = S._lang_rows([r])[0]
+        f_es = dict(r[5]); f_es['es'] = True
+        r2 = (r[0], r[1], r[2], r[3], r[4], f_es, r[6])
+        self.assertEqual(S._lang_rows([r2])[0][2], r2[2] + 500)
+
+    def test_dict_passthrough(self):
+        out = S._lang_rows([{'name': 'x'}])[0]
+        self.assertEqual(out[1:], ('SD', 0, 0, 0, 0))
+
+    def test_override_recalcula_es(self):
+        from conflux.core.cfg import _PROF
+        r = S.norm_stream({'title': 'F.2024.LATINO.1080p', 'url': 'http://x',
+                           'name': 'n'}, 't')
+        _PROF.cfg = {'stream_langs': ['latino']}
+        try:
+            rr = S._lang_rows([r])[0]
+            self.assertEqual(rr[2], r[2] + 500)         # 'latino' ahora ES
+            self.assertIsNot(rr[0], r[0])               # re-etiquetado: out nuevo
+        finally:
+            _PROF.cfg = None
+
+    def test_override_sin_cambio_no_reetiqueta(self):
+        from conflux.core.cfg import _PROF
+        r = S.norm_stream({'title': 'F.2024.1080p', 'url': 'http://x',
+                           'name': 'n'}, 't')
+        _PROF.cfg = {'stream_langs': ['es']}            # 'es' no está -> es=False=f['es']
+        try:
+            rr = S._lang_rows([r])[0]
+            self.assertIs(rr[0], r[0])                  # mismo out: no rebuild
+            self.assertEqual(rr[2], r[2])               # sin boost
+        finally:
+            _PROF.cfg = None
+
+
+class TestRowsOutMaxGb(unittest.TestCase):
+    """stream_max_gb en el borde: size<=mx pasa, 0/desconocido pasa, >mx no."""
+
+    @staticmethod
+    def _row(size):
+        return ({'name': 'n', 'title': 't'}, '4K', 10, size, 0,
+                {'es': False}, 's')
+
+    def test_borde_exacto(self):
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_max_gb=40)
+        try:
+            out = S._rows_out([self._row(40.0), self._row(40.1)])
+            self.assertEqual(len(out), 1)               # 40.0 entra (<=), 40.1 no
+        finally:
+            undo()
+
+
+class TestHandleStreamBordes(unittest.TestCase):
+    """handle_stream: hit -> sin collect; miss -> _ensure_collect;
+    m3u cargado no re-llena."""
+
+    def setUp(self):
+        self._m3u = dict(S._M3U)
+
+    def tearDown(self):
+        S._M3U.clear(); S._M3U.update(self._m3u)
+
+    def test_m3u_cargado_no_rellena(self):
+        S._M3U['m3u:1'] = 'http://iptv/ch'
+        with mock.patch.object(S, '_m3u_metas') as mm:
+            d = S.handle_stream('tv', 'm3u:1')
+        mm.assert_not_called()
+        self.assertEqual(d['streams'][0]['url'], 'http://iptv/ch')
+
+    def test_m3u_vacio_rellena_una_vez(self):
+        with mock.patch.object(S, '_m3u_metas') as mm:
+            S.handle_stream('tv', 'm3u:x')
+        mm.assert_called_once()
+
+    def test_hit_no_collect_miss_si(self):
+        key = ('movie', 'tt77', tuple(sorted(S._eff_disabled())))
+        st._cset(S._cache, key, [])
+        with mock.patch.object(S, '_ensure_collect') as ec, \
+             mock.patch.object(S, '_debrid_mark'), \
+             mock.patch.object(S, '_hash_health'):
+            S.handle_stream('movie', 'tt77')
+        ec.assert_not_called()
+        S._cache.pop(key, None)
+        stt = {'rows': [], 'seen': set(), 'contrib': {},
+               'done': threading.Event(), 'lock': threading.Lock()}
+        stt['done'].set()
+        with mock.patch.object(S, '_ensure_collect', return_value=stt) as ec, \
+             mock.patch.object(S, '_debrid_mark'), \
+             mock.patch.object(S, '_hash_health'), \
+             mock.patch.object(S, '_url_health'):
+            S.handle_stream('movie', 'tt77')
+        ec.assert_called_once_with(('movie', 'tt77', tuple(sorted(S._eff_disabled()))))
+
+
+class TestContratoFino(unittest.TestCase):
+    """Última milla de mutación: bordes exactos y flags que los tests
+    funcionales no distinguen."""
+
+    def setUp(self):
+        self._bad, self._ok = dict(S._URL_BAD), dict(S._URL_OK)
+        S._URL_BAD.clear(); S._URL_OK.clear()   # veredictos de otros tests fuera
+        self._sv = dict(st._SERVED)
+        st._SERVED.clear()
+
+    def tearDown(self):
+        S._URL_BAD.clear(); S._URL_BAD.update(self._bad)
+        S._URL_OK.clear(); S._URL_OK.update(self._ok)
+        st._SERVED.clear(); st._SERVED.update(self._sv)
+
+    def test_usable_solo_dicts_validos(self):
+        ss = [{'title': 'ok1'}, {'title': 'ok2'}]        # 0 spam: cuenta != filtro
+        for worker, dep, name in TestCollectWorkers.WORKERS:
+            with self.subTest(worker=worker), \
+                 mock.patch.object(S, dep, return_value=ss):
+                self.assertEqual(getattr(S, worker)('m', 'i'), (name, ss, 2))
+        with mock.patch.object(S, '_health') as h:
+            S._collect_health('X', {}, ss)
+        self.assertEqual(h.call_args[0][3], 2)
+        with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
+             mock.patch.object(S, '_collect_skip', return_value=None), \
+             mock.patch.object(S, '_collect_fetch', return_value=('Foo', {}, ss)), \
+             mock.patch.object(S, '_health'):
+            self.assertEqual(S._collect_one(0, 'm', 'i', set())[2], 2)
+
+    def test_timer_delay_y_daemon(self):
+        timers = []
+
+        class FT:
+            def __init__(self, d, fn):
+                self.d, self.daemon = d, None
+                timers.append(self)
+            def start(self):
+                pass
+            def cancel(self):
+                pass
+
+        faketh = type('T', (), {'Timer': FT, 'Event': threading.Event,
+                                'Lock': threading.Lock, 'Thread': threading.Thread})
+        state = {'rows': [], 'seen': set(), 'contrib': {},
+                 'done': threading.Event(), 'lock': threading.Lock()}
+        with mock.patch.object(S, 'SOURCES', [_Src('A', 'http://a')]), \
+             mock.patch.object(S, 'threading', faketh), \
+             mock.patch.object(S, '_resolve_sid', side_effect=lambda t, i: i), \
+             mock.patch.object(S._POOL, 'submit', side_effect=lambda *a: _Fut(('x', [], 0))), \
+             mock.patch.object(S, 'as_completed', side_effect=lambda fs, **k: fs):
+            S._collect(('movie', 'tt5', ()), state)
+        self.assertEqual(timers[0].d, 2.0)
+        self.assertIs(timers[0].daemon, True)
+
+    def test_thread_daemon(self):
+        threads = []
+
+        class FTh:
+            def __init__(self, target=None, args=(), daemon=None):
+                self.daemon = daemon
+                threads.append(self)
+            def start(self):
+                pass
+
+        faketh = type('T', (), {'Thread': FTh, 'Event': threading.Event,
+                                'Lock': threading.Lock, 'Timer': threading.Timer})
+        inf = dict(S._inflight)
+        try:
+            with mock.patch.object(S, 'threading', faketh):
+                S._ensure_collect(('movie', 'tt6', ()))
+        finally:
+            S._inflight.clear(); S._inflight.update(inf)
+        self.assertIs(threads[0].daemon, True)
+
+    def test_ex_out_bordes(self):
+        import conflux.core.cfg as cf
+        old = cf.RE_EX
+        cf.RE_EX = cf._ex_re(['cam'])                    # RE_EX no la toca cfg_swap
+        try:
+            self.assertIsNone(S._ex_out(None))
+            self.assertEqual(S._ex_out([]), [])
+            out = S._ex_out([{'name': 'n'}, {'title': 'movie cam 720p'}])
+            self.assertEqual(out, [{'name': 'n'}])       # campo ausente -> ''
+        finally:
+            cf.RE_EX = old
+
+    def test_sort_seeds_fn_numerico(self):
+        """_SORT_FNS['seeds'] = -(seeds+boost): el boost RESTA la clave."""
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_preferred=['remux'])
+        try:
+            r = ({'title': 'x REMUX', 'name': 'n'}, 'SD', 0, 0, 0, {'es': 0}, 's')
+            self.assertEqual(S._SORT_FNS['seeds'](r), -300)
+            r2 = ({'title': 'y', 'name': 'n'}, 'SD', 10, 0, 0, {'es': 0}, 's')
+            self.assertEqual(S._SORT_FNS['seeds'](r2), -10)
+        finally:
+            undo()
+
+    def test_sort_size_cached_no_se_confunde(self):
+        """'size' ordena por r[3], no por r[4] (cached)."""
+        from tests import cfg_swap
+        def mk(sz, ca):
+            return ({'name': 'x', 'title': 't', 'url': f'http://x/{sz}'},
+                    '1080P', 0, sz, ca, {'es': False}, 's')
+        _, undo = cfg_swap(stream_sort=['size'])
+        try:
+            rr = S._rows_out([mk(1.0, 1), mk(9.0, 0)])  # cached del pequeño no le sube
+            self.assertIn('9.0', rr[0]['url'])
+        finally:
+            undo()
+
+    def test_rowkey_fila_corta(self):
+        """len(r)>5 -> r[5] para _qscore (guarda defensiva: <5 rompe en seeds antes)."""
+        k = S._rowkey(('out', '1080P', 7, 2.0, 1, {'es': False}))
+        self.assertIsInstance(k, tuple)
+        self.assertEqual(len(k), 5)
+
+    def test_url_todo_borde_1800(self):
+        now = time.time()
+        S._URL_BAD['http://a/1'] = (2, now - 1800)       # exactamente 1800: NO reintenta
+        S._URL_OK['http://a/2'] = now - 1800
+        out = S._url_todo([{'url': 'http://a/1'}, {'url': 'http://a/2'}], now)
+        self.assertEqual(out, [])
+
+    def test_muerto_borde_1800_vive(self):
+        now = time.time()
+        S._URL_BAD['http://edge'] = (2, now - 1800)      # veredicto justo caducado
+        ss = [{'url': 'http://edge'}]
+        with mock.patch.object(S._POOL_BG, 'submit'):
+            S._url_health(ss)
+        self.assertEqual(len(ss), 1)
+
+    def test_served_res_falsy_bucket_sd(self):
+        stt = {'rows': [], 'seen': set(), 'contrib': {},
+               'done': threading.Event(), 'lock': threading.Lock()}
+        fake_row = ({'title': 'x'}, '', 0, 0, 0, {}, 's')   # res ''
+        with mock.patch.object(S, 'norm_stream', return_value=fake_row):
+            S._collect_merge(stt, 'Foo', [{'title': 'x', 'url': 'http://u'}])
+        self.assertEqual(st._SERVED['Foo']['res'], {'SD': 1})
 
 
 if __name__ == '__main__':

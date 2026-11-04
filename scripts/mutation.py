@@ -36,6 +36,7 @@ FOCUS = {
     'app/subs.py': 'tests/unit/test_subs.py',
     'app/bg.py': 'tests/unit/test_bg.py',
     'app/meta.py': 'tests/unit/test_meta.py',
+    'app/stream.py': 'tests/unit/test_stream.py',
     'web/server.py': 'tests/unit/test_server.py',
     'web/pages.py': 'tests/unit/test_pages.py',
     'infra/net.py': 'tests/unit/test_net.py',

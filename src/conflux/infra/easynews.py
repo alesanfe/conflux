@@ -26,20 +26,24 @@ def _en_title(stype, sid):
     return t, se
 
 
+def _en_bad(it):
+    """Item no emitible: sin hash/filename, con passwd/virus, no-vídeo o clip."""
+    if not (it.get('hash') or it.get('0')) or not (it.get('filename') or it.get('10')):
+        return True
+    if it.get('passwd') or it.get('virus'):
+        return True
+    if it.get('type') and str(it['type']).upper() != 'VIDEO':
+        return True
+    dur = str(it.get('duration') or it.get('14') or '')
+    return bool(re.match(r'^(\d+s|[0-5]m)', dur))      # clips <5min fuera
+
+
 def _en_item(it, base_url):
     """Item easynews (dict nuevo o array legacy de claves numéricas) -> stream."""
-    h = it.get('hash') or it.get('0')
-    fn = it.get('filename') or it.get('10')
+    if _en_bad(it):
+        return None
+    h, fn = it.get('hash') or it.get('0'), it.get('filename') or it.get('10')
     ext = it.get('ext') or it.get('11') or ''
-    if not h or not fn:
-        return None
-    if it.get('passwd') or it.get('virus'):
-        return None
-    if it.get('type') and str(it['type']).upper() != 'VIDEO':
-        return None
-    dur = str(it.get('duration') or it.get('14') or '')
-    if re.match(r'^(\d+s|[0-5]m)', dur):               # clips <5min fuera
-        return None
     link = f'{base_url}/{urllib.parse.quote(f"{h}{ext}/{fn}{ext}")}'
     b64 = base64.urlsafe_b64encode(link.encode()).decode().rstrip('=')
     s: dict = {'name': 'Easynews', 'title': f'{fn}{ext}',
@@ -64,22 +68,26 @@ def _easynews(stype, sid):
     title, se = _en_title(stype, sid)
     if not title:
         return []                                     # meta aún no cacheado
-    q = f'{title} {se}' if se else title
     try:
-        s = _session('members.easynews.com')
-        r = s.get('https://members.easynews.com/2.0/search/solr-search/',
-                  params={'fly': '2', 'sb': '1', 'pno': '1', 'pby': '60',
-                          'u': '1', 'chxu': '1', 'chxgx': '1', 'st': 'basic',
-                          'gps': q, 'vv': '1', 'safeO': '0',
-                          's1': 'relevance', 's1d': '-', 'fty[]': 'VIDEO'},
-                  auth=(user, pw), timeout=10)
-        d = r.json()
-        base_url = '/'.join(str(d.get(k, '')).strip('/') for k in
-                            ('downURL', 'dlFarm', 'dlPort')) \
-            or 'https://members.easynews.com/dl'
-        out = [x for x in (_en_item(it, base_url) for it in d.get('data', [])) if x]
-        _health('Easynews', True, '', len(out))
-        return out[:40]
+        return _en_search(user, pw, f'{title} {se}' if se else title)
     except Exception:                                 # noqa: BLE001 — fuente nunca tumba _collect
         _health('Easynews', False, 'error', 0)
         return []
+
+
+def _en_search(user, pw, q):
+    """GET solr-search -> hasta 40 streams /en/ ordenados por relevancia."""
+    s = _session('members.easynews.com')
+    r = s.get('https://members.easynews.com/2.0/search/solr-search/',
+              params={'fly': '2', 'sb': '1', 'pno': '1', 'pby': '60',
+                      'u': '1', 'chxu': '1', 'chxgx': '1', 'st': 'basic',
+                      'gps': q, 'vv': '1', 'safeO': '0',
+                      's1': 'relevance', 's1d': '-', 'fty[]': 'VIDEO'},
+              auth=(user, pw), timeout=10)
+    d = r.json()
+    base_url = '/'.join(str(d.get(k, '')).strip('/') for k in
+                        ('downURL', 'dlFarm', 'dlPort')) \
+        or 'https://members.easynews.com/dl'
+    out = [x for x in (_en_item(it, base_url) for it in d.get('data', [])) if x]
+    _health('Easynews', True, '', len(out))
+    return out[:40]

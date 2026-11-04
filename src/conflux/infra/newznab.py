@@ -27,36 +27,49 @@ def _num(v):
         return 0
 
 
-def _newznab(stype, sid):
-    """GET api?t=(movie|tvsearch)&imdbid -> streams Usenet vía /nzb/."""
+def _nz_gate(stype, sid):
+    """(url, params) si la fuente aplica, o None — off sin indexer/debrid."""
     url, key = CFG.get('newznab_url', '').rstrip('/'), CFG.get('newznab_key', '')
     imdb = sid.split(':')[0]
     if (not url or not key or _ET is None or not imdb.startswith('tt')
             or CFG.get('debrid_provider') != 'torbox' or not CFG.get('debrid_key')):
-        return []
+        return None
     params = {'t': 'movie' if stype == 'movie' else 'tvsearch',
               'imdbid': imdb, 'apikey': key, 'extended': '1'}
     parts = sid.split(':')
     if stype != 'movie' and len(parts) >= 3:          # tt:s:e -> season+ep
         params.update(season=parts[1], ep=parts[2])
+    return url, params
+
+
+def _nz_item(it):
+    """item RSS -> stream /nzb/<b64> o None si no trae enclosure http."""
+    attrs = {a.get('name'): a.get('value') for a in it.iter(_NZ_ATTR + 'attr')}
+    enc = it.find('enclosure')                # enclosure@url = descarga NZB;
+    link = enc.get('url', '') if enc is not None else ''   # <link> es detail-page, no el NZB
+    if not link.startswith('http'):
+        return None
+    b64 = base64.urlsafe_b64encode(link.encode()).decode().rstrip('=')
+    s: dict = {'name': 'Usenet', 'title': it.findtext('title') or 'usenet',
+               'url': f'http://127.0.0.1:{PORT}/nzb/{b64}',
+               'behaviorHints': {'bingeGroup': 'usenet'}}
+    sz = _num(attrs.get('size') or (enc.get('length') if enc is not None else 0))
+    if sz:
+        s['behaviorHints']['videoSize'] = sz
+    return s
+
+
+def _newznab(stype, sid):
+    """GET api?t=(movie|tvsearch)&imdbid -> streams Usenet vía /nzb/."""
+    gate = _nz_gate(stype, sid)
+    if gate is None:
+        return []
+    url, params = gate
     try:
         r = _session(urllib.parse.urlsplit(url).netloc).get(
             url, params=params, timeout=10)
-        out = []
-        for it in _ET.fromstring(r.content).iter('item'):
-            attrs = {a.get('name'): a.get('value') for a in it.iter(_NZ_ATTR + 'attr')}
-            enc = it.find('enclosure')                # enclosure@url = descarga NZB;
-            link = enc.get('url', '') if enc is not None else ''   # <link> es detail-page, no el NZB
-            if not link.startswith('http'):
-                continue
-            b64 = base64.urlsafe_b64encode(link.encode()).decode().rstrip('=')
-            s: dict = {'name': 'Usenet', 'title': it.findtext('title') or 'usenet',
-                 'url': f'http://127.0.0.1:{PORT}/nzb/{b64}',
-                 'behaviorHints': {'bingeGroup': 'usenet'}}
-            sz = _num(attrs.get('size') or (enc.get('length') if enc is not None else 0))
-            if sz:
-                s['behaviorHints']['videoSize'] = sz
-            out.append(s)
+        out = [x for x in (_nz_item(it) for it in
+                           _ET.fromstring(r.content).iter('item')) if x]
         _health('Newznab', True, '', len(out))
         return out[:30]
     except Exception:                                 # noqa: BLE001 — indexer nunca tumba _collect

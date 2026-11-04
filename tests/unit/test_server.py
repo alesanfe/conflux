@@ -452,3 +452,219 @@ class TestFormYHtml(unittest.TestCase):
         h.send_response.assert_called_with(200)
         hdrs = {c.args[0]: c.args[1] for c in h.send_header.call_args_list}
         self.assertIn('text/html', hdrs['Content-Type'])
+
+    def test_form_content_length_no_numerico(self):
+        """Content-Length: abc -> ValueError -> ln=0 -> form vacío (no crash)."""
+        h = srv.H.__new__(srv.H)
+        h.headers = {'Content-Length': 'abc'}
+        h.rfile = MagicMock()
+        h.rfile.read.return_value = b''
+        self.assertEqual(h._form(), {})
+        h.rfile.read.assert_called_once_with(0)
+
+
+class TestPagesAuth(unittest.TestCase):
+    """_pages: /admin /configure sin auth -> login 401; con auth -> página."""
+
+    def _h(self):
+        h = srv.H.__new__(srv.H)
+        h.headers = {}
+        h._html = MagicMock()
+        return h
+
+    def test_admin_sin_auth_login_401(self):
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            h = self._h()
+            self.assertTrue(h._pages('/admin'))
+            h._html.assert_called_once()
+            self.assertEqual(h._html.call_args[0][1], 401)
+        finally:
+            undo()
+
+    def test_configure_sin_auth_login_401(self):
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            h = self._h()
+            self.assertTrue(h._pages('/configure'))
+            self.assertEqual(h._html.call_args[0][1], 401)
+        finally:
+            undo()
+
+
+class TestDoPost(unittest.TestCase):
+    """do_POST: /reload /configure exigen auth; desconocido -> 404."""
+
+    def _h(self, path):
+        h = srv.H.__new__(srv.H)
+        h.path = path
+        h.headers = {}
+        h.reply = MagicMock()
+        h._redir = MagicMock()
+        return h
+
+    def test_reload_sin_auth_403(self):
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            h = self._h('/reload')
+            h.do_POST()
+            h.reply.assert_called_once_with({'err': 'forbidden'}, 403)
+        finally:
+            undo()
+
+    def test_configure_sin_auth_403(self):
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            h = self._h('/configure')
+            h.do_POST()
+            h.reply.assert_called_once_with({'err': 'forbidden'}, 403)
+        finally:
+            undo()
+
+    def test_post_desconocido_404(self):
+        h = self._h('/wat')
+        h.do_POST()
+        h.reply.assert_called_once_with({'err': 'not found'}, 404)
+
+    def test_configure_con_auth_guarda_y_303(self):
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            h = self._h('/configure')
+            h.headers = {'X-Admin-Token': 'secreto'}
+            h._form = MagicMock(return_value={'a': ['1']})
+            import unittest.mock as um
+            with um.patch.object(srv, '_configure_save') as cs:
+                h.do_POST()
+            cs.assert_called_once_with({'a': ['1']})
+            h._redir.assert_called_once_with('/configure', code=303)
+        finally:
+            undo()
+
+
+class TestRtimeCap(unittest.TestCase):
+    """_rtime: >64 claves distintas -> colapsa a '_other' (crawlers con paths
+    arbitrarios no inflan el mapa)."""
+
+    def setUp(self):
+        self._rt, self._rts = dict(srv._rtime), {k: v for k, v in srv._rts.items()}
+        srv._rtime.clear(); srv._rts.clear()
+
+    def tearDown(self):
+        srv._rtime.clear(); srv._rtime.update(self._rt)
+        srv._rts.clear(); srv._rts.update(self._rts)
+
+    def test_seg_colapsa_a_other(self):
+        h = srv.H.__new__(srv.H)
+        h.reply = MagicMock()
+        for i in range(64):
+            srv._rtime[f's{i}'] = (1, 1.0, 1.0)
+        h._timed_route('/nuevo/x')
+        self.assertNotIn('nuevo', srv._rtime)
+        self.assertIn('_other', srv._rtime)
+
+
+class TestCfgUrlRota(unittest.TestCase):
+    """/cfg/<b64> con charset válido pero JSON roto -> perfil normal (except)."""
+
+    def test_b64_valido_json_roto(self):
+        import base64
+        seg = base64.urlsafe_b64encode(b'{"roto').decode().rstrip('=')
+        h = srv.H.__new__(srv.H)
+        out = h._profile(f'/cfg/{seg}/stream/movie/tt.json')
+        self.assertEqual(out, f'/cfg/{seg}/stream/movie/tt.json')
+        self.assertIsNone(srv._PROF.cfg)
+
+
+class TestMain(unittest.TestCase):
+    """main(): cache->bg vs live, bind_fail -> SystemExit, TLS wrap, SIGTERM."""
+
+    def _fakesrv(self, made, exc=None):
+        """Clase servidor falsa: Srv la SUBCLASEA dentro de main()."""
+        class FakeSrv:
+            daemon_threads = True
+            def __init__(self, addr, h):
+                if exc:
+                    raise exc
+                self.socket = MagicMock()
+                self.serve_forever = MagicMock()
+                made.append(self)
+        return FakeSrv
+
+    def _faketh(self, rec=None):
+        """threading falso para srv: Thread registra el target; siempre 'main'."""
+        rec = rec if rec is not None else []
+        return type('T', (), {
+            'Thread': staticmethod(
+                lambda target=None, daemon=None: rec.append(target) or MagicMock()),
+            'current_thread': staticmethod(lambda: 'm'),
+            'main_thread': staticmethod(lambda: 'm')}), rec
+
+    def test_main_con_cache_no_fetch_vivo(self):
+        import unittest.mock as um
+        made, faketh, rec = [], *self._faketh()
+        with um.patch.object(srv, '_load_manifests_cache', return_value=[{'x': 1}]), \
+             um.patch.object(srv, 'refresh_manifests') as rf, \
+             um.patch.object(srv, 'threading', faketh), \
+             um.patch.object(srv, 'ThreadingHTTPServer', self._fakesrv(made)), \
+             um.patch.object(srv, 'CFG', {}):
+            srv.main()
+        rf.assert_not_called()                       # cache -> refresh en bg, no en línea
+        self.assertEqual(len(rec), 3)                # refresh + refresher + prefetch
+        self.assertTrue(made[0].serve_forever.called)
+
+    def test_main_sin_cache_fetch_vivo(self):
+        import unittest.mock as um
+        made, faketh, _ = [], *self._faketh()
+        with um.patch.object(srv, '_load_manifests_cache', return_value=None), \
+             um.patch.object(srv, 'refresh_manifests') as rf, \
+             um.patch.object(srv, 'threading', faketh), \
+             um.patch.object(srv, 'ThreadingHTTPServer', self._fakesrv(made)), \
+             um.patch.object(srv, 'CFG', {}):
+            srv.main()
+        rf.assert_called_once()
+
+    def test_main_puerto_ocupado_systemexit(self):
+        import unittest.mock as um
+        made, faketh, _ = [], *self._faketh()
+        with um.patch.object(srv, '_load_manifests_cache', return_value=[{}]), \
+             um.patch.object(srv, 'threading', faketh), \
+             um.patch.object(srv, 'ThreadingHTTPServer',
+                            self._fakesrv(made, OSError('busy'))):
+            with self.assertRaises(SystemExit):
+                srv.main()
+
+    def test_main_tls_wrap_socket(self):
+        import unittest.mock as um
+        made, faketh, _ = [], *self._faketh()
+        ctx = MagicMock()
+        with um.patch.object(srv, '_load_manifests_cache', return_value=[{}]), \
+             um.patch.object(srv, 'threading', faketh), \
+             um.patch.object(srv, 'ThreadingHTTPServer', self._fakesrv(made)), \
+             um.patch.object(srv, 'CFG', {'tls_cert': 'c.pem', 'tls_key': 'k.pem'}), \
+             um.patch.object(srv.ssl, 'SSLContext', return_value=ctx):
+            srv.main()
+        ctx.load_cert_chain.assert_called_once_with('c.pem', 'k.pem')
+        ctx.wrap_socket.assert_called_once()
+        self.assertTrue(ctx.wrap_socket.call_args[1]['server_side'])
+        self.assertIs(made[0].socket, ctx.wrap_socket.return_value)
+
+    def test_sigterm_persiste_y_sale(self):
+        """El handler _bye registrado en main(): log + _atomic_json + SystemExit."""
+        import unittest.mock as um
+        made, faketh, _ = [], *self._faketh()
+        handlers = {}
+        def reg(sig, h):
+            handlers[sig] = h
+        with um.patch.object(srv, '_load_manifests_cache', return_value=[{}]), \
+             um.patch.object(srv, 'threading', faketh), \
+             um.patch.object(srv, 'ThreadingHTTPServer', self._fakesrv(made)), \
+             um.patch.object(srv, 'CFG', {}), \
+             um.patch.object(srv.signal, 'signal', side_effect=reg), \
+             um.patch.object(srv, '_atomic_json') as aj, \
+             um.patch.object(srv, '_persist_manifests', return_value={'m': 1}):
+            srv.main()
+            import signal as _sig
+            self.assertIn(_sig.SIGTERM, handlers)
+            with self.assertRaises(SystemExit):
+                handlers[_sig.SIGTERM]()          # dentro del with: aj aún mockeado
+        aj.assert_called_once()
