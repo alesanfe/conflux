@@ -357,6 +357,16 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
 - Shutdown limpio: SIGTERM persiste `.manifests-cache.json` (ev `{"ev":"shutdown"}`)
 - Mutation testing opt-in: `mutmut run` (config en pyproject — copia src/tests/proxy.py
   y muta solo `only_mutate`; subs.py: 168 mutantes, ~64% killed)
+- Auditoría de mutación local (scripts/mutation.py, todos los módulos src/conflux):
+  ~100% efectivo tras el endurecimiento de tests. Supervivientes clasificados —
+  equivalentes/inalcanzables: text `3+1@135` (group(3)/group(4) misma alternativa),
+  manifest `In@199/207` (`while x in opts`→`not in` = hang, detectado por timeout),
+  cfg `And@62`/`Add@89`, state `Gt@35` (crash de suite entera = detectado),
+  stream `Or@125`/`80+1@272`/`Gt@350`, mediafusion `Or@59`, torzapi `2000+1@116`
+  (rama stype=None), server `LtE@151` (no-op del runner) y `64+1@403` (Semaphore
+  evaluado a import), torrent_health fallbacks randbytes (py≥3.9), trakt/calendar
+  caps internos. Ojo con `cfg_swap`: hace merge — los defaults enmascarados por el
+  CFG real hay que ejercitarlos con `CFG.pop` explícito.
 - e2e hermética: fixture VCR gzip; CI nunca toca la red
 - Escrituras de estado atómicas (tmp+rename): config.json, .manifests-cache.json
 
