@@ -14,10 +14,15 @@ Uso:
     python scripts/test_times.py --compare base.json # compara contra baseline:
                                                  #   regresiones = test >1.5x y +0.3s
     python scripts/test_times.py --mem           # ranking por MEMORIA pico en vez de tiempo
+    python scripts/test_times.py --junit rep.xml # JUnit XML (CI: trends/flaky)
+    python scripts/test_times.py --history h.jsonl  # 1 fila/corrida + drift
+                                                 #   vs corrida anterior
 
-Mide por test: duracion (perf_counter, incluye setUp/tearDown) y pico de
-memoria (tracemalloc). Reporta ranking, percentiles p50/p95/p99, agregado
-por paquete de tests y, con --compare, regresiones/nuevos/eliminados.
+Mide por test: duracion (perf_counter, incluye setUp/tearDown), pico de
+memoria (tracemalloc) y outcome (ok/F:/E:/skip). Reporta ranking,
+percentiles p50/p95/p99, agregado por paquete y, con --compare,
+regresiones normalizadas por factor de carga global; --history acumula
+tendencias entre corridas (mismo formato por fila JSONL).
 """
 import json
 import sys
@@ -31,6 +36,7 @@ class TimedResult(unittest.TextTestResult):
 
     times: dict = {}
     mems: dict = {}
+    outcomes: dict = {}
     with_mem = True
 
     def startTest(self, test):
@@ -43,10 +49,23 @@ class TimedResult(unittest.TextTestResult):
     def stopTest(self, test):
         super().stopTest(test)
         self.times[test.id()] = time.perf_counter() - self._t0
+        self.outcomes.setdefault(test.id(), 'ok')
         if self.with_mem:
             cur, peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()
             self.mems[test.id()] = max(0, peak - self._m0)
+
+    def addFailure(self, test, err):
+        super().addFailure(test, err)
+        self.outcomes[test.id()] = 'F:' + str(err[1]).splitlines()[0][:200]
+
+    def addError(self, test, err):
+        super().addError(test, err)
+        self.outcomes[test.id()] = 'E:' + str(err[1]).splitlines()[0][:200]
+
+    def addSkip(self, test, reason):
+        super().addSkip(test, reason)
+        self.outcomes[test.id()] = 'skip:' + str(reason)[:120]
 
 
 def _pct(sorted_vals, q):
@@ -62,8 +81,78 @@ def _by_pkg(tid):
     return parts[1] if len(parts) > 2 and parts[0] == 'tests' else parts[0]
 
 
+def _git_sha():
+    import subprocess
+    try:
+        r = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'],
+                           capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else ''
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+
+
+def _junit(path, times, mems, outcomes, total):
+    """JUnit XML estandar: CI lo ingiere directo (trend widgets, flaky
+    detection, anotaciones de fallo en PRs)."""
+    from xml.sax.saxutils import quoteattr
+    n_f = sum(1 for m in outcomes.values() if str(m).startswith('F:'))
+    n_e = sum(1 for m in outcomes.values() if str(m).startswith('E:'))
+    n_s = sum(1 for m in outcomes.values() if str(m).startswith('skip:'))
+    lines = [f'<testsuite name="conflux" tests="{len(times)}" '
+             f'failures="{n_f}" errors="{n_e}" skipped="{n_s}" '
+             f'time="{total:.3f}">']
+    for tid in sorted(times):
+        mod, name = tid.rsplit('.', 1)
+        oc = str(outcomes.get(tid, 'ok'))
+        case = (f'  <testcase classname={quoteattr(mod)} '
+                f'name={quoteattr(name)} time="{times[tid]:.3f}"')
+        if oc.startswith('skip:'):
+            lines.append(f'{case}><skipped message={quoteattr(oc[5:])}/>'
+                         f'</testcase>')
+        elif oc[:2] in ('F:', 'E:'):
+            tag = 'failure' if oc[0] == 'F' else 'error'
+            lines.append(f'{case}><{tag} message={quoteattr(oc[2:])}/>'
+                         f'</testcase>')
+        else:
+            lines.append(case + '/>')
+    lines.append('</testsuite>')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('<?xml version="1.0" encoding="utf-8"?>\n' + '\n'.join(lines))
+
+
+def _history(path, times, mems, outcomes, total):
+    """Una fila JSONL por corrida -> tendencias: compara vs la anterior
+    y marca tests que se ralentizan de forma sostenida (no por carga)."""
+    import os
+    vals = sorted(times.values())
+    row = {'ts': int(time.time()), 'git': _git_sha(),
+           'tests': len(times),
+           'failed': sum(1 for m in outcomes.values()
+                         if str(m)[:2] in ('F:', 'E:')),
+           'skipped': sum(1 for m in outcomes.values()
+                          if str(m).startswith('skip:')),
+           'total': round(total, 2), 'sum': round(sum(vals), 2),
+           'p50': round(_pct(vals, 50), 4), 'p95': round(_pct(vals, 95), 4),
+           'p99': round(_pct(vals, 99), 4), 'max': round(vals[-1], 3) if vals else 0,
+           'mem_max': round(max(mems.values()) / 1048576, 2) if mems else 0,
+           'per_test': {t: round(v, 3) for t, v in times.items()}}
+    prev = None
+    if os.path.exists(path):
+        try:
+            with open(path, encoding='utf-8') as f:
+                lines = [l for l in f if l.strip()]
+            if lines:
+                prev = json.loads(lines[-1])
+        except (OSError, ValueError):
+            pass
+    with open(path, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(row, separators=(',', ':')) + '\n')
+    return prev, row
+
+
 def _report(w, times, mems, total, top=15, show_all=False, by_mem=False,
-            save_to=None, compare_to=None):
+            save_to=None, compare_to=None, outcomes=None,
+            junit_to=None, history_to=None):
     """Resumen completo (global, paquete, ranking, baseline) — usado por
     la corrida serial y por la fusion de workers --jobs."""
     vals = sorted(times.values())
@@ -140,6 +229,28 @@ def _report(w, times, mems, total, top=15, show_all=False, by_mem=False,
             w("  sin regresiones de tiempo")
         w(f"  {len(new)} tests nuevos, {len(gone)} eliminados")
 
+    if junit_to:
+        _junit(junit_to, times, mems, outcomes or {}, total)
+        w(f"\njunit -> {junit_to}")
+    if history_to:
+        prev, row = _history(history_to, times, mems, outcomes or {}, total)
+        w(f"\nhistorial -> {history_to} ({row['tests']} tests, "
+          f"{row['failed']} fallos, total {row['total']}s)")
+        if prev:
+            dt = row['total'] - prev['total']
+            ds = row['sum'] - prev['sum']
+            w(f"  vs corrida anterior ({prev.get('git', '?')}): "
+              f"wall {dt:+.1f}s, suma {ds:+.1f}s, "
+              f"tests {row['tests'] - prev['tests']:+d}")
+            # tests que se ralentizan >40% y >0.2s vs la corrida ANTERIOR
+            # (tendencia sostenida, distinto del ruido de --compare)
+            pt = prev.get('per_test', {})
+            drift = [(t, pt[t], v) for t, v in times.items()
+                     if pt.get(t, 0) > 0.15 and v > 1.4 * pt[t]
+                     and v - pt[t] > 0.2]
+            for t, b, v in sorted(drift, key=lambda x: -(x[2] - x[1]))[:5]:
+                w(f"  ~{b:.2f}s -> {v:.2f}s  {t}")
+
 
 class TimedRunner(unittest.TextTestRunner):
     """Runner con ranking, percentiles, agregado por paquete y baseline."""
@@ -150,16 +261,21 @@ class TimedRunner(unittest.TextTestRunner):
     by_mem = False
     save_to = None
     compare_to = None
+    junit_to = None
+    history_to = None
 
     def run(self, test):
         self.resultclass.times = {}
         self.resultclass.mems = {}
+        self.resultclass.outcomes = {}
         t0 = time.perf_counter()
         res = super().run(test)
         _report(self.stream.writeln, self.resultclass.times,
                 self.resultclass.mems, time.perf_counter() - t0,
                 top=self.top, show_all=self.show_all, by_mem=self.by_mem,
-                save_to=self.save_to, compare_to=self.compare_to)
+                save_to=self.save_to, compare_to=self.compare_to,
+                outcomes=self.resultclass.outcomes,
+                junit_to=self.junit_to, history_to=self.history_to)
         return res
 
 
@@ -169,7 +285,7 @@ def _run_json(start, out_path, with_mem, jobfile=None):
     import os
     sys.path.insert(0, os.getcwd())   # scripts/ es sys.path[0]; 'tests.*' vive en cwd
     TimedResult.with_mem = with_mem
-    TimedResult.times, TimedResult.mems = {}, {}
+    TimedResult.times, TimedResult.mems, TimedResult.outcomes = {}, {}, {}
     loader = unittest.TestLoader()
     if jobfile:
         suite = unittest.TestSuite()
@@ -189,6 +305,7 @@ def _run_json(start, out_path, with_mem, jobfile=None):
     failed = [t.id() for t, _ in res.failures + res.errors]
     with open(out_path, 'w', encoding='utf-8') as f:
         json.dump({'times': TimedResult.times, 'mems': TimedResult.mems,
+                   'outcomes': TimedResult.outcomes,
                    'failed': failed, 'testsRun': res.testsRun}, f)
     return 0 if res.wasSuccessful() else 1
 
@@ -262,7 +379,7 @@ def _run_jobs(jobs, start, with_mem, weights_path=None):
                            cmd_base + [out, start, '--jobfile', job]
                            + ([] if with_mem else ['--nomem']),
                            capture_output=True)] = out
-        times, mems, failed = {}, {}, []
+        times, mems, outcomes, failed = {}, {}, {}, []
         rc = 0
         for fut in cf.as_completed(futs):
             r = fut.result()
@@ -277,13 +394,14 @@ def _run_jobs(jobs, start, with_mem, weights_path=None):
                 continue
             times.update(d['times'])
             mems.update(d['mems'])
+            outcomes.update(d.get('outcomes', {}))
             failed += d['failed']
     total = time.perf_counter() - t0
     if failed:
         print('\nFALLOS:', file=sys.stderr)
         for tid in failed:
             print(f'  {tid}', file=sys.stderr)
-    return times, mems, total, rc
+    return times, mems, outcomes, total, rc
 
 
 def main():
@@ -296,9 +414,14 @@ def main():
                   if '--compare' in args else None)
     json_out = args[args.index('--json') + 1] if '--json' in args else None
     jobfile = args[args.index('--jobfile') + 1] if '--jobfile' in args else None
+    junit_to = (args[args.index('--junit') + 1]
+                if '--junit' in args else None)
+    history_to = (args[args.index('--history') + 1]
+                  if '--history' in args else None)
     jobs_v = args[args.index('--jobs') + 1] if '--jobs' in args else None
     jobs = int(jobs_v) if jobs_v else 0
-    consumed = {a for a in (save_to, compare_to, json_out, jobfile, jobs_v) if a}
+    consumed = {a for a in (save_to, compare_to, json_out, jobfile, jobs_v,
+                          junit_to, history_to) if a}
     pos = [a for a in args if not a.startswith('--') and a not in consumed]
     top = int(pos[0]) if pos and pos[0].isdigit() else 15
     start = (pos[1] if len(pos) > 1
@@ -309,10 +432,12 @@ def main():
         sys.exit(_run_json(start, json_out, with_mem, jobfile))
     if jobs:                                  # paralelo por paquete
         weights_src = compare_to or save_to or '.test-baseline.json'
-        times, mems, total, rc = _run_jobs(jobs, start, with_mem,
-                                           weights_path=weights_src)
+        times, mems, outcomes, total, rc = _run_jobs(
+            jobs, start, with_mem, weights_path=weights_src)
         _report(print, times, mems, total, top=top, show_all=show_all,
-                by_mem=by_mem, save_to=save_to, compare_to=compare_to)
+                by_mem=by_mem, save_to=save_to, compare_to=compare_to,
+                outcomes=outcomes, junit_to=junit_to,
+                history_to=history_to)
         sys.exit(rc)
 
     suite = unittest.TestLoader().discover(start, top_level_dir='.')
@@ -322,6 +447,8 @@ def main():
     runner.by_mem = by_mem
     runner.save_to = save_to
     runner.compare_to = compare_to
+    runner.junit_to = junit_to
+    runner.history_to = history_to
     res = runner.run(suite)
     sys.exit(0 if res.wasSuccessful() else 1)
 

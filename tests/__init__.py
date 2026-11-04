@@ -20,6 +20,11 @@ _mf_stub.provision = lambda: None
 _mf_stub._once = False
 sys.modules['conflux.infra.mediafusion'] = _mf_stub
 
+# Log propio: el proxy real tiene conflux.log abierto -> en Windows la rotación
+# del handler de tests peta con WinError 32. CONFLUX_LOG lo lee state.py al import.
+os.environ.setdefault('CONFLUX_LOG',
+                      os.path.join(ROOT, 'tests', '.test-conflux.log'))
+
 import proxy as px
 
 FIX = os.path.join(ROOT, 'tests', 'fixtures')

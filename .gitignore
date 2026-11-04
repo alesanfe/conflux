@@ -34,3 +34,6 @@ tu.cs
 os.json
 .seed-cache.json
 .test-baseline.json
+tests/.test-conflux.log
+conflux.log.*
+.schemathesis/

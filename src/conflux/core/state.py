@@ -14,7 +14,7 @@ from typing import Any
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))))
-_LOG_FILE = os.path.join(_ROOT, 'conflux.log')
+_LOG_FILE = os.environ.get('CONFLUX_LOG', os.path.join(_ROOT, 'conflux.log'))
 
 _handlers = []
 if sys.stderr is not None:                            # consola si la hay (pythonw: None)

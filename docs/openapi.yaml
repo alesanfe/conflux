@@ -45,22 +45,37 @@ paths:
   /catalog/{type}/{id}.json:
     get:
       summary: Catálogo sin extras
+      parameters:
+        - {name: type, in: path, required: true, schema: {type: string, enum: [movie, series, anime, tv, channel]}}
+        - {name: id, in: path, required: true, schema: {type: string}}
       responses: {'200': {description: '{metas|metasDetailed: [...]}'}}
   /catalog/{type}/{id}/{extra}.json:
     get:
       summary: Catálogo con extras (genre, year, search, calendarVideosIds…)
+      parameters:
+        - {name: type, in: path, required: true, schema: {type: string, enum: [movie, series, anime, tv, channel]}}
+        - {name: id, in: path, required: true, schema: {type: string}}
+        - {name: extra, in: path, required: true, schema: {type: string}}
       responses: {'200': {description: '{metas|metasDetailed: [...]}'}}
   /meta/{type}/{id}.json:
     get:
       summary: Metadatos resueltos (ids no-tt traducidos)
+      parameters:
+        - {name: type, in: path, required: true, schema: {type: string, enum: [movie, series, anime, tv, channel]}}
+        - {name: id, in: path, required: true, schema: {type: string}}
       responses: {'200': {description: '{meta: {...}}'}}
   /subtitles/{type}/{id}.json:
     get:
       summary: Subtítulos OpenSubtitles ES-first (requiere opensubtitles_key)
+      parameters:
+        - {name: type, in: path, required: true, schema: {type: string, enum: [movie, series, anime, tv, channel]}}
+        - {name: id, in: path, required: true, schema: {type: string}}
       responses: {'200': {description: '{subtitles: [{id,url,lang}]}'}}
   /s/{file_id}:
     get:
       summary: Redirect 302 a la URL CDN del subtítulo
+      parameters:
+        - {name: file_id, in: path, required: true, schema: {type: string}}
       responses: {'302': {description: Location=URL}, '404': {description: sin key/fallo}}
   /r/{provider}/{hash}:
     get:
@@ -80,7 +95,7 @@ paths:
       responses: {'200': {description: body=stream + Content-* del upstream}, '404': {description: sin key/fallo}}
   /nzb/{b64}:
     get:
-      summary: Usenet (Newznab + TorBox): resuelve el NZB en base64url a URL HTTP cacheada
+      summary: 'Usenet (Newznab + TorBox): resuelve el NZB en base64url a URL HTTP cacheada'
       parameters:
         - {name: b64, in: path, required: true, schema: {type: string}}
       responses: {'302': {description: Location=URL}, '404': {description: sin torbox/fallo}}

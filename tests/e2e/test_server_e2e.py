@@ -2,6 +2,7 @@
 """E2E: servidor HTTP real en hilo daemon — cubre TODAS las funcionalidades."""
 import json
 import os
+import shutil
 import threading
 import time
 import unittest
@@ -15,6 +16,9 @@ from conflux.core import cfg
 from tests import FIX, fake_session, patch_fetch, patch_session, px
 
 _LIVE = os.environ.get('CONFLUX_E2E_LIVE') == '1'
+_SCHEM = os.path.abspath(os.path.join(
+    FIX, '..', '..', '.venv', 'Scripts', 'schemathesis.exe'))
+_SCHEM = _SCHEM if os.path.exists(_SCHEM) else None
 _FX_PATH = os.path.join(FIX, 'e2e_responses.json.gz')
 if os.path.exists(_FX_PATH):
     import gzip as _gz
@@ -471,3 +475,26 @@ class ServerE2EInterfaces(ServerE2E):
             codes = list(ex.map(
                 lambda i: _get(self.port, '/manifest.json')[0], range(10)))
         self.assertEqual(codes, [200] * 10)
+
+    # ---- API fuzzing desde la spec OpenAPI (schemathesis) ----
+    @unittest.skipUnless(shutil.which('schemathesis') or _SCHEM,
+                       'schemathesis no instalado (pip install schemathesis)')
+    def test_schemathesis_no_5xx(self):
+        """Miles de casos generados desde docs/openapi.yaml contra el servidor
+        real: invariante universal = ningún 5xx. Solo GET — los POST del spec
+        (/configure, /reload) mutan estado (subproceso trakt_sync)."""
+        import subprocess
+        env = dict(os.environ, PYTHONIOENCODING='utf-8')
+        r = subprocess.run(
+            [_SCHEM or 'schemathesis', 'run', 'docs/openapi.yaml',
+             '-u', f'http://127.0.0.1:{self.port}',
+             '--checks', 'not_a_server_error',
+             '--exclude-method', 'POST',
+             '--phases', 'examples,fuzzing',
+             '--workers', '4',
+             '--max-time', os.getenv('SCHEM_TIME', '15'),
+             '--max-failures', '3'],
+            capture_output=True, text=True, encoding='utf-8',
+            errors='replace', timeout=120, env=env)
+        self.assertEqual(r.returncode, 0,
+                         (r.stdout + r.stderr)[-4000:])

@@ -87,6 +87,25 @@ class TestDisyuntorHost(unittest.TestCase):
             net.fetch('http://dead.host/x', 1)
         self.assertTrue(calls, 'tras HOST_CD debe reintentar')
 
+    def test_disyuntor_rearma_con_reloj_real(self):
+        """freezegun: el breaker se rearma tras HOST_CD usando el timestamp
+        que _strike escribió de verdad — no uno inyectado en _fails."""
+        import requests
+        from freezegun import freeze_time
+        s, calls = fake_session(requests.ConnectionError('x'))
+        with freeze_time() as ft, \
+                patch.object(net, '_session', return_value=s), \
+                patch.object(net.time, 'sleep'):
+            for _ in range(2):                    # 2 fetches x 2 intentos = 4 strikes
+                self.assertIsNone(net.fetch('http://dead.host/x', 1))
+            self.assertEqual(net._fails['dead.host'][0], 4)
+            n0 = len(calls)
+            self.assertIsNone(net.fetch('http://dead.host/x', 1))
+            self.assertEqual(len(calls), n0, 'disyuntor abierto: fail-fast')
+            ft.tick(net.HOST_CD + 1)              # cooldown agotado
+            net.fetch('http://dead.host/x', 1)
+            self.assertGreater(len(calls), n0, 'tras HOST_CD reintenta')
+
     def test_exito_resetea_strikes(self):
         net._fails['h.host'] = (3, time.time())
         s, _ = fake_session({'json': {'ok': 1}})

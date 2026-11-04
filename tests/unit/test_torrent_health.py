@@ -413,6 +413,26 @@ class TestSeedPersist(unittest.TestCase):
             os.unlink(path)
         self.assertEqual(TH._SEED, {})
 
+    def test_persist_roundtrip_borde_ttl(self):
+        """freezegun: el veredicto persistido sobrevive justo antes del TTL y
+        se descarta en el borde exacto (now-ts < _TTL)."""
+        import tempfile, os
+        from freezegun import freeze_time
+        h = 'c' * 40
+        with tempfile.TemporaryDirectory() as td, freeze_time() as ft:
+            p = os.path.join(td, 's.json')
+            TH._SEED[h] = (7, time.time())
+            TH._LAST_SAVE[0] = 0
+            TH._seed_save(p)
+            TH._SEED.clear()
+            ft.tick(TH._TTL - 1)                  # 1s antes de caducar
+            TH._seed_load(p)
+            self.assertIn(h, TH._SEED)
+            TH._SEED.clear()
+            ft.tick(1)                            # justo en el borde: caduca
+            TH._seed_load(p)
+            self.assertNotIn(h, TH._SEED)
+
     def test_load_salta_caducados(self):
         import tempfile, os, json
         old = time.time() - TH._TTL - 10
