@@ -2,11 +2,14 @@
 
 Regla (verificada en vivo contra el streaming server de Stremio :11470):
 - seeds > 0 en tracker público          -> swarm vivo: usable
-- seeds == 0 pero el stream lleva hints (`sources` tracker:/dht:)
+- seeds == 0 tracker -> DHT get_peers decide: peers>0 vivo (99), 0 -> -1 muerto
+- veredicto -1 pero el stream lleva hints (`sources` tracker:/dht:)
                                         -> swarm privado posible: se mantiene
-- seeds == 0 Y sin hints                -> inalcanzable (Orion-style): fuera
-- scrape sin respuesta (trackers caídos)-> desconocido: fail-open, se mantiene
-Los veredictos se cachean _TTL: un collect posterior no repite UDP."""
+- veredicto -1 Y sin hints              -> inalcanzable (Orion-style): fuera
+- scrape/DHT sin respuesta              -> desconocido: fail-open, se mantiene
+Los veredictos se cachean _TTL: un collect posterior no repite UDP.
+DHT es best-effort: si la red no lo permite (NAT estricto/routers muertos)
+devuelve 0 como "0 confirmado" — igual resultado que sin la capa DHT."""
 # pylint: disable=broad-exception-caught
 # broad-exception: UDP es inherently flaky; cualquier fallo = tracker no usable
 import random
@@ -25,8 +28,133 @@ _CHUNK = 20              # tandas grandes las dropean los trackers
 _TTL = 6 * 3600          # veredicto 6h: swarms reviven/mueren, no es eterno
 _TMO = 4                 # s por intento de tracker
 
-_SEED: dict = {}         # infohash_lower -> (seeds, ts) — solo si el tracker respondió
+_SEED: dict = {}         # infohash_lower -> (seeds, ts) — -1 = muerto confirmado (0 tracker + 0 DHT)
 _SLOCK = threading.Lock()
+
+
+# ---- bencode mínimo (KRPC DHT) ----
+
+def _bdec(b, i=0):
+    """bdecode lo justo para respuestas KRPC -> (objeto, offset)."""
+    t = b[i:i + 1]
+    if t == b'i':
+        j = b.index(b'e', i)
+        return int(b[i + 1:j]), j + 1
+    if t == b'l':
+        i += 1
+        out = []
+        while b[i:i + 1] != b'e':
+            v, i = _bdec(b, i)
+            out.append(v)
+        return out, i + 1
+    if t == b'd':
+        i += 1
+        out = {}
+        while b[i:i + 1] != b'e':
+            k, i = _bdec(b, i)
+            v, i = _bdec(b, i)
+            out[k] = v
+        return out, i + 1
+    j = b.index(b':', i)
+    n = int(b[i:j])
+    return b[j + 1:j + 1 + n], j + 1 + n
+
+
+def _benc(x):
+    if isinstance(x, int):
+        return b'i' + str(x).encode() + b'e'
+    if isinstance(x, (bytes, bytearray)):
+        return str(len(x)).encode() + b':' + bytes(x)
+    if isinstance(x, str):
+        x = x.encode()
+        return str(len(x)).encode() + b':' + x
+    if isinstance(x, dict):
+        return b'd' + b''.join(_benc(k) + _benc(x[k]) for k in sorted(x)) + b'e'
+    if isinstance(x, (list, tuple)):
+        return b'l' + b''.join(_benc(v) for v in x) + b'e'
+    raise TypeError(type(x))
+
+
+# ---- DHT get_peers: swarm vivo sin trackers ----
+
+_NID = random.randbytes(20) if hasattr(random, 'randbytes') else \
+    bytes(random.getrandbits(8) for _ in range(20))
+_DHT_BOOT = [('router.bittorrent.com', 6881), ('router.utorrent.com', 6881),
+             ('dht.transmissionbt.com', 6881)]
+_DHT_NODES = []          # (ip, port) — aprendidos via find_node; LRU 64
+
+
+def _krpc(s, addr, q, args, timeout=3):
+    """Un query KRPC -> dict r | None."""
+    tid = random.randbytes(2) if hasattr(random, 'randbytes') else \
+        bytes([random.getrandbits(8), random.getrandbits(8)])
+    try:
+        s.sendto(_benc({b't': tid, b'y': b'q', b'q': q.encode(), b'a': args}), addr)
+        r, _ = s.recvfrom(65535)
+        d, _ = _bdec(r)
+        if d.get(b't') == tid and d.get(b'y') in (b'r', b'e'):
+            return d.get(b'r') or {}
+    except Exception:
+        pass
+    return None
+
+
+def _dht_nodes(s, timeout=3):
+    """Semilla de nodos DHT: find_node sobre los bootstrap -> [(ip,port)]."""
+    global _DHT_NODES
+    if _DHT_NODES:
+        return list(_DHT_NODES)
+    nodes = []
+    for host, port in _DHT_BOOT:
+        try:
+            r = _krpc(s, (socket.gethostbyname(host), port), 'find_node',
+                      {b'id': _NID, b'target': _NID}, timeout)
+        except Exception:
+            continue
+        nb = (r or {}).get(b'nodes') or b''
+        nodes += [(socket.inet_ntoa(nb[i + 20:i + 24]),
+                   struct.unpack('!H', nb[i + 24:i + 26])[0])
+                  for i in range(0, len(nb) - 25, 26)]
+    _DHT_NODES = nodes[:64]
+    return list(_DHT_NODES)
+
+
+def _dht_peers(infohash, cap=10, timeout=3):
+    """get_peers iterando nodos cercanos -> nº de peers encontrados (0 = no visto).
+    Private-flag nunca aparece en DHT — eso es esperado, no un fallo."""
+    h = bytes.fromhex(infohash)
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(timeout)
+    except Exception:
+        return 0
+    try:
+        todo = _dht_nodes(s)
+        seen, asked = set(), 0
+        peers = 0
+        while todo and asked < cap and not peers:
+            ip, port = todo.pop(0)
+            if (ip, port) in seen:
+                continue
+            seen.add((ip, port))
+            asked += 1
+            r = _krpc(s, (ip, port), 'get_peers',
+                      {b'id': _NID, b'info_hash': h}, timeout)
+            if not r:
+                continue
+            peers += len(r.get(b'values') or [])      # cada value = un peer 6B
+            nb = r.get(b'nodes') or b''
+            for i in range(0, len(nb) - 25, 26):
+                a = (socket.inet_ntoa(nb[i + 20:i + 24]),
+                     struct.unpack('!H', nb[i + 24:i + 26])[0])
+                if a not in seen:
+                    todo.append(a)
+        return peers
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
 
 
 def _scrape_tracker(host, port, hashes, timeout=_TMO):
@@ -78,14 +206,23 @@ def _scrape_hashes(hashes):
 
 
 def _scrape_submit(hashes):
-    """Worker: scrapea y guarda veredictos (los no respondidos quedan unknown)."""
+    """Worker: scrapea trackers; los 0-seed pasan a DHT get_peers — veredicto
+    final: >0 vivo, -1 muerto confirmado (0 tracker + 0 DHT), ausente=unknown."""
     res = _scrape_hashes(hashes)
-    now = time.time()
+    now = t0 = time.time()
+    verdicts = {}
+    for h, sd in res.items():
+        if sd > 0:
+            verdicts[h] = sd
+        elif time.time() - t0 > 90:                  # budget: DHT es secuencial
+            break                                    # el resto queda unknown -> retry
+        else:                                        # 0 trackers: DHT decide
+            verdicts[h] = -1 if _dht_peers(h) == 0 else 99
     with _SLOCK:
         if len(_SEED) > 4000:                       # cota: purga la mitad más vieja
             for h in sorted(_SEED, key=lambda h: _SEED[h][1])[:len(_SEED) // 2]:
                 _SEED.pop(h, None)
-        for h, sd in res.items():
+        for h, sd in verdicts.items():
             _SEED[h] = (sd, now)
 
 
@@ -98,11 +235,11 @@ def _hash_known(h):
 
 
 def _hash_dead(s):
-    """El stream es inalcanzable: scrape dijo 0 seeds y no hay hints sources."""
+    """El stream es inalcanzable: ni trackers ni DHT ven swarm y no hay hints."""
     h = s.get('infoHash')
     if not h or s.get('sources'):
         return False                                    # hints = swarm privado posible
-    return _hash_known(str(h).lower()) == 0
+    return _hash_known(str(h).lower()) == -1
 
 
 def _hash_health(streams):

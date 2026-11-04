@@ -31,14 +31,14 @@ class TestHashHealth(unittest.TestCase):
             s['sources'] = sources
         return s
 
-    def test_0seeds_sin_hints_fuera(self):
-        TH._SEED[H_DEAD] = (0, time.time())
+    def test_muerto_confirmado_sin_hints_fuera(self):
+        TH._SEED[H_DEAD] = (-1, time.time())        # 0 trackers + 0 DHT
         out = [self._st(H_DEAD)]
         TH._hash_health(out)
         self.assertEqual(out, [])
 
-    def test_0seeds_con_hints_queda(self):
-        TH._SEED[H_PRIV] = (0, time.time())
+    def test_muerto_confirmado_con_hints_queda(self):
+        TH._SEED[H_PRIV] = (-1, time.time())
         s = self._st(H_PRIV, sources=['dht:x'])
         out = [s]
         TH._hash_health(out)
@@ -59,7 +59,7 @@ class TestHashHealth(unittest.TestCase):
         self.assertEqual(len(self._todo), 1)          # scrape encolado
 
     def test_veredicto_caducado_reintenta(self):
-        TH._SEED[H_DEAD] = (0, time.time() - TH._TTL - 10)
+        TH._SEED[H_DEAD] = (-1, time.time() - TH._TTL - 10)
         s = self._st(H_DEAD)
         out = [s]
         TH._hash_health(out)
@@ -67,7 +67,7 @@ class TestHashHealth(unittest.TestCase):
         self.assertEqual(len(self._todo), 1)          # y se re-scrapea
 
     def test_mixto(self):
-        TH._SEED[H_DEAD] = (0, time.time())
+        TH._SEED[H_DEAD] = (-1, time.time())
         TH._SEED[H_LIVE] = (3, time.time())
         out = [self._st(H_LIVE), self._st(H_DEAD),
                self._st(H_PRIV, sources=['tracker:udp://x']),
@@ -75,6 +75,49 @@ class TestHashHealth(unittest.TestCase):
         TH._hash_health(out)
         self.assertEqual(len(out), 3)
         self.assertNotIn(H_DEAD, [str(s.get('infoHash', '')).lower() for s in out])
+
+
+class TestDhtVerdict(unittest.TestCase):
+    """_scrape_submit: 0-seeds de tracker -> DHT decide el veredicto final."""
+
+    def setUp(self):
+        self._seed = dict(TH._SEED)
+        TH._SEED.clear()
+
+    def tearDown(self):
+        TH._SEED.clear()
+        TH._SEED.update(self._seed)
+
+    def test_cero_tracker_cero_dht_muerto(self):
+        import unittest.mock as um
+        with um.patch.object(TH, '_scrape_hashes', return_value={H_DEAD: 0}), \
+                um.patch.object(TH, '_dht_peers', return_value=0):
+            TH._scrape_submit([H_DEAD])
+        self.assertEqual(TH._SEED[H_DEAD][0], -1)
+
+    def test_cero_tracker_dht_vivo(self):
+        import unittest.mock as um
+        with um.patch.object(TH, '_scrape_hashes', return_value={H_DEAD: 0}), \
+                um.patch.object(TH, '_dht_peers', return_value=7):
+            TH._scrape_submit([H_DEAD])
+        self.assertEqual(TH._SEED[H_DEAD][0], 99)   # vivo via DHT
+
+    def test_seeds_directo_sin_dht(self):
+        import unittest.mock as um
+        with um.patch.object(TH, '_scrape_hashes', return_value={H_LIVE: 5}), \
+                um.patch.object(TH, '_dht_peers') as dp:
+            TH._scrape_submit([H_LIVE])
+        self.assertEqual(TH._SEED[H_LIVE][0], 5)
+        dp.assert_not_called()                       # seeds>0: DHT no hace falta
+
+
+class TestBencode(unittest.TestCase):
+    def test_roundtrip(self):
+        obj = {b'a': {b'id': b'x' * 20}, b't': b'aa', b'y': b'r', b'z': [1, b'k']}
+        b = TH._benc(obj)
+        out, off = TH._bdec(b)
+        self.assertEqual(out, obj)
+        self.assertEqual(off, len(b))
 
 
 class TestScrapeParser(unittest.TestCase):

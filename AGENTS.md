@@ -233,12 +233,15 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   prefijos alien; tt es gratis). Kitsu:X y su tt resuelto no duplican.
 - `_URL_BAD`/`_URL_OK` acotados (`_url_prune` a >2000).
 - `torrent_health` (default on): scrape UDP de trackers públicos por infoHash
-  (`infra/torrent_health.py`, tandas de 20, veredicto 6h en `_SEED`). Regla:
-  seeds>0 -> vive; 0 seeds **con** `sources` -> swarm privado posible, se
-  mantiene; 0 seeds **sin** hints -> inalcanzable, se descarta; scrape sin
-  respuesta -> desconocido, fail-open. Se aplica en ambos caminos de
-  `handle_stream` (fresco y cacheado) — los veredictos filtran el caché sin
-  re-collect. `patch_fetch` neutraliza `_scrape_hashes` (tests herméticos).
+  (`infra/torrent_health.py`, tandas de 20, veredicto 6h en `_SEED`); los
+  0-seeds pasan a **DHT get_peers** (bencode propio `_bdec/_benc`, bootstrap
+  router.bittorrent/utorrent/transmissionbt, budget 90s/worker — si el DHT no
+  responde devuelve 0 como "no visto"). Regla: veredicto >0 vivo; -1 (0 tracker
+  +0 DHT) **con** `sources` -> privado posible, se mantiene; -1 **sin** hints
+  -> inalcanzable, se descarta. Se aplica en ambos caminos de `handle_stream`
+  (fresco y cacheado). `patch_fetch` neutraliza `_scrape_hashes`; en tests el
+  DHT no corre (no hay fetch real). Ojo: routers públicos pueden estar muertos
+  o devolver nodos repetidos — degrada a "0 confirmado", nunca a falso vivo.
 - Cinemeta standalone NO se re-añade solo: su reaparición fue por editar el
   perfil SQLite con la app abierta (ésta lo persistía de vuelta al salir).
   **Siempre matar la app DE VERDAD antes de tocar localstorage** —
