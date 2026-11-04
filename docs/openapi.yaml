@@ -154,6 +154,10 @@ paths:
     get:
       summary: Estado del device flow
       responses: {'200': {description: '{state: pending|ok|none}'}}
+  /login:
+    post:
+      summary: Login admin (token -> cookie HttpOnly conflux_auth, 302 a destino)
+      responses: {'302': {description: redirect a /admin|/configure}, '401': {description: form login}}
   /reload:
     post:
       summary: Recarga config.json en caliente + limpia cachés
