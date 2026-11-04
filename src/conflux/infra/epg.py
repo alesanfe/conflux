@@ -130,7 +130,8 @@ def _reload():
         from conflux.domain.lists import _m3u_metas
         if os.path.exists(_EPG_FILE) and _STATE['fetched'] == 0:
             try:                                     # caché en disco -> caliente
-                d = json.load(open(_EPG_FILE, encoding='utf-8'))
+                with open(_EPG_FILE, encoding='utf-8') as _efh:
+                    d = json.load(_efh)
                 if d.get('days'):
                     _STATE.update(d)
                     _log.info('epg: cache disco (%d canales)', len(d.get('map', {})))

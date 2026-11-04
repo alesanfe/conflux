@@ -63,6 +63,8 @@ Repo (raíz del checkout — en Windows `C:\Users\alex0\conflux`):
 - `tests/regression/`  bugs históricos fijados con su contexto
 - `tests/performance/` presupuestos de latencia + fan-out concurrente
 - `tests/e2e/`         servidor HTTP real en hilo: TODOS los endpoints
+  (`test_server_e2e.py` contrato+interfaces; `test_perf_e2e.py` presupuestos
+  de latencia por endpoint + concurrencia — mismo boot real, VCR o live)
 
 Sub-paquetes por capa — cada uno solo depende "hacia abajo":
 

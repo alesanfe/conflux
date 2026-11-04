@@ -26,8 +26,9 @@ def fixture(name):
 def patch_fetch(fn):
     """Sustituye `fetch` en TODOS los módulos conflux.* que lo tienen bindeado
     (cada módulo hace `from conflux.infra.net import fetch`). Devuelve restore().
-    También neutraliza el scrape UDP de torrent_health: los tests herméticos no
-    deben tocar la red (hashes de fixture -> 0 seeds real los expulsaría)."""
+    También neutraliza torrent_health por completo: los tests herméticos no
+    deben tocar la red ni heredar veredictos de disco (hashes de fixture ->
+    veredicto -1/-2 real los expulsaría y _seed_save los persistiría)."""
     orig = []
     for name, mod in list(sys.modules.items()):
         if name.startswith('conflux.') and hasattr(mod, 'fetch'):
@@ -35,8 +36,10 @@ def patch_fetch(fn):
             mod.fetch = fn
     th = sys.modules.get('conflux.infra.torrent_health')
     if th is not None:
-        orig.append((th, '_scrape_hashes', th._scrape_hashes))
-        th._scrape_hashes = lambda hashes: {}
+        orig.append((th, '_scrape_submit', th._scrape_submit))
+        th._scrape_submit = lambda items: None   # ni worker ni red ni _SEED
+        orig.append((th, '_SEED', dict(th._SEED)))
+        th._SEED.clear()                          # disco no contamina tests
     def restore():
         for mod, attr, f in orig:
             setattr(mod, attr, f)

@@ -312,3 +312,150 @@ class ServerE2E(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ServerE2EInterfaces(ServerE2E):
+    """Las interfaces HTTP que el e2e base no cubre: OPTIONS, redirects
+    especiales, cfg-en-URL, gzip, extras de catálogo, métodos no soportados."""
+
+    # ---- OPTIONS / CORS ----
+    def test_options_preflight_204(self):
+        req = urllib.request.Request(
+            f'http://127.0.0.1:{self.port}/manifest.json', method='OPTIONS')
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                self.assertEqual(r.status, 204)
+                self.assertEqual(r.headers['Access-Control-Allow-Origin'], '*')
+                self.assertEqual(
+                    r.headers['Access-Control-Allow-Private-Network'], 'true')
+        except urllib.error.HTTPError as e:
+            self.fail(f'OPTIONS -> {e.code}')
+
+    # ---- gzip ----
+    def test_manifest_gzip_si_acepta(self):
+        import gzip
+        req = urllib.request.Request(
+            f'http://127.0.0.1:{self.port}/manifest.json',
+            headers={'Accept-Encoding': 'gzip'})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            self.assertEqual(r.headers.get('Content-Encoding'), 'gzip')
+            d = json.loads(gzip.decompress(r.read()))
+            self.assertIn('catalogs', d)
+
+    def test_manifest_sin_gzip_sin_header(self):
+        with urllib.request.urlopen(
+                f'http://127.0.0.1:{self.port}/manifest.json',
+                timeout=15) as r:
+            self.assertNotEqual(r.headers.get('Content-Encoding'), 'gzip')
+
+    # ---- /cfg/<b64>/ perfil por URL ----
+    def test_cfg_b64_manifest(self):
+        import base64
+        c = base64.urlsafe_b64encode(
+            json.dumps({'stream_langs': ['es']}).encode()).decode().rstrip('=')
+        code, m = _get(self.port, f'/cfg/{c}/manifest.json')
+        self.assertEqual(code, 200)
+        self.assertIn('catalogs', m)
+
+    def test_cfg_b64_basura_cae_graceful(self):
+        """cfg inválido en URL: rechazado, nunca 500."""
+        code, _m = _get(self.port, '/cfg/%25%25%25/manifest.json')
+        self.assertIn(code, (404, 200))
+
+    # ---- redirects especiales ----
+    def test_en_b64_roto_404(self):
+        code, _ = _get(self.port, '/en/%%%basura%%%')
+        self.assertEqual(code, 404)
+
+    def test_en_valido_sin_creds_404(self):
+        import base64
+        link = base64.urlsafe_b64encode(b'https://x/dl/y').decode().rstrip('=')
+        _, undo = __import__('tests', fromlist=['cfg_swap']).cfg_swap(
+            easynews_user='', easynews_pass='')
+        try:
+            code, _ = _get(self.port, '/en/' + link)
+            self.assertEqual(code, 404)
+        finally:
+            undo()
+
+    def test_nzb_b64_roto_404(self):
+        code, _ = _get(self.port, '/nzb/%%%mal%%%')
+        self.assertEqual(code, 404)
+
+    def test_dp_sin_debrid_key(self):
+        """/dp/ sin key configurada -> _db_stream None -> 404 (o 302 si la
+        fixture devuelve stream; lo importante: nunca 500)."""
+        code, _ = _get(self.port, '/dp/real-debrid/' + 'a' * 40)
+        self.assertIn(code, (302, 404))
+
+    def test_r_hash_inventado_no_500(self):
+        code, _ = _get(self.port, '/r/alldebrid/' + 'z' * 40)
+        self.assertIn(code, (302, 404))
+
+    # ---- catálogo con extras ----
+    def test_catalog_extra_genre(self):
+        code, d = _get_retry(self.port,
+            '/catalog/movie/scinemeta_movie_top/genre=action.json')
+        self.assertEqual(code, 200)
+        self.assertIn('metas', d)
+
+    def test_catalog_extra_desconocido_no_explota(self):
+        code, d = _get(self.port,
+            '/catalog/movie/scinemeta_movie_top/foo=bar.json')
+        self.assertEqual(code, 200)
+        self.assertIn('metas', d)
+
+    # ---- stream tv ----
+    def test_stream_tv_tipo(self):
+        code, d = _get(self.port, '/stream/tv/iptv-x.json')
+        self.assertEqual(code, 200)
+        self.assertIn('streams', d)
+
+    # ---- POST /login ----
+    def test_post_login_sin_admin_redirige(self):
+        """Sin admin_token el login redirige sin gate (loopback abierto)."""
+        _, undo = __import__('tests', fromlist=['cfg_swap']).cfg_swap(
+            admin_token='')
+        try:
+            form = urllib.parse.urlencode({'to': '/admin'}).encode()
+            code, loc = _post(self.port, '/login', form)
+            self.assertIn(code, (302, 303))
+            self.assertEqual(loc, '/admin')
+        finally:
+            undo()
+
+    def test_post_login_form_vacio(self):
+        _, undo = __import__('tests', fromlist=['cfg_swap']).cfg_swap(
+            admin_token='')
+        try:
+            code, _ = _post(self.port, '/login', b'')
+            self.assertIn(code, (302, 303, 401))
+        finally:
+            undo()
+
+    # ---- métodos no soportados ----
+    def test_put_no_soportado(self):
+        import http.client
+        conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=10)
+        conn.request('PUT', '/manifest.json', body=b'{}')
+        r = conn.getresponse()
+        r.read()
+        conn.close()
+        self.assertEqual(r.status, 501)
+
+    def test_post_a_endpoint_get_no_soportado(self):
+        import http.client
+        conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=10)
+        conn.request('DELETE', '/health')
+        r = conn.getresponse()
+        r.read()
+        conn.close()
+        self.assertEqual(r.status, 501)
+
+    # ---- concurrencia básica e2e ----
+    def test_10_manifest_paralelos_todos_200(self):
+        import concurrent.futures as cf
+        with cf.ThreadPoolExecutor(10) as ex:
+            codes = list(ex.map(
+                lambda i: _get(self.port, '/manifest.json')[0], range(10)))
+        self.assertEqual(codes, [200] * 10)
