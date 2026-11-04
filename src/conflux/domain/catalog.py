@@ -264,7 +264,9 @@ def _cat_norm(d):
 def handle_catalog(stype, cid, extra):
     """GET /catalog — routing: sintéticos, listas externas, rewrite anime y upstream."""
     key = (stype, cid, extra)
-    req_g = dict(urllib.parse.parse_qsl(extra or '')).get('genre')  # label pedida
+    req_kv = dict(urllib.parse.parse_qsl(extra or ''))
+    req_g = req_kv.get('genre')                                     # label pedida
+    req_only_g = req_g is not None and set(req_kv) == {'genre'}     # sin más filtros
     hit = _cget(_cat_c, key)
     if hit is not None:
         return _rpdb(hit)                                # rpdb es por perfil: fuera del caché
@@ -278,20 +280,19 @@ def handle_catalog(stype, cid, extra):
     extra = _cat_fix_extra(base, utype, real, extra)
     tail = f"/{urllib.parse.quote(extra, safe='=&,:')}" if extra else ''
     d = fetch(f"{base}/catalog/{utype}/{urllib.parse.quote(real, safe='')}{tail}.json", 7)
-    if cid in _GRP:
+    empty0 = not isinstance(d, dict) or not (d.get('metas') or d.get('metasDetailed'))
+    if cid in _GRP and empty0:
         kv = dict(urllib.parse.parse_qsl(extra or ''))
         d = _grp_failover(cid, base, real, kv, d)
     if isinstance(d, dict):
         _cat_norm(d)
-        dead_g = None
-        if not d.get('metas') and not d.get('metasDetailed'):   # opción vacía -> muerta
-            dead_g = req_g or True
-            if req_g:
-                _DEAD_OPT.add((cid, req_g.lower()))  # label pedida (grp y directos)
-            if not dict(urllib.parse.parse_qsl(extra or '')).get('genre'):
-                _DEAD_OPT.add((cid, ''))             # servido sin genre = base muerto
+        empty = not (d.get('metas') or d.get('metasDetailed'))
+        if empty0 and req_only_g:                    # su miembro/opción vino vacío
+            _DEAD_OPT.add((cid, req_g.lower()))      # label pedida (grp y directos)
+        if empty and not extra:                      # servido sin params = base muerto
+            _DEAD_OPT.add((cid, ''))
         _fix_metas(d)
-        if not dead_g:
-            _cset(_cat_c, key, d)                    # vacío por opción muerta: no cachear
+        if not empty:
+            _cset(_cat_c, key, d)                    # vacío: no cachear (reintenta)
         return _rpdb(d)                              # no-destructivo -> hay que usarlo
     return _cstale(_cat_c, key) or {'metas': []}   # upstream caído: sirve stale
