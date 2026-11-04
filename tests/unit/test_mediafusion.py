@@ -1,10 +1,21 @@
 # pylint: disable=missing-docstring,protected-access,unused-argument
 """Unit tests conflux.infra.mediafusion — provisionado lazy /encrypt-user-data."""
+import importlib.util
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 
 import conflux.core.state as st
-import conflux.infra.mediafusion as mf
+
+# tests/__init__ pone un stub no-op en sys.modules['conflux.infra.mediafusion']
+# (la provisión al importar es red real). Aquí cargamos el módulo REAL desde
+# fichero — comparte estado global (SOURCES/manifests) por las importaciones.
+_p = os.path.join(os.path.dirname(__file__), '..', '..',
+                  'src', 'conflux', 'infra', 'mediafusion.py')
+_spec = importlib.util.spec_from_file_location('conflux.infra.mediafusion_real',
+                                               os.path.abspath(_p))
+mf = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(mf)
 
 
 class TestProvision(unittest.TestCase):

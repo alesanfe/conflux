@@ -9,6 +9,17 @@ for p in (ROOT, os.path.join(ROOT, 'src'), '/tmp/pylibs'):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+# cfg.load_config() corre AL IMPORTAR proxy -> maybe_provision() lanza un hilo
+# daemon con red real (encrypt+manifest a elfhosted). En tests: stub no-op —
+# sin fugas de red ni condiciones de carrera sobre SOURCES/manifests.
+# test_mediafusion carga el módulo real por ruta para probar provision().
+import types as _types
+_mf_stub = _types.ModuleType('conflux.infra.mediafusion')
+_mf_stub.maybe_provision = lambda: None
+_mf_stub.provision = lambda: None
+_mf_stub._once = False
+sys.modules['conflux.infra.mediafusion'] = _mf_stub
+
 import proxy as px
 
 FIX = os.path.join(ROOT, 'tests', 'fixtures')

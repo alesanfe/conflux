@@ -5,9 +5,10 @@ Uso:
     python scripts/test_times.py 30              # top 30
     python scripts/test_times.py 15 tests/unit   # solo unit tests
     python scripts/test_times.py --all           # tiempo de TODOS los tests, ordenado
-    python scripts/test_times.py --jobs 9        # paralelo: un subproceso por paquete
-                                                 #   (~2x wall-clock; per-test ~inflado por
-                                                 #   contencion — baseline en el mismo modo)
+    python scripts/test_times.py --jobs 9        # paralelo: bin-packing LPT de ficheros
+                                                 #   por peso de baseline. Util si la suite
+                                                 #   vuelve a >20s; a ~8s serial el spawn+
+                                                 #   contencion cuestan mas de lo que ganan
     python scripts/test_times.py --nomem         # sin medir memoria (mas rapido)
     python scripts/test_times.py --save base.json    # guarda baseline (tiempo+memoria)
     python scripts/test_times.py --compare base.json # compara contra baseline:
@@ -162,11 +163,27 @@ class TimedRunner(unittest.TextTestRunner):
         return res
 
 
-def _run_json(start, out_path, with_mem):
-    """Worker --jobs: corre `start` y vuelca times/mems/fallos a JSON."""
+def _run_json(start, out_path, with_mem, jobfile=None):
+    """Worker --jobs: corre `start` (o los items de `jobfile`) y vuelca
+    times/mems/fallos a JSON."""
+    import os
+    sys.path.insert(0, os.getcwd())   # scripts/ es sys.path[0]; 'tests.*' vive en cwd
     TimedResult.with_mem = with_mem
     TimedResult.times, TimedResult.mems = {}, {}
-    suite = unittest.TestLoader().discover(start, top_level_dir='.')
+    loader = unittest.TestLoader()
+    if jobfile:
+        suite = unittest.TestSuite()
+        with open(jobfile, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                if os.path.isdir(line):
+                    suite.addTests(loader.discover(line, top_level_dir='.'))
+                else:
+                    suite.addTests(loader.loadTestsFromName(line))
+    else:
+        suite = loader.discover(start, top_level_dir='.')
     res = unittest.TextTestRunner(resultclass=TimedResult,
                                   verbosity=0).run(suite)
     failed = [t.id() for t, _ in res.failures + res.errors]
@@ -176,28 +193,74 @@ def _run_json(start, out_path, with_mem):
     return 0 if res.wasSuccessful() else 1
 
 
-def _run_jobs(jobs, start, with_mem):
-    """Paralelo por paquete: un subproceso por dir de tests, fusiona JSONs."""
-    import concurrent.futures as cf
+def _test_modules(start):
+    """Modulos test_*.py bajo `start` -> nombres dotted (tests.unit.test_x).
+    El FICHERO es la unidad de sharding: un import+setup por worker
+    (sharding por test-id repite imports y dispara la contencion)."""
     import os
-    import subprocess
-    import tempfile
+    mods = []
+    for root, _, files in os.walk(start):
+        for f in sorted(files):
+            if f.startswith('test') and f.endswith('.py'):
+                mods.append(os.path.join(root, f)[:-3]
+                          .replace(os.sep, '.').replace('/', '.'))
+    return mods
+
+
+def _plan_jobs(jobs, start, weights):
+    """Chunks para --jobs. Con baseline: bin-packing LPT de MODULOS por
+    peso esperado. Sin baseline: un chunk por paquete."""
+    import os
+    if weights:
+        items = []
+        for mod in _test_modules(start):
+            w = sum(t for tid, t in weights.items()
+                    if tid.startswith(mod + '.'))
+            items.append((w, mod))
+        med = sorted(w for w, _ in items if w) or [0.3]
+        default = med[len(med) // 2]                       # ficheros nuevos
+        bins: list = [[] for _ in range(jobs)]
+        load = [0.0] * jobs
+        for w, mod in sorted(items, key=lambda x: -x[0]):
+            i = load.index(min(load))
+            bins[i].append(mod)
+            load[i] += w or default
+        return [b for b in bins if b]
     dirs = sorted(
         os.path.join(start, d) for d in os.listdir(start)
         if os.path.isdir(os.path.join(start, d))
         and any(f.startswith('test') and f.endswith('.py')
                 for f in os.listdir(os.path.join(start, d))))
-    if len(dirs) < 2:
-        dirs = [start]                      # un solo paquete: serial en worker
+    return [[d] for d in dirs] or [[start]]
+
+
+def _run_jobs(jobs, start, with_mem, weights_path=None):
+    """Paralelo: subproceso por chunk de trabajo, fusiona JSONs."""
+    import concurrent.futures as cf
+    import os
+    import subprocess
+    import tempfile
+    weights = {}
+    if weights_path and os.path.exists(weights_path):
+        try:
+            with open(weights_path, encoding='utf-8') as f:
+                weights = json.load(f).get('times', {})
+        except (OSError, ValueError):
+            pass
+    chunks = _plan_jobs(jobs, start, weights)
     tmp = tempfile.mkdtemp(prefix='ttimes-')
     cmd_base = [sys.executable, os.path.abspath(__file__), '--json']
     t0 = time.perf_counter()
     with cf.ThreadPoolExecutor(max_workers=jobs) as ex:
         futs = {}
-        for i, d in enumerate(dirs):
+        for i, chunk in enumerate(chunks):
             out = os.path.join(tmp, f'w{i}.json')
+            job = os.path.join(tmp, f'w{i}.txt')
+            with open(job, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(chunk))
             futs[ex.submit(subprocess.run,
-                           cmd_base + [out, d] + ([] if with_mem else ['--nomem']),
+                           cmd_base + [out, start, '--jobfile', job]
+                           + ([] if with_mem else ['--nomem']),
                            capture_output=True)] = out
         times, mems, failed = {}, {}, []
         rc = 0
@@ -232,9 +295,10 @@ def main():
     compare_to = (args[args.index('--compare') + 1]
                   if '--compare' in args else None)
     json_out = args[args.index('--json') + 1] if '--json' in args else None
+    jobfile = args[args.index('--jobfile') + 1] if '--jobfile' in args else None
     jobs_v = args[args.index('--jobs') + 1] if '--jobs' in args else None
     jobs = int(jobs_v) if jobs_v else 0
-    consumed = {a for a in (save_to, compare_to, json_out, jobs_v) if a}
+    consumed = {a for a in (save_to, compare_to, json_out, jobfile, jobs_v) if a}
     pos = [a for a in args if not a.startswith('--') and a not in consumed]
     top = int(pos[0]) if pos and pos[0].isdigit() else 15
     start = (pos[1] if len(pos) > 1
@@ -242,9 +306,11 @@ def main():
     TimedResult.with_mem = with_mem
 
     if json_out:                              # modo worker: vuelca y calla
-        sys.exit(_run_json(start, json_out, with_mem))
+        sys.exit(_run_json(start, json_out, with_mem, jobfile))
     if jobs:                                  # paralelo por paquete
-        times, mems, total, rc = _run_jobs(jobs, start, with_mem)
+        weights_src = compare_to or save_to or '.test-baseline.json'
+        times, mems, total, rc = _run_jobs(jobs, start, with_mem,
+                                           weights_path=weights_src)
         _report(print, times, mems, total, top=top, show_all=show_all,
                 by_mem=by_mem, save_to=save_to, compare_to=compare_to)
         sys.exit(rc)

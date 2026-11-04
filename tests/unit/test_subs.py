@@ -215,3 +215,80 @@ class TestSubDownload(unittest.TestCase):
                 self.assertIsNone(sub._sub_download('123'))
         finally:
             undo()
+
+
+class TestOsLogin(unittest.TestCase):
+    CREDS = dict(opensubtitles_key='K', opensubtitles_user='u',
+                 opensubtitles_pass='p')
+
+    def tearDown(self):
+        sub._OS_TOK.clear()
+
+    def test_sin_credenciales_none(self):
+        _, undo = cfg_swap(opensubtitles_key='', opensubtitles_user='',
+                           opensubtitles_pass='')
+        try:
+            self.assertIsNone(sub._os_login())
+        finally:
+            undo()
+
+    def test_login_y_cache_segunda_vez(self):
+        """Token válido se cachea 23h: segundo _os_login NO repite POST."""
+        s, calls = fake_session({'json': {'token': 'JWT'}})
+        _, undo = cfg_swap(**self.CREDS)
+        try:
+            with patch.object(sub, '_session', return_value=s):
+                self.assertEqual(sub._os_login(), 'JWT')
+                self.assertEqual(sub._os_login(), 'JWT')
+        finally:
+            undo()
+        self.assertEqual(len(calls), 1, 'segundo login debio usar cache')
+        self.assertEqual(sub._OS_TOK['token'], 'JWT')
+
+    def test_respuesta_sin_token_none(self):
+        s, _ = fake_session({'json': {'nope': 1}})
+        _, undo = cfg_swap(**self.CREDS)
+        try:
+            with patch.object(sub, '_session', return_value=s):
+                self.assertIsNone(sub._os_login())
+        finally:
+            undo()
+
+    def test_error_red_none(self):
+        import requests
+        s, _ = fake_session(requests.RequestException('x'))
+        _, undo = cfg_swap(**self.CREDS)
+        try:
+            with patch.object(sub, '_session', return_value=s):
+                self.assertIsNone(sub._os_login())
+        finally:
+            undo()
+
+    def test_token_caducado_relogea(self):
+        sub._OS_TOK.update(token='OLD', ts=0)      # ts=0 -> >23h
+        s, _ = fake_session({'json': {'token': 'NEW'}})
+        _, undo = cfg_swap(**self.CREDS)
+        try:
+            with patch.object(sub, '_session', return_value=s):
+                self.assertEqual(sub._os_login(), 'NEW')
+        finally:
+            undo()
+
+
+class TestSubDownloadBearer(unittest.TestCase):
+    def tearDown(self):
+        sub._OS_TOK.clear()
+
+    def test_con_token_header_bearer(self):
+        """Con login OK la descarga lleva Authorization: Bearer."""
+        s, calls = fake_session({'json': {'link': 'https://cdn/s.srt'}})
+        _, undo = cfg_swap(opensubtitles_key='K', opensubtitles_user='u',
+                           opensubtitles_pass='p')
+        try:
+            sub._OS_TOK.update(token='T', ts=__import__('time').time())
+            with patch.object(sub, '_session', return_value=s):
+                link = sub._sub_download('5')
+        finally:
+            undo()
+        self.assertEqual(link, 'https://cdn/s.srt')
+        self.assertEqual(calls[0][2]['headers']['Authorization'], 'Bearer T')

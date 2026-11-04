@@ -99,3 +99,66 @@ class TestLandingPage(unittest.TestCase):
         h = pg._landing_page('addon.example.com', tls=True)
         self.assertIn('https://addon.example.com/manifest.json', h)
         self.assertNotIn('http://addon', h)
+
+
+class TestCfgFormFields(unittest.TestCase):
+    def test_checkboxes_ultimo_gana(self):
+        """hidden 0 + checkbox 1 -> el último valor gana (patrón HTML form)."""
+        cfg = {}
+        pg._cfg_form_fields({'stream_prefetch': ['0', '1'],
+                             'torrent_health': ['0']}, cfg)
+        self.assertTrue(cfg['stream_prefetch'])
+        self.assertFalse(cfg['torrent_health'])
+
+    def test_stream_max_gb_int_y_basura(self):
+        cfg = {}
+        pg._cfg_form_fields({'stream_max_gb': ['4']}, cfg)
+        self.assertEqual(cfg['stream_max_gb'], 4)
+        pg._cfg_form_fields({'stream_max_gb': ['abc']}, cfg)
+        self.assertEqual(cfg['stream_max_gb'], 4)      # basura no pisa el valor
+
+    def test_csv_listas(self):
+        cfg = {}
+        pg._cfg_form_fields({'stream_sort': [' calidad , idioma ,, ']}, cfg)
+        self.assertEqual(cfg['stream_sort'], ['calidad', 'idioma'])
+
+    def test_secretos_solo_si_vienen(self):
+        """Campo secreto vacío NO pisa el valor previo; con valor sí."""
+        cfg = {'torznab_key': 'VIEJA'}
+        pg._cfg_form_fields({'torznab_key': ['  ']}, cfg)
+        self.assertEqual(cfg['torznab_key'], 'VIEJA')
+        pg._cfg_form_fields({'torznab_key': ['NUEVA']}, cfg)
+        self.assertEqual(cfg['torznab_key'], 'NUEVA')
+
+    def test_stream_langs_vacio_conserva(self):
+        cfg = {'stream_langs': ['es']}
+        with patch.dict(pg.CFG, {'stream_langs': ['es', 'en']}):
+            pg._cfg_form_fields({'stream_langs': ['']}, cfg)
+        self.assertEqual(cfg['stream_langs'], ['es', 'en'])  # fallback CFG
+
+
+class TestTraktHelpers(unittest.TestCase):
+    def test_trakt_status_estados(self):
+        with patch.dict(pg.CFG, {'trakt_access_token': 'tok'}), \
+                patch.object(pg, '_TRAKT_DEV', None):
+            self.assertEqual(pg._trakt_status(), {'state': 'ok'})
+        with patch.dict(pg.CFG, {'trakt_access_token': ''}), \
+                patch.object(pg, '_TRAKT_DEV', None):
+            self.assertEqual(pg._trakt_status(), {'state': 'none'})
+        with patch.dict(pg.CFG, {'trakt_access_token': ''}), \
+                patch.object(pg, '_TRAKT_DEV', {'code': 'x'}):
+            self.assertEqual(pg._trakt_status(), {'state': 'pending'})
+
+    def test_cfg_trakt_link_solo_si_falta_token(self):
+        with patch.dict(pg.CFG, {'trakt_client_id': 'cid',
+                                 'trakt_access_token': ''}):
+            self.assertIn('/auth/trakt', pg._cfg_trakt_link())
+        with patch.dict(pg.CFG, {'trakt_client_id': 'cid',
+                                 'trakt_access_token': 'tok'}):
+            self.assertEqual(pg._cfg_trakt_link(), '')
+
+
+class TestCsvList(unittest.TestCase):
+    def test_limpia_y_descarta_vacios(self):
+        self.assertEqual(pg._csv_list({'k': [' a ,,b , ']}, 'k'), ['a', 'b'])
+        self.assertEqual(pg._csv_list({}, 'k'), [])
