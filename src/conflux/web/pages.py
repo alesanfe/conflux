@@ -61,12 +61,13 @@ _CFG_BOOL = ('stream_prefetch', 'debrid_proxy', 'parental', 'mediafusion',
              'torrent_health', 'nntp_ssl')            # hidden 0 + checkbox 1 -> último gana
 _CFG_TEXT = ('torznab_url', 'zilean_url', 'newznab_url', 'catalog_lists',
              'opensubtitles_key', 'opensubtitles_user', 'epg_url', 'stream_format',
-             'easynews_user', 'nntp_host', 'nntp_user')
+             'easynews_user', 'nntp_host', 'nntp_user', 'sabnzbd_url')
 _CFG_SECRET = ('torznab_key', 'newznab_key', 'mdblist_key', 'rpdb_key',
-               'opensubtitles_pass', 'easynews_pass', 'nntp_pass', 'torzapi_key')
+               'opensubtitles_pass', 'easynews_pass', 'nntp_pass', 'torzapi_key',
+               'sabnzbd_key')
 _CFG_CSV = ('source_order', 'catalogs_disabled', 'stream_exclude',
             'stream_required', 'stream_sort', 'stream_preferred', 'extra_sources',
-            'scrapers')
+            'scrapers', 'scraper_rss')
 _CFG_NUM = {'nntp_port': (1, 65535), 'nntp_connections': (1, 64),
             'max_connections': (8, 512)}
 _CFG_LINES = ('stream_exclude_regex', 'stream_required_regex')   # 1 patrón por línea
@@ -296,7 +297,11 @@ def _tuners_html(langs):
             f" yts,eztv,nyaa — vacío = off)</span><br>"
             f"<input name='scrapers' value='{','.join(CFG.get('scrapers') or [])}' placeholder='yts,eztv,nyaa'>"
             f" conexiones máx. <input name='max_connections' value='{CFG.get('max_connections',64)}' style='width:80px'>"
-            f" <span class='dim'>(pool acotado — el resto espera en el backlog)</span></p>")
+            f" <span class='dim'>(pool acotado — el resto espera en el backlog)</span></p>"
+            f"<p>Feeds RSS de indexers <span class='dim'>(URLs RSS/Atom con magnets — coma;"
+            f" un worker RSS:&lt;host&gt; por feed, estilo Comet)</span><br>"
+            f"<input name='scraper_rss' value='{','.join(CFG.get('scraper_rss') or [])}'"
+            f" placeholder='https://showrss.info/allshows.rss, https://otro/feed.rss'></p>")
 
 
 def _usenet_html():
@@ -316,7 +321,11 @@ def _usenet_html():
             f" conexiones <input name='nntp_connections' value='{CFG.get('nntp_connections',5)}' style='width:60px'></p>"
             f"<p>Easynews <span class='dim'>(usenet directo — sin TorBox: busca por título y sirve su propio enlace)</span><br>"
             f"<input name='easynews_user' value='{CFG.get('easynews_user','')}' placeholder='usuario'>"
-            f"<input name='easynews_pass' type='password' value='' placeholder='contraseña (no se muestra)'></p>")
+            f"<input name='easynews_pass' type='password' value='' placeholder='contraseña (no se muestra)'></p>"
+            f"<p>SABnzbd <span class='dim'>(downloader externo — envía el NZB a la cola (addurl)"
+            f" y abre su UI; descarga, no playback. vacío = off)</span><br>"
+            f"<input name='sabnzbd_url' value='{CFG.get('sabnzbd_url','')}' placeholder='http://localhost:8080'>"
+            f"<input name='sabnzbd_key' type='password' value='' placeholder='apikey SABnzbd (no se muestra)'></p>")
 
 
 def _sg_text():

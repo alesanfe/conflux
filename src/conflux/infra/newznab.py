@@ -1,12 +1,16 @@
 """Indexers Newznab (NZBHydra2, Easynews vía hydra) como fuente Usenet.
 
-Los items son NZB — Stremio no reproduce NZB directo, hay dos vías:
+Los items son NZB — Stremio no reproduce NZB directo, hay tres vías:
 - `/nzb/<b64>` resuelto por TorBox (el único debrid integrado que sirve
   usenet — con multi-debrid basta que torbox sea UNO de los providers).
 - NNTP nativo (`nntp_host`+`nntp_user`+`nntp_pass`): el stream lleva
   `nzbUrl`+`servers` — el propio cliente Stremio (Desktop v5 / Android TV)
   conecta al servidor NNTP y reproduce sin backend (estilo "Stremio NNTP"
-  de AIOStreams). Sin ninguna vía configurada la fuente no emite."""
+  de AIOStreams).
+- SABnzbd (`sabnzbd_url`+`sabnzbd_key`): `/sab/<b64>` manda el NZB a la
+  cola de descarga (mode=addurl) y redirige a la UI del SAB — descarga,
+  no playback en línea (igual que el "Send to downloader" de MediaFusion).
+  Sin ninguna vía configurada la fuente no emite."""
 # pylint: disable=broad-exception-caught
 import base64
 import urllib.parse
@@ -54,12 +58,37 @@ def _nntp_server():
     return f'{scheme}://{cred}{host}:{port}/{conns}'
 
 
+def _sab_cfg():
+    """(url, apikey) de SABnzbd o None — downloader externo, no playback."""
+    url, key = CFG.get('sabnzbd_url', '').rstrip('/'), CFG.get('sabnzbd_key', '')
+    return (url, key) if url and key else None
+
+
+def _sab_add(nzb_url):
+    """SABnzbd mode=addurl -> URL de la UI si el NZB entra en cola, o None."""
+    cfg = _sab_cfg()
+    if not cfg or not nzb_url.startswith('http'):
+        return None
+    url, key = cfg
+    try:
+        r = _session(urllib.parse.urlsplit(url).netloc).get(
+            f'{url}/api', params={'mode': 'addurl', 'name': nzb_url,
+                                  'apikey': key, 'output': 'json'},
+            timeout=10)
+        ok = (r.json() or {}).get('status') is True
+        _health('SABnzbd', ok, '' if ok else 'rejected', 0)
+        return url if ok else None
+    except Exception:                                 # noqa: BLE001 — downloader down -> 404
+        _health('SABnzbd', False, 'error', 0)
+        return None
+
+
 def _nz_gate(stype, sid):
     """(url, params) si la fuente aplica, o None — off sin indexer/vía usenet."""
     url, key = CFG.get('newznab_url', '').rstrip('/'), CFG.get('newznab_key', '')
     imdb = sid.split(':')[0]
     if (not url or not key or _ET is None or not imdb.startswith('tt')
-            or not (_db_key('torbox') or _nntp_server())):
+            or not (_db_key('torbox') or _nntp_server() or _sab_cfg())):
         return None
     params = {'t': 'movie' if stype == 'movie' else 'tvsearch',
               'imdbid': imdb, 'apikey': key, 'extended': '1'}
@@ -99,6 +128,11 @@ def _nz_item(it):
         if sz:
             s2['behaviorHints']['videoSize'] = sz
         out.append(s2)
+    if _sab_cfg():
+        b64 = base64.urlsafe_b64encode(link.encode()).decode().rstrip('=')
+        out.append({'name': 'SABnzbd', 'title': title,
+                    'url': f'http://127.0.0.1:{PORT}/sab/{b64}',
+                    'behaviorHints': {'bingeGroup': 'usenet'}})
     return out or None
 
 

@@ -222,9 +222,15 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   `scrapers` en cfg limita la lista; Nyaa necesita el meta cacheado (título
   para la query) — sin él devuelve [] sin marcar fallo. `_scraper()` nunca
   propaga excepciones al collect.
+- **Feeds RSS** (`scraper_rss`, URLs): workers dinámicos `RSS:<host>` vía
+  `_rss_map()`+`_sc_rss` — magnets en link/enclosure/guid/magneturl,
+  torznab `infohash` o `<ns:infoHash>`; items sin hash se descartan.
 - **NNTP nativo**: `nntp_host/user/pass` -> streams Stremio NNTP
   (`nzbUrl`+`servers`+`fileMustInclude`) en newznab.py; sin ellos cae al
   flujo TorBox `/nzb/`. `_nntp_server()` devuelve None sin host+user.
+- **SABnzbd**: `sabnzbd_url`+`sabnzbd_key` -> variante `SABnzbd` por item
+  NZB; `/sab/<b64>` llama `mode=addurl` y redirige a la UI (descarga, no
+  playback). `_sab_cfg()` también habilita la fuente usenet él solo.
 - **Indexer *arr**: `/torznab/api` y `/newznab/api` -> `web/torzapi.py`
   (`t=caps|search|movie|tvsearch`). Auth: `torzapi_key` > `admin_token` >
   abierto si ambas vacías. Emite RSS newznab con `<enclosure magnet>` o

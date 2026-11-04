@@ -353,6 +353,22 @@ class TestRedirectsEspeciales(unittest.TestCase):
         h.do_GET()
         h._redir.assert_called_with(None)
 
+    def test_sab_link_valido_llama_addurl(self):
+        import base64
+        link = base64.urlsafe_b64encode(b'https://nzb.example/get/1').decode().rstrip('=')
+        import unittest.mock as um
+        h = self._h('/sab/' + link)
+        with um.patch.object(srv, '_sab_add',
+                             return_value='http://sab.lan:8080') as sa:
+            h.do_GET()
+        sa.assert_called_once_with('https://nzb.example/get/1')
+        h._redir.assert_called_with('http://sab.lan:8080')
+
+    def test_sab_b64_roto_404(self):
+        h = self._h('/sab/%%%mal%%%')
+        h.do_GET()
+        h._redir.assert_called_with(None)
+
 
 class TestDbProxy(unittest.TestCase):
     """/dp/ túnel debrid: pasa status/headers upstream y chunks; pipe roto ok."""

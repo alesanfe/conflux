@@ -134,6 +134,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   indexers públicos SIN addon upstream — YTS movie_details por imdb, EZTV
   get-torrents filtrado S/E, Nyaa RSS por título del meta. Cada uno es un
   worker propio del collect (aparece en `/health` y `contrib` separado).
+  Además `scraper_rss: ["https://…/feed.rss"]` añade un worker `RSS:<host>`
+  por feed RSS/Atom de indexer con magnets (torznab attrs / `<ns:infoHash>`
+  incluidos) — cubre indexers sin scraper dedicado.
 - **Source groups** — `source_groups: {"anime": ["Kitsu","Nyaa"]}`: routing
   condicional por tipo — ese tipo solo consulta las fuentes del grupo; los
   tipos sin grupo usan todas (estilo groups de AIOStreams). `[]` explícito
@@ -155,6 +158,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   Con `nntp_host`/`nntp_port`/`nntp_user`/`nntp_pass`/`nntp_ssl`/`nntp_connections`
   los items salen como **streams NNTP nativos** (`nzbUrl`+`servers`+
   `fileMustInclude` — los reproduce Stremio Desktop v5/Android TV, sin debrid).
+  Y con `sabnzbd_url`+`sabnzbd_key` sale una tercera variante `SABnzbd`:
+  `/sab/<b64>` envía el NZB por `addurl` y abre la UI del downloader (descarga,
+  no playback — estilo MediaFusion).
   Stack self-hosted listo: `docker compose -f docker-compose.usenet.yml up -d`
   (Zilean:8181 + NZBHydra2:5076).
 - **Easynews directo** — `easynews_user`/`easynews_pass`: búsqueda por título

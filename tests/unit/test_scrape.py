@@ -130,5 +130,110 @@ class TestNyaaSize(unittest.TestCase):
         self.assertEqual(sc._nyaa_size(''), 0)
 
 
+_RSS = b"""<?xml version="1.0"?>
+<rss xmlns:torznab="http://torznab.com/schemas/2015/feed"
+ xmlns:nyaa="https://nyaa.si/xmlns/nyaa">
+<channel>
+ <item>
+  <title>Show.S01E01.1080p.WEB</title>
+  <link>magnet:?xt=urn:btih:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&amp;dn=x</link>
+  <enclosure url="https://feed.example/dl/1.torrent" length="700000000"/>
+  <torznab:attr name="seeders" value="55"/>
+ </item>
+ <item>
+  <title>Movie.2160p</title>
+  <link>https://feed.example/detail/2</link>
+  <torznab:attr name="infohash" value="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"/>
+  <torznab:attr name="size" value="3000000000"/>
+  <torznab:attr name="peers" value="4"/>
+ </item>
+ <item>
+  <title>Anime - 03</title>
+  <link>https://feed.example/dl/3.torrent</link>
+  <nyaa:infoHash>CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC</nyaa:infoHash>
+  <nyaa:size>800 MiB</nyaa:size>
+ </item>
+ <item>
+  <title>Sin magnet ni hash</title>
+  <link>https://feed.example/detail/4</link>
+ </item>
+</channel></rss>"""
+
+
+class TestRss(unittest.TestCase):
+    """Scraper RSS genérico — feeds de indexers vía `scraper_rss` (gap 4)."""
+
+    def test_map_nombres_por_host(self):
+        _, undo = cfg_swap(scraper_rss=[
+            'https://showrss.info/allshows.rss', 'nope-not-url',
+            'http://feed2.lan/rss.xml'])
+        try:
+            self.assertEqual(sc._rss_map(), {
+                'RSS:showrss.info': 'https://showrss.info/allshows.rss',
+                'RSS:feed2.lan': 'http://feed2.lan/rss.xml'})
+        finally:
+            undo()
+
+    def test_map_sin_config(self):
+        _, undo = cfg_swap(scraper_rss=[], scrapers=[])
+        try:
+            self.assertEqual(sc._rss_map(), {})
+            self.assertEqual(sc._scraper_names(), [])
+        finally:
+            undo()
+
+    def test_items_a_streams(self):
+        s, calls = fake_session({'content': _RSS})
+        with patch.object(sc, '_session') as msess:
+            msess.return_value = s
+            out = sc._sc_rss('https://feed.example/rss', 'movie', 'tt0137523')
+        msess.assert_called_once_with('feed.example')   # sesión por host del feed
+        self.assertEqual(calls[0][1], 'https://feed.example/rss')
+        self.assertEqual(len(out), 3)                   # el sin-hash filtrado
+        by_title = {x['title']: x for x in out}
+        s1 = by_title['Show.S01E01.1080p.WEB']
+        self.assertEqual(s1['name'], 'RSS:feed.example')
+        self.assertEqual(s1['infoHash'], 'a' * 40)
+        self.assertEqual(s1['behaviorHints']['seeders'], 55)
+        self.assertEqual(s1['behaviorHints']['videoSize'], 700000000)
+        s2 = by_title['Movie.2160p']                    # attr infohash (sin magnet)
+        self.assertEqual(s2['infoHash'], 'b' * 40)
+        self.assertEqual(s2['behaviorHints']['videoSize'], 3000000000)
+        s3 = by_title['Anime - 03']                     # <ns:infoHash> elemento
+        self.assertEqual(s3['infoHash'], 'c' * 40)
+        self.assertEqual(s3['behaviorHints']['videoSize'], 800 * (1 << 20))
+
+    def test_scraper_names_incluye_feeds(self):
+        _, undo = cfg_swap(scrapers=[],
+                           scraper_rss=['https://feed.example/rss'])
+        try:
+            self.assertEqual(sc._scraper_names(), ['RSS:feed.example'])
+        finally:
+            undo()
+
+    def test_scraper_rutea_y_aisla_error(self):
+        s, _ = fake_session({'content': _RSS})
+        _, undo = cfg_swap(scraper_rss=['https://feed.example/rss'])
+        try:
+            with patch.object(sc, '_session', return_value=s):
+                out = sc._scraper('RSS:feed.example', 'movie', 'tt1')
+            self.assertEqual(len(out), 3)
+        finally:
+            undo()
+        s2, _ = fake_session(Exception('down'))
+        _, undo = cfg_swap(scraper_rss=['https://feed.example/rss'])
+        try:
+            with patch.object(sc, '_session', return_value=s2):
+                self.assertEqual(
+                    sc._scraper('RSS:feed.example', 'movie', 'tt1'), [])
+        finally:
+            undo()
+
+    def test_sin_items_vacio(self):
+        s, _ = fake_session({'content': b'<rss><channel></channel></rss>'})
+        with patch.object(sc, '_session', return_value=s):
+            self.assertEqual(sc._sc_rss('https://f/x', 'movie', 'tt1'), [])
+
+
 if __name__ == '__main__':
     unittest.main()

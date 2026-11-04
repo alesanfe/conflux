@@ -163,5 +163,93 @@ class TestNntp(unittest.TestCase):
         self.assertEqual(out[0]['name'], 'Usenet')
 
 
+class TestSabnzbd(unittest.TestCase):
+    """SABnzbd — downloader externo: /sab/<b64> manda el NZB por addurl."""
+    CFG = dict(newznab_url='http://nz.lan/api', newznab_key='k',
+               sabnzbd_url='http://sab.lan:8080', sabnzbd_key='sk',
+               debrid_provider='', debrid_key='', debrid_providers={},
+               nntp_host='', nntp_user='', nntp_pass='')
+
+    def test_cfg_sin_config(self):
+        _, undo = cfg_swap(sabnzbd_url='', sabnzbd_key='')
+        try:
+            self.assertIsNone(nz._sab_cfg())
+        finally:
+            undo()
+
+    def test_cfg_ok(self):
+        _, undo = cfg_swap(**self.CFG)
+        try:
+            self.assertEqual(nz._sab_cfg(), ('http://sab.lan:8080', 'sk'))
+        finally:
+            undo()
+
+    def test_add_llama_addurl(self):
+        s, calls = fake_session({'json': {'status': True, 'nzo_ids': ['SABnzbd_nzo_1']}})
+        _, undo = cfg_swap(**self.CFG)
+        try:
+            with patch.object(nz, '_session', return_value=s):
+                got = nz._sab_add('https://nz.example/get/x.nzb')
+        finally:
+            undo()
+        self.assertEqual(got, 'http://sab.lan:8080')
+        p = calls[0][2]['params']
+        self.assertEqual(p['mode'], 'addurl')
+        self.assertEqual(p['name'], 'https://nz.example/get/x.nzb')
+        self.assertEqual(p['apikey'], 'sk')
+
+    def test_add_rechazado_o_caído_none(self):
+        s, _ = fake_session({'json': {'status': False}})
+        _, undo = cfg_swap(**self.CFG)
+        try:
+            with patch.object(nz, '_session', return_value=s):
+                self.assertIsNone(nz._sab_add('https://x/y.nzb'))
+        finally:
+            undo()
+        s2, _ = fake_session(Exception('down'))
+        _, undo = cfg_swap(**self.CFG)
+        try:
+            with patch.object(nz, '_session', return_value=s2):
+                self.assertIsNone(nz._sab_add('https://x/y.nzb'))
+        finally:
+            undo()
+        _, undo = cfg_swap(**self.CFG)        # url no-http ni siquiera llama
+        try:
+            self.assertIsNone(nz._sab_add('javascript:x'))
+        finally:
+            undo()
+
+    def test_sab_habilita_usenet_sin_torbox_ni_nntp(self):
+        """SABnzbd solo (sin debrid ni NNTP) ya habilita la fuente usenet."""
+        s, _ = fake_session({'content': _XML})
+        _, undo = cfg_swap(**self.CFG)
+        try:
+            with patch.object(nz, '_session', return_value=s):
+                out = nz._newznab('movie', 'tt0137523')
+        finally:
+            undo()
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]['name'], 'SABnzbd')
+        self.assertIn('/sab/', out[0]['url'])
+        link = base64.urlsafe_b64decode(
+            out[0]['url'].rsplit('/', 1)[-1] + '==').decode()
+        self.assertEqual(link, 'https://nz.example/get/x.nzb')
+
+    def test_las_tres_vias_a_la_vez(self):
+        """TorBox + NNTP + SABnzbd: tres variantes del mismo item."""
+        s, _ = fake_session({'content': _XML})
+        _, undo = cfg_swap(**{**self.CFG, 'debrid_provider': 'torbox',
+                              'debrid_key': 'dk',
+                              'nntp_host': 'news.ej.com', 'nntp_user': 'u',
+                              'nntp_pass': 'p'})
+        try:
+            with patch.object(nz, '_session', return_value=s):
+                out = nz._newznab('movie', 'tt0137523')
+        finally:
+            undo()
+        self.assertEqual({x['name'] for x in out},
+                         {'Usenet', 'Usenet SN', 'SABnzbd'})
+
+
 if __name__ == '__main__':
     unittest.main()

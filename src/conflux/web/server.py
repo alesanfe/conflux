@@ -37,6 +37,7 @@ from conflux.core.state import (
 from conflux.domain.catalog import handle_catalog
 from conflux.domain.sources import _load_manifests_cache, _persist_manifests, refresh_manifests
 from conflux.infra.debrid import _db_resolve, _db_stream, _db_usenet
+from conflux.infra.newznab import _sab_add
 from conflux.web.metrics import _metrics_text
 from conflux.web.pages import (
     _admin_page,
@@ -229,6 +230,13 @@ class H(BaseHTTPRequestHandler):
                 link = ''
             return self._redir(_db_usenet(link)
                                if link.startswith('http') else None)
+        if p.startswith('/sab/'):                                      # SABnzbd addurl -> UI del downloader
+            b = p[5:]
+            try:
+                link = base64.urlsafe_b64decode(b + '=' * (-len(b) % 4)).decode()
+            except (ValueError, UnicodeDecodeError, binascii.Error):
+                link = ''
+            return self._redir(_sab_add(link) if link.startswith('http') else None)
         if p.startswith('/en/'):                                       # easynews: creds sólo en el redirect
             b = p[4:]
             try:

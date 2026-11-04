@@ -14,7 +14,8 @@ Todos los providers configurados se consultan **en paralelo** por hash; el
 primero que lo tiene cacheado marca ⚡ con su nombre y la URL `/r/<provider>/`
 lo resuelve con ESE provider. Compatible con el singular
 `debrid_provider`+`debrid_key` (se fusionan). Provider desconocido → se
-ignora. Usenet requiere `torbox` entre los providers (el resto no lo sirve).
+ignora. La vía debrid de usenet requiere `torbox` entre los providers (el
+resto no lo sirve por API — para NNTP nativo y SABnzbd ver más abajo).
 
 | provider | torrents | usenet | notas |
 |---|---|---|---|
@@ -75,6 +76,20 @@ propio del collect (health + contrib separados, no puede tumbar el collect).
 | eztv | series | `imdb_id` numérico | solo S/E del id pedido |
 | nyaa | series/anime | título del meta | RSS `c=1_2` (anime EN) |
 
+### Feeds RSS genéricos — `scraper_rss`
+
+```json
+"scraper_rss": ["https://showrss.info/allshows.rss"]
+```
+
+Cualquier feed RSS/Atom de indexer con magnets → worker `RSS:<host>` propio
+(same collect, health y contrib separados). Extrae el infoHash de
+`<link>`/`<enclosure>`/`<guid>`/`magneturl` (urn:btih hex40 o base32),
+attr torznab `infohash` o elemento `<ns:infoHash>`; size de
+`enclosure@length`, attr `size`/`contentlength` o `nyaa:size`; seeds de
+`seeders`/`peers`. Items sin hash se descartan — top 20. Es la vía genérica
+para indexers con RSS pero sin scraper dedicado.
+
 ## Usenet nativo — `nntp_*`
 
 ```json
@@ -88,6 +103,19 @@ NNTP nativos** de Stremio — `nzbUrl` (nuestro `/nzb/<b64>`), `servers`
 (`nntps://user:pass@host:port/conns`) y `fileMustInclude` (regex de vídeo).
 Los reproduce Stremio Desktop v5 / Android TV sin debrid. Sin las claves, los
 items caen al flujo TorBox de siempre.
+
+### SABnzbd — `sabnzbd_url` + `sabnzbd_key`
+
+```json
+"sabnzbd_url": "http://localhost:8080", "sabnzbd_key": "env:SAB_KEY"
+```
+
+Tercera vía usenet: con SABnzbd configurado los items Newznab emiten un
+stream extra `SABnzbd` cuya URL `/sab/<b64>` llama a `mode=addurl` y
+redirige a la UI del SAB. Es "enviar al downloader" (descarga a disco), no
+playback en línea — igual que el botón equivalente de MediaFusion. Cada vía
+configurada suma un stream del mismo item (TorBox `/nzb/` + NNTP nativo +
+SABnzbd pueden convivir).
 
 ## Source groups — `source_groups`
 

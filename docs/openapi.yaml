@@ -99,6 +99,12 @@ paths:
       parameters:
         - {name: b64, in: path, required: true, schema: {type: string}}
       responses: {'302': {description: Location=URL}, '404': {description: sin torbox/fallo}}
+  /sab/{b64}:
+    get:
+      summary: 'SABnzbd: envía el NZB en base64url a la cola (addurl) y redirige a su UI'
+      parameters:
+        - {name: b64, in: path, required: true, schema: {type: string}}
+      responses: {'302': {description: 'Location=UI de SABnzbd'}, '404': {description: sin sabnzbd_url/key, addurl rechazado o b64 inválido}}
   /torznab/api:
     get:
       summary: 'Indexer Torznab para Sonarr/Radarr/Prowlarr — busca en las fuentes agregadas'
