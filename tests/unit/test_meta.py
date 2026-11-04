@@ -34,22 +34,29 @@ class TestHandleMeta(unittest.TestCase):
         st._meta_c.clear()
 
     def test_prefetch_on_llama_collect(self):
-        with patch.dict(M.__dict__, {'manifests': []}), \
-                patch.object(M, '_ensure_collect') as ec:
-            M.handle_meta('movie', 'tt999')
-            ec.assert_called_once_with(
-                ('movie', 'tt999', tuple(sorted(M._eff_disabled()))))
+        from tests import patch_fetch
+        restore = patch_fetch(lambda u, t=8: None)  # hermetico: sin red real
+        try:
+            with patch.dict(M.__dict__, {'manifests': []}), \
+                    patch.object(M, '_ensure_collect') as ec:
+                M.handle_meta('movie', 'tt999')
+                ec.assert_called_once_with(
+                    ('movie', 'tt999', tuple(sorted(M._eff_disabled()))))
+        finally:
+            restore()
 
     def test_prefetch_off_no_collect(self):
         """stream_prefetch=False: abrir la ficha NO lanza consultas a fuentes."""
-        from tests import cfg_swap
+        from tests import cfg_swap, patch_fetch
         _, undo = cfg_swap(stream_prefetch=False)
+        restore = patch_fetch(lambda u, t=8: None)  # hermetico: sin red real
         try:
             with patch.dict(M.__dict__, {'manifests': []}), \
                     patch.object(M, '_ensure_collect') as ec:
                 M.handle_meta('movie', 'tt999')
                 ec.assert_not_called()
         finally:
+            restore()
             undo()
 
 

@@ -7,12 +7,14 @@ en Linux iba como systemd user `stremio-proxy`).
 ## Comandos
 
 ```bash
-python3 -m unittest discover -s tests -t .  # 351+ tests: unit+integration+security+contract+property+resilience+regression+performance+e2e
+python3 -m unittest discover -s tests -t .  # 618 tests (~22s): unit+integration+security+contract+property+resilience+regression+performance+e2e
 python3 -m unittest discover -s tests/unit -t .       # solo unit (~1s)
 python3 scripts/test_times.py [N] [dir] [--all]      # timer+memoria por test, p50/p95/p99,
                                                      # agregado por paquete; --mem ranking memoria
 python3 scripts/test_times.py --save base.json       # baseline; --compare base.json = regresiones
+                                                     # (normaliza por factor de carga de la maquina)
 python3 scripts/test_times.py --nomem                # sin tracemalloc (~40% mas rapido)
+# HYP_EXAMPLES=200 python3 -m unittest discover -s tests/property -t .  # property exhaustivo
 coverage run -m unittest discover -s tests -t . && python3 scripts/cov_gate.py [80]
 # cov_gate: CADA archivo src/ >= umbral (no media) — actual ~96% total
 python3 scripts/mutation.py <modulo.py> [tests.py] [--max N] [--timeout S]

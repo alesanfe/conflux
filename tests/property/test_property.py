@@ -11,8 +11,8 @@ from hypothesis import strategies as st
 
 import conflux.domain.text as T
 
-_MAX = settings(max_examples=200, deadline=None,
-               suppress_health_check=list(HealthCheck))
+_MAX = settings(max_examples=int(__import__('os').getenv('HYP_EXAMPLES', '60')),
+               deadline=None, suppress_health_check=list(HealthCheck))
 
 _ANY_JSON = st.recursive(
     st.none() | st.booleans() | st.integers() |

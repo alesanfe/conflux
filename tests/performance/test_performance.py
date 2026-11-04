@@ -135,14 +135,14 @@ class TestSearchDeadline(unittest.TestCase):
         st.manifests[:] = self._m
 
     def test_una_lenta_no_frena(self):
-        """12 upstreams: 11 en 10ms + 1 colgando -> la respuesta espera como
-        mucho el timeout del fetch (8s), nunca serializa 12×timeout."""
+        """12 upstreams: 11 en 10ms + 1 lento (2.5s) -> la respuesta llega
+        antes del straggler, nunca serializa 12×latencia (30s)."""
         st.manifests[:] = [{'catalogs': [
             {'id': f'c{i}', 'type': 'movie',
              'extra': [{'name': 'search'}]}],
             'resources': []} for i in range(12)]
         def slow(url, t=8):
-            time.sleep(t if 'c11' in url else 0.01)  # el lento honra su timeout
+            time.sleep(2.5 if 'c11' in url else 0.01)  # el lento honra su timeout
             return {'metas': [{'id': 'tt1', 'name': 'X'}]}
         restore = patch_fetch(slow)
         try:
@@ -152,7 +152,7 @@ class TestSearchDeadline(unittest.TestCase):
         finally:
             restore()
         self.assertIsInstance(out.get('metas'), list)
-        self.assertLess(dt, 9.0,
+        self.assertLess(dt, 4.0,
                         'la busqueda se serializo (12 fetches en cadena)')
 
 

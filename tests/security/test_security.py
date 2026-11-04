@@ -63,8 +63,13 @@ class TestPathTraversal(unittest.TestCase):
         """'..' en cid/sid: quoted a upstream o rechazado por routing — nunca FS."""
         import conflux.domain.catalog as cat
         from conflux.app import meta
+        from tests import patch_fetch
         self.assertEqual(cat.handle_catalog('movie', '..', None), {'metas': []})
-        r = meta.handle_meta('movie', '..%2f..%2fetc%2fpasswd')
+        restore = patch_fetch(lambda u, t=8: None)  # hermetico: sin red real
+        try:
+            r = meta.handle_meta('movie', '..%2f..%2fetc%2fpasswd')
+        finally:
+            restore()
         self.assertIn('meta', r)
 
 
