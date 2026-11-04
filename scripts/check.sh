@@ -23,7 +23,7 @@ if "$PY" -m ruff --version >/dev/null 2>&1; then
   "$PY" -m ruff check src tests scripts >/dev/null 2>&1 && echo "  ok  ruff" || { echo " FAIL ruff"; fail=1; }
   "$PY" -m mypy >/dev/null 2>&1 && echo "  ok  mypy" || { echo " FAIL mypy"; fail=1; }
   "$PY" -m pylint src/conflux --reports=n --fail-under=9.5 >/dev/null 2>&1 && echo "  ok  pylint" || { echo " FAIL pylint"; fail=1; }
-  "$PY" -m xenon --max-absolute D --max-modules C --max-average B src/conflux >/dev/null 2>&1 && echo "  ok  xenon" || { echo " FAIL xenon"; fail=1; }
+  "$PY" -m xenon --max-absolute C --max-modules C --max-average B src/conflux >/dev/null 2>&1 && echo "  ok  xenon" || { echo " FAIL xenon"; fail=1; }
   "$PY" -m bandit -r src/conflux -ll -q >/dev/null 2>&1 && echo "  ok  bandit" || { echo " FAIL bandit"; fail=1; }
 else
   echo "  (herramientas no instaladas — pip install -r requirements.txt; pip install -r requirements-dev.txt)"

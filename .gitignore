@@ -35,6 +35,8 @@ os.json
 .seed-cache.json
 .test-baseline.json
 tests/.test-conflux.log
+tests/.test-conflux.log.*
+coverage.json
 conflux.log.*
 .schemathesis/
 junit.xml

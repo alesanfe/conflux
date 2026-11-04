@@ -402,11 +402,9 @@ def _hash_dead(s):
     return v == -1 and not s.get('sources')
 
 
-def _hash_health(streams):
-    """Saca los infoHash confirmadamente inalcanzables; encola scrape async de
-    los desconocidos (máx ~140/request — el resto espera a la próxima)."""
-    if not streams or not _cfgget('torrent_health', True):
-        return
+def _hash_filter(streams):
+    """Clasifica streams por veredicto -> (dead, todo[(hash, tracker_urls)]).
+    dead = inalcanzable confirmado; todo = desconocido a scrapear (dedup)."""
     dead, todo, seen = set(), [], set()
     for s in streams:
         h = str(s.get('infoHash') or '').lower()
@@ -419,9 +417,12 @@ def _hash_health(streams):
             urls = [u[8:] for u in (s.get('sources') or [])
                     if isinstance(u, str) and u.startswith('tracker:')]
             todo.append((h, urls))
-    if dead:
-        streams[:] = [s for s in streams
-                      if str(s.get('infoHash') or '').lower() not in dead]
+    return dead, todo
+
+
+def _hash_sink(streams):
+    """Muertos-con-hints al fondo de la lista (sort estable: orden relativo
+    intacto — el cliente los verá pero tras los vivos)."""
     sink = [i for i, s in enumerate(streams)
             if s.get('sources')
             and _hash_known(str(s.get('infoHash') or '').lower()) in (-1, -2)]
@@ -429,6 +430,18 @@ def _hash_health(streams):
         sset = set(sink)                           # sort estable: orden relativo intacto
         streams[:] = [s for i, s in enumerate(streams) if i not in sset] + \
                      [streams[i] for i in sink]
+
+
+def _hash_health(streams):
+    """Saca los infoHash confirmadamente inalcanzables; encola scrape async de
+    los desconocidos (máx ~140/request — el resto espera a la próxima)."""
+    if not streams or not _cfgget('torrent_health', True):
+        return
+    dead, todo = _hash_filter(streams)
+    if dead:
+        streams[:] = [s for s in streams
+                      if str(s.get('infoHash') or '').lower() not in dead]
+    _hash_sink(streams)
     for i in range(0, min(len(todo), 140), _CHUNK * 7):   # ~140 hashes por lote
         _POOL_BG.submit(_scrape_submit, todo[i:i + _CHUNK * 7])
 

@@ -222,6 +222,24 @@ def _cat_resolve(cid, stype, extra, key):
     return base, utype, real, extra
 
 
+def _cat_genre_ok(base, utype, real, g):
+    """¿El catálogo upstream acepta la opción `genre` pedida? Solo False si
+    su manifest declara extra.genre con options y la pedida no está (o fue
+    marcada muerta en _DEAD_OPT)."""
+    i = next((j for j, s in enumerate(SOURCES) if s.base == base), None)
+    if i is None or i >= len(manifests):
+        return True
+    cat = next((c for c in (manifests[i] or {}).get('catalogs') or []
+                if c.get('id') == real and c.get('type') == utype), None)
+    opts = next((e.get('options') for e in (cat or {}).get('extra') or []
+                 if e.get('name') == 'genre'), None)
+    if not opts:
+        return True                                  # no declara genre: se sirve tal cual
+    cid = f"s{SOURCES[i].name.lower()}_{utype}_{real}"
+    live = {str(o).lower() for o in opts} - {v for c2, v in _DEAD_OPT if c2 == cid}
+    return g.lower() in live
+
+
 def _cat_fix_extra(base, utype, real, extra):
     """'genre' no declarado por el catálogo upstream -> se descarta.
     Stremio inyecta opciones sintéticas en el selector ('Top' en Discover de
@@ -230,21 +248,10 @@ def _cat_fix_extra(base, utype, real, extra):
     mapean su genre a catálogo real — esto solo aplica a cats directos."""
     kv = dict(urllib.parse.parse_qsl(extra or ''))
     g = kv.get('genre')
-    if not g or not base:
+    if not g or not base or _cat_genre_ok(base, utype, real, g):
         return extra
-    i = next((j for j, s in enumerate(SOURCES) if s.base == base), None)
-    if i is None or i >= len(manifests):
-        return extra
-    cat = next((c for c in (manifests[i] or {}).get('catalogs') or []
-                if c.get('id') == real and c.get('type') == utype), None)
-    opts = next((e.get('options') for e in (cat or {}).get('extra') or []
-                 if e.get('name') == 'genre'), None)
-    cid = f"s{SOURCES[i].name.lower()}_{utype}_{real}"
-    live = {str(o).lower() for o in (opts or [])} - {v for c2, v in _DEAD_OPT if c2 == cid}
-    if opts and g.lower() not in live:              # no declarada o muerta
-        kv.pop('genre')
-        return urllib.parse.urlencode(kv, safe=',')
-    return extra
+    kv.pop('genre')
+    return urllib.parse.urlencode(kv, safe=',')
 
 
 def _grp_failover(cid, base, real, kv, d):
@@ -283,6 +290,23 @@ def _cat_norm(d):
                 if isinstance(d[k], list) else []
 
 
+def _cat_serve(cid, key, d, empty0, req_g, req_only_g, extra):
+    """Post-fetch de catálogo: normaliza contrato, marca opciones muertas
+    (_DEAD_OPT), _fix_metas, cachea solo lo no-vacío. Upstream caído -> stale."""
+    if not isinstance(d, dict):
+        return _cstale(_cat_c, key) or {'metas': []}
+    _cat_norm(d)
+    empty = not (d.get('metas') or d.get('metasDetailed'))
+    if empty0 and req_only_g:                        # su miembro/opción vino vacío
+        _DEAD_OPT.add((cid, req_g.lower() if req_g else ''))   # label pedida
+    if empty and not extra:                          # servido sin params = base muerto
+        _DEAD_OPT.add((cid, ''))
+    _fix_metas(d)
+    if not empty:
+        _cset(_cat_c, key, d)                        # vacío: no cachear (reintenta)
+    return _rpdb(d)                                  # no-destructivo -> hay que usarlo
+
+
 def handle_catalog(stype, cid, extra):
     """GET /catalog — routing: sintéticos, listas externas, rewrite anime y upstream."""
     key = (stype, cid, extra)
@@ -306,15 +330,4 @@ def handle_catalog(stype, cid, extra):
     if cid in _GRP and empty0:
         kv = dict(urllib.parse.parse_qsl(extra or ''))
         d = _grp_failover(cid, base, real, kv, d)
-    if isinstance(d, dict):
-        _cat_norm(d)
-        empty = not (d.get('metas') or d.get('metasDetailed'))
-        if empty0 and req_only_g:                    # su miembro/opción vino vacío
-            _DEAD_OPT.add((cid, req_g.lower() if req_g else ''))   # label pedida
-        if empty and not extra:                      # servido sin params = base muerto
-            _DEAD_OPT.add((cid, ''))
-        _fix_metas(d)
-        if not empty:
-            _cset(_cat_c, key, d)                    # vacío: no cachear (reintenta)
-        return _rpdb(d)                              # no-destructivo -> hay que usarlo
-    return _cstale(_cat_c, key) or {'metas': []}   # upstream caído: sirve stale
+    return _cat_serve(cid, key, d, empty0, req_g, req_only_g, extra)

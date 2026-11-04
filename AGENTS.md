@@ -280,8 +280,9 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
 ## Controles de calidad (todos en verde en CI)
 
 - Linters: ruff (select E4/E7/E9/F explícito en pyproject — ruff>=0.15 amplía
-  defaults si no se fija) · pylint ≥9.5 · xenon `--max-absolute D --max-modules C
-  --max-average B` (ratchet al estado actual — endurecer al refactorizar) ·
+  defaults si no se fija) · pylint ≥9.5 · xenon `--max-absolute C --max-modules C
+  --max-average B` (ratchet — ningún bloque por encima de C tras extraer helpers
+  de _zilean/_build/_cat_*/_hash_*/_cfg_form_fields/handle_catalog) ·
   mypy `check_untyped_defs` · bandit -ll
 - Cobertura con `branch=true`: cov_gate reporta transiciones `linea->linea` sin
   ejercitar además del % por archivo

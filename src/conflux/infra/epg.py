@@ -68,27 +68,14 @@ def _iso(ts):
     return time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime(ts))
 
 
-def _build(m3u_metas):
-    """Descarga + parsea el XMLTV -> {'map': {cid: epg_id}, 'days': {dia: {cid: [p]}}}.
-    Solo conserva programas de canales mapeados (ventana: ayer -> +2d)."""
-    url = CFG.get('epg_url') or ''
-    if not url or not _public_url(url):                  # SSRF: http(s) + host no link-local
-        return None
-    req = urllib.request.Request(url, headers={'User-Agent': 'conflux-epg/1.0'})
-    raw = _OPENER.open(req, timeout=60).read(40_000_000)
-    if not raw:
-        return None
-    try:
-        data = gzip.decompress(raw)
-    except OSError:
-        data = raw                                   # por si el XML no va gz
-    # canales del EPG: norm(id) y norm(display-name) -> id real
+def _epg_channels(data, m3u_metas):
+    """Canales del XMLTV -> (ch_map {m3u_id: epg_id}, want {epg_id: m3u_id})
+    mapeando por tvg-id y por nombre (norm de ambos lados)."""
     epgs: dict = {}
     for m in re.finditer(r'<channel id="([^"]+)"[^>]*>\s*<display-name[^>]*>([^<]+)<',
                          data.decode('utf-8', 'replace')):
         epgs.setdefault(_norm(m.group(1)), m.group(1))
         epgs.setdefault(_norm(m.group(2)), m.group(1))
-    # mapear cada canal m3u -> id del EPG (por tvg-id y por nombre)
     ch_map: dict = {}
     want: dict = {}                                   # epg_id -> m3u cid
     for m in m3u_metas:
@@ -96,12 +83,15 @@ def _build(m3u_metas):
         if eid:
             ch_map[m['id']] = eid
             want[eid] = m['id']
-    if not want:
-        return None
+    return ch_map, want
+
+
+def _epg_programmes(root, want):
+    """<programme> del XMLTV -> {dia: {cid: [progs]}} — solo canales mapeados
+    en la ventana ayer -> +2d, ordenados por start."""
     now = time.time()
     lo, hi = now - 26 * 3600, now + 2 * 86400         # ayer -> +2d
     days: dict = {}
-    root = ET.parse(io.BytesIO(data)).getroot()
     for p in root.iter('programme'):
         cid = want.get(p.get('channel'))
         if cid is None:
@@ -119,6 +109,27 @@ def _build(m3u_metas):
     for chs in days.values():
         for progs in chs.values():
             progs.sort(key=lambda x: x['start'])
+    return days
+
+
+def _build(m3u_metas):
+    """Descarga + parsea el XMLTV -> {'map': {cid: epg_id}, 'days': {dia: {cid: [p]}}}.
+    Solo conserva programas de canales mapeados (ventana: ayer -> +2d)."""
+    url = CFG.get('epg_url') or ''
+    if not url or not _public_url(url):                  # SSRF: http(s) + host no link-local
+        return None
+    req = urllib.request.Request(url, headers={'User-Agent': 'conflux-epg/1.0'})
+    raw = _OPENER.open(req, timeout=60).read(40_000_000)
+    if not raw:
+        return None
+    try:
+        data = gzip.decompress(raw)
+    except OSError:
+        data = raw                                   # por si el XML no va gz
+    ch_map, want = _epg_channels(data, m3u_metas)
+    if not want:
+        return None
+    days = _epg_programmes(ET.parse(io.BytesIO(data)).getroot(), want)
     _log.info('epg: %d canales mapeados, %d dias, %d programas', len(ch_map),
               len(days), sum(len(p) for d in days.values() for p in d.values()))
     return {'map': ch_map, 'days': days}

@@ -19,6 +19,32 @@ def _num(v):
         return None
 
 
+def _zilean_items(d):
+    """Respuesta /dmm/filtered -> [items] (lista, dict.results o dict.data)."""
+    if isinstance(d, list):
+        return d
+    if isinstance(d, dict):
+        return d.get('results') or d.get('data') or []
+    return []
+
+
+def _zilean_item(it):
+    """Item DMM -> stream dict | None (sin hash o sin nombre: descartable)."""
+    if not isinstance(it, dict):
+        return None
+    h = (it.get('infoHash') or it.get('info_hash') or it.get('hash') or '')
+    name = (it.get('filename') or it.get('raw_title') or it.get('title') or '')
+    if not h or not name:
+        return None
+    s: dict = {'name': 'Zilean', 'title': str(name),
+         'infoHash': str(h).lower(),
+         'behaviorHints': {'cached': True}}          # DMM = ya en caché debrid
+    sz = _num(it.get('filesize') or it.get('size') or it.get('bytes'))
+    if sz:
+        s['behaviorHints']['videoSize'] = sz
+    return s
+
+
 def _zilean(stype, sid):
     """Consulta Zilean por IMDb id -> [streams]. Vacío si no hay url o no es tt."""
     base = (CFG.get('zilean_url') or '').rstrip('/')
@@ -33,25 +59,5 @@ def _zilean(stype, sid):
             f'{base}/dmm/filtered', params=q, timeout=10).json()
     except Exception:                                    # noqa: BLE001 — indexer caído -> 0
         return []
-    if isinstance(d, list):
-        items = d
-    elif isinstance(d, dict):
-        items = d.get('results') or d.get('data') or []
-    else:
-        items = []
-    out = []
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        h = (it.get('infoHash') or it.get('info_hash') or it.get('hash') or '')
-        name = (it.get('filename') or it.get('raw_title') or it.get('title') or '')
-        if not h or not name:
-            continue
-        s: dict = {'name': 'Zilean', 'title': str(name),
-             'infoHash': str(h).lower(),
-             'behaviorHints': {'cached': True}}          # DMM = ya en caché debrid
-        sz = _num(it.get('filesize') or it.get('size') or it.get('bytes'))
-        if sz:
-            s['behaviorHints']['videoSize'] = sz
-        out.append(s)
-    return out[:40]                                      # hashlists pueden ser enormes
+    return [s for s in (_zilean_item(it) for it in _zilean_items(d))
+            if s is not None][:40]                       # hashlists pueden ser enormes

@@ -57,6 +57,17 @@ def _csv_list(form, k):
     return [s.strip() for s in form.get(k, [''])[0].split(',') if s.strip()]
 
 
+_CFG_BOOL = ('stream_prefetch', 'debrid_proxy', 'parental', 'mediafusion',
+             'torrent_health')                       # hidden 0 + checkbox 1 -> último gana
+_CFG_TEXT = ('torznab_url', 'zilean_url', 'newznab_url', 'catalog_lists',
+             'opensubtitles_key', 'opensubtitles_user', 'epg_url', 'stream_format',
+             'easynews_user')
+_CFG_SECRET = ('torznab_key', 'newznab_key', 'mdblist_key', 'rpdb_key',
+               'opensubtitles_pass', 'easynews_pass')   # vacío = conservar previo
+_CFG_CSV = ('source_order', 'catalogs_disabled', 'stream_exclude',
+            'stream_required', 'stream_sort', 'stream_preferred', 'extra_sources')
+
+
 def _cfg_form_fields(form, cfg):
     """Campos restantes del form -> cfg. Solo campos PRESENTES pisan (un POST
     parcial no debe borrar el resto — el checkbox-group 'src' ausente no
@@ -71,29 +82,18 @@ def _cfg_form_fields(form, cfg):
             cfg['stream_max_gb'] = max(0, int(form['stream_max_gb'][0]))
         except (TypeError, ValueError):
             pass
-    if 'stream_prefetch' in form:                    # hidden 0 + checkbox 1 -> último gana
-        cfg['stream_prefetch'] = form['stream_prefetch'][-1] == '1'
-    if 'debrid_proxy' in form:
-        cfg['debrid_proxy'] = form['debrid_proxy'][-1] == '1'
-    if 'parental' in form:
-        cfg['parental'] = form['parental'][-1] == '1'
-    if 'mediafusion' in form:
-        cfg['mediafusion'] = form['mediafusion'][-1] == '1'
-    if 'torrent_health' in form:
-        cfg['torrent_health'] = form['torrent_health'][-1] == '1'
+    for k in _CFG_BOOL:
+        if k in form:
+            cfg[k] = form[k][-1] == '1'
     if 'stream_langs' in form:
         cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
-    for k in ('torznab_url', 'zilean_url', 'newznab_url', 'catalog_lists',
-              'opensubtitles_key', 'opensubtitles_user', 'epg_url', 'stream_format',
-              'easynews_user'):
+    for k in _CFG_TEXT:
         if k in form:
             cfg[k] = form[k][0].strip()
-    for k in ('torznab_key', 'newznab_key', 'mdblist_key', 'rpdb_key', 'opensubtitles_pass',
-              'easynews_pass'):
+    for k in _CFG_SECRET:
         if k in form and form[k][0].strip():
             cfg[k] = form[k][0].strip()
-    for k in ('source_order', 'catalogs_disabled', 'stream_exclude', 'stream_required',
-              'stream_sort', 'stream_preferred', 'extra_sources'):
+    for k in _CFG_CSV:
         if k in form:
             cfg[k] = _csv_list(form, k)
     if 'src' in form:

@@ -17,7 +17,7 @@ jobs:
       - run: pip install -r requirements.txt && pip install -r requirements-dev.txt
       - run: ruff check src tests scripts
       - run: pylint src/conflux --reports=n --fail-under=9.5
-      - run: xenon --max-absolute D --max-modules C --max-average B src/conflux
+      - run: xenon --max-absolute C --max-modules C --max-average B src/conflux
       - run: mypy
       - run: bandit -r src/conflux -ll -q
 
