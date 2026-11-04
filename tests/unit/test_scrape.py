@@ -69,6 +69,7 @@ class TestYts(unittest.TestCase):
         self.assertEqual(st0['behaviorHints']['seeders'], 42)
         self.assertEqual(st0['behaviorHints']['videoSize'], 2_000_000_000)
         self.assertIn('imdb_id', str(calls[0][2].get('params')))
+        self.assertEqual(calls[0][2]['timeout'], 10)   # mutante 10+1
         self.assertGreaterEqual(st.HEALTH['YTS']['ok'], 1)  # mutante _health(ok->False)
         self.assertEqual(st.HEALTH['YTS']['fail'], 0)
 
@@ -157,12 +158,41 @@ class TestNyaa(unittest.TestCase):
         self.assertEqual(out[0]['behaviorHints']['videoSize'],
                          int(1.4 * (1 << 30)))
         self.assertIn('s01e01', calls[0][2]['params']['q'])
+        self.assertEqual(calls[0][2]['timeout'], 10)   # mutante 10+1
+
+    def test_item_sin_title_fallback(self):
+        """item sin <title> -> 'nyaa' (Or@128: `and` daría 'nyaa' aun
+        habiendo título... y `or`->`and` pierde el fallback)."""
+        self._meta('Some Anime')
+        xml = b"""<?xml version="1.0"?>
+        <rss xmlns:nyaa="https://nyaa.si/xmlns/nyaa"><channel><item>
+        <nyaa:infoHash>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</nyaa:infoHash>
+        </item></channel></rss>"""
+        s, _ = fake_session({'content': xml})
+        with patch.object(sc, '_session', return_value=s):
+            out = sc._sc_nyaa('series', 'tt0944947:1:1')
+        self.assertEqual(out[0]['title'], 'nyaa')
+        self.assertEqual(st.HEALTH['Nyaa']['ok'], 1)      # True@130
+
+    def test_cap_20(self):
+        """out[:20] (20+1@131)."""
+        self._meta('Some Anime')
+        items = b''.join(
+            b'<item><title>T</title>'
+            b'<nyaa:infoHash>' + f'{i:040x}'.encode() + b'</nyaa:infoHash>'
+            b'</item>' for i in range(21))
+        xml = (b'<?xml version="1.0"?><rss xmlns:nyaa='
+               b'"https://nyaa.si/xmlns/nyaa"><channel>' + items + b'</channel></rss>')
+        s, _ = fake_session({'content': xml})
+        with patch.object(sc, '_session', return_value=s):
+            self.assertEqual(len(sc._sc_nyaa('series', 'tt0944947:1:1')), 20)
 
     def test_error_red_vacio(self):
         self._meta('Some Anime')
         s, _ = fake_session(Exception('down'))
         with patch.object(sc, '_session', return_value=s):
             self.assertEqual(sc._scraper('Nyaa', 'series', 'tt0944947:1:1'), [])
+        self.assertGreaterEqual(st.HEALTH['Nyaa']['fail'], 1)  # False@279 vía _scraper
 
     def test_scraper_desconocido_vacio(self):
         self.assertEqual(sc._scraper('Nope', 'movie', 'tt1'), [])
@@ -207,6 +237,17 @@ class TestTpb(unittest.TestCase):
         self.assertEqual(st.HEALTH['TPB']['err'], '')
         self.assertIn('Fight Club', calls[0][2]['params']['q'])
         self.assertEqual(calls[0][2]['params']['cat'], '200')
+        self.assertEqual(calls[0][2]['timeout'], 10)         # 10+1@146
+
+    def test_name_faltante_tpb(self):
+        """t.get('name') or 'tpb' (Or@155) + cap out[:20] (20+1@158)."""
+        s, _ = fake_session({'json': [
+            {'info_hash': f'{i:040x}', 'seeders': 1, 'size': '1'}
+            for i in range(21)] + [{'info_hash': 'd' * 40, 'seeders': 1}]})
+        with patch.object(sc, '_session', return_value=s):
+            out = sc._sc_tpb('movie', 'tt0137523')
+        self.assertEqual(len(out), 20)                       # cap
+        self.assertEqual(out[0]['title'].split(' 👤')[0], 'tpb')
 
     def test_dict_error_no_lista(self):
         s, _ = fake_session({'json': {'error': 'no results'}})
@@ -239,6 +280,8 @@ class TestNyaaSize(unittest.TestCase):
         self.assertEqual(sc._nyaa_size('700 MiB'), 700 * (1 << 20))
         self.assertEqual(sc._nyaa_size('basura'), 0)
         self.assertEqual(sc._nyaa_size(''), 0)
+        self.assertEqual(sc._nyaa_size('512 KiB'), 512 * (1 << 10))  # 10+1
+        self.assertEqual(sc._nyaa_size('2 TiB'), 2 * (1 << 40))      # 40+1
 
 
 _RSS = b"""<?xml version="1.0"?>
@@ -313,6 +356,45 @@ class TestRss(unittest.TestCase):
         s3 = by_title['Anime - 03']                     # <ns:infoHash> elemento
         self.assertEqual(s3['infoHash'], 'c' * 40)
         self.assertEqual(s3['behaviorHints']['videoSize'], 800 * (1 << 20))
+        self.assertEqual(calls[0][2]['timeout'], 10)      # 10+1@242
+        self.assertGreaterEqual(st.HEALTH['RSS:feed.example']['ok'], 1)  # True@248
+
+    def test_hash_fuentes_alternativas(self):
+        """infoHash en attr con H mayúscula (Or@199), magnet solo en <guid>
+        y solo en attr magneturl (Or@201): cada fuente es un `or` aparte."""
+        xml = b"""<?xml version="1.0"?>
+        <rss xmlns:torznab="http://torznab.com/schemas/2015/feed"><channel>
+         <item><title>A</title>
+          <torznab:attr name="infoHash" value="dddddddddddddddddddddddddddddddddddddddd"/>
+         </item>
+         <item><title>B</title>
+          <guid>magnet:?xt=urn:btih:EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE&amp;dn=x</guid>
+         </item>
+         <item><title>C</title>
+          <torznab:attr name="magneturl" value="magnet:?xt=urn:btih:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"/>
+         </item>
+         <item><title>D</title>
+          <torznab:attr name="magnet" value="magnet:?xt=urn:btih:0123456789ABCDEF0123456789ABCDEF01234567"/>
+         </item>
+        </channel></rss>"""
+        s, _ = fake_session({'content': xml})
+        with patch.object(sc, '_session', return_value=s):
+            out = sc._sc_rss('https://feed.example/rss', 'movie', 'tt1')
+        self.assertEqual({x['infoHash'] for x in out},
+                         {'d' * 40, 'e' * 40, 'f' * 40,
+                          '0123456789abcdef0123456789abcdef01234567'})
+
+    def test_title_faltante_rss_y_cap(self):
+        """title -> 'rss' (Or@239) y out[:20] (20+1@249)."""
+        items = b''.join(
+            b'<item><link>magnet:?xt=urn:btih:' + f'{i:040x}'.encode()
+            + b'</link></item>' for i in range(21))
+        xml = b'<?xml version="1.0"?><rss><channel>' + items + b'</channel></rss>'
+        s, _ = fake_session({'content': xml})
+        with patch.object(sc, '_session', return_value=s):
+            out = sc._sc_rss('https://feed.example/rss', 'movie', 'tt1')
+        self.assertEqual(len(out), 20)
+        self.assertEqual(out[0]['title'], 'rss')
 
     def test_scraper_names_incluye_feeds(self):
         _, undo = cfg_swap(scrapers=[],
