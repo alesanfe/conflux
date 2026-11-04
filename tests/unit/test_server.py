@@ -551,6 +551,22 @@ class TestDoPost(unittest.TestCase):
         h.do_POST()
         h.reply.assert_called_once_with({'err': 'not found'}, 404)
 
+    def test_reload_ok_true_y_thread_daemon(self):
+        """reply {'ok': True, config} y refresh en daemon=True (True@334/331:
+        ok False rompería el cliente; no-daemon el cierre)."""
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            h = self._h('/reload')
+            h.headers = {'X-Admin-Token': 'secreto'}
+            import unittest.mock as um
+            with um.patch.object(srv, 'load_config'), \
+                    um.patch.object(srv.threading, 'Thread') as th:
+                h.do_POST()
+            self.assertIs(h.reply.call_args[0][0]['ok'], True)
+            self.assertTrue(th.call_args[1].get('daemon'))
+        finally:
+            undo()
+
     def test_configure_con_auth_guarda_y_303(self):
         _, undo = cfg_swap(admin_token='secreto')
         try:
@@ -748,6 +764,319 @@ class TestWiringNuevasRutas(unittest.TestCase):
         finally:
             undo()
         h.send_response.assert_called_with(401)
+
+
+class TestCfgUrlOkBounds(unittest.TestCase):
+    """Cotas exactas de _CFG_URL_NUM (LtE@151 x2, 24/100000/30/65535/64+1)."""
+
+    def test_cotas_borde(self):
+        ok = srv.H._cfg_url_ok
+        for k, lo, hi in [('calendar_months_ahead', 0, 24),
+                          ('stream_max_gb', 0, 100000),
+                          ('source_timeout', 0, 30),
+                          ('nntp_port', 1, 65535),
+                          ('nntp_connections', 1, 64)]:
+            self.assertTrue(ok(k, lo), f'{k} lo={lo}')
+            self.assertTrue(ok(k, hi), f'{k} hi={hi}')
+            self.assertFalse(ok(k, lo - 1), f'{k} lo-1')
+            self.assertFalse(ok(k, hi + 1), f'{k} hi+1')
+        self.assertFalse(ok('nntp_port', True))       # bool != int (type is int)
+
+
+class TestCfgUrlOkGuards(unittest.TestCase):
+    """Guards isinstance (And@141/143/144/146/147: or acepta tipos malos)."""
+
+    def test_list_requiere_lista_str(self):
+        ok = srv.H._cfg_url_ok
+        self.assertFalse(ok('stream_langs', 'es'))          # str != list
+        self.assertFalse(ok('stream_langs', ['es', 5]))
+        self.assertTrue(ok('stream_langs', ['es']))
+
+    def test_dict_str_str(self):
+        ok = srv.H._cfg_url_ok
+        self.assertTrue(ok('debrid_providers', {'rd': 'k'}))
+        self.assertFalse(ok('debrid_providers', 'x'))
+        self.assertFalse(ok('debrid_providers', {1: 'k'}))
+        self.assertFalse(ok('debrid_providers', {'rd': 5}))
+
+    def test_dlist_dict_de_listas(self):
+        ok = srv.H._cfg_url_ok
+        self.assertTrue(ok('source_groups', {'movie': ['A', 'B']}))
+        self.assertFalse(ok('source_groups', {'movie': 'A'}))
+        self.assertFalse(ok('source_groups', {'movie': ['A', 5]}))
+        self.assertFalse(ok('source_groups', 'x'))
+
+
+class TestReplyGzipBorde(unittest.TestCase):
+    """len(body) > 1024 -> gzip (Gt@70, 1024+1: el borde exacto no comprime)."""
+
+    def _h(self):
+        h = srv.H.__new__(srv.H)
+        h.send_response = MagicMock()
+        h.send_header = MagicMock()
+        h.end_headers = MagicMock()
+        h.wfile = MagicMock()
+        h.headers = {'Accept-Encoding': 'gzip'}
+        return h
+
+    def test_exactamente_1024_no_comprime(self):
+        h = self._h()
+        h.reply({'x': 'a' * 1015})              # {"x": "..."} = 1024 bytes
+        hdrs = {c.args[0] for c in h.send_header.call_args_list}
+        self.assertNotIn('Content-Encoding', hdrs)
+
+    def test_1025_comprime(self):
+        h = self._h()
+        h.reply({'x': 'a' * 1016})
+        hdrs = {c.args[0] for c in h.send_header.call_args_list}
+        self.assertIn('Content-Encoding', hdrs)
+
+
+class TestTimedRouteLatencia(unittest.TestCase):
+    """ms=(t-t0)*1000 acumulado (Sub/Mult/1000+1@185, Add@189 x2, 512+1@190)."""
+
+    def setUp(self):
+        self._rt = dict(srv._rtime)
+        self._rts = {k: v for k, v in srv._rts.items()}
+        srv._rtime.clear(); srv._rts.clear()
+
+    def tearDown(self):
+        srv._rtime.clear(); srv._rtime.update(self._rt)
+        srv._rts.clear(); srv._rts.update(self._rts)
+
+    def _h(self):
+        h = srv.H.__new__(srv.H)
+        h.reply = MagicMock()
+        return h
+
+    def test_acumulado_exacto(self):
+        import re
+        import unittest.mock as um
+        h = self._h()
+        it = iter([100.0, 101.0])               # t0=100, t1=101 -> ms=1000
+        with um.patch.object(srv, 'ROUTES',
+                             [(re.compile(r'/seg'), lambda *a: {'ok': 1})]), \
+                um.patch.object(srv.time, 'time', side_effect=lambda: next(it)):
+            h._timed_route('/seg')
+        self.assertEqual(srv._rtime['seg'], (1, 1000.0, 1000.0))
+
+    def test_segundo_hit_acumula(self):
+        import re
+        import unittest.mock as um
+        h = self._h()
+        it = iter([100.0, 101.0, 200.0, 203.0])
+        with um.patch.object(srv, 'ROUTES',
+                             [(re.compile(r'/seg'), lambda *a: {'ok': 1})]), \
+                um.patch.object(srv.time, 'time', side_effect=lambda: next(it)):
+            h._timed_route('/seg')
+            h._timed_route('/seg')
+        self.assertEqual(srv._rtime['seg'], (2, 4000.0, 3000.0))
+
+    def test_rts_deque_maxlen_512(self):
+        import re
+        import unittest.mock as um
+        h = self._h()
+        it = __import__('itertools').count(0.0)
+        with um.patch.object(srv, 'ROUTES',
+                             [(re.compile(r'/x'), lambda *a: {'ok': 1})]), \
+                um.patch.object(srv.time, 'time', side_effect=lambda: next(it)):
+            for _ in range(513):
+                h._timed_route('/x')
+        self.assertEqual(len(srv._rts['x']), 512)
+
+
+class TestPagesDispatch(unittest.TestCase):
+    """Gate admin solo en /admin|/configure; returns True; landing con Host."""
+
+    def _h(self, headers=None):
+        h = srv.H.__new__(srv.H)
+        h.headers = headers or {}
+        h._html = MagicMock()
+        h.reply = MagicMock()
+        return h
+
+    def test_manifest_no_gateado_con_token(self):
+        """And@195: 'or' pondría /manifest.json tras el login wall."""
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            h = self._h()
+            with unittest.mock.patch.object(srv, '_manifest_reply',
+                                            return_value={'m': 1}):
+                self.assertTrue(h._pages('/manifest.json'))
+            h.reply.assert_called_once()            # manifest servido
+            h._html.assert_not_called()             # sin login 401
+        finally:
+            undo()
+
+    def test_pages_devuelve_true(self):
+        """True@202/210: False caería al dispatcher -> 404 posterior."""
+        h = self._h()
+        self.assertIs(h._pages('/health'), True)
+        with unittest.mock.patch.object(srv, '_landing_page',
+                                        return_value='<h>'):
+            self.assertIs(h._pages('/'), True)
+
+    def test_landing_usa_host_header(self):
+        """Host del request manda en la landing (Or@203: and -> 127.0.0.1)."""
+        h = self._h({'Host': 'mi.host:1234'})
+        with unittest.mock.patch.object(srv, '_landing_page',
+                                        return_value='<h>') as lp:
+            h._pages('/')
+        self.assertEqual(lp.call_args[0][0], 'mi.host:1234')
+
+
+class TestCfgB64Padding(unittest.TestCase):
+    """'=' * (-len % 4) de padding y _PROF.name = 'cfg-'+seg[:8]
+    (4+1@166, 8+1@168)."""
+
+    def test_padding_correcto_decodifica(self):
+        import base64
+        import json
+        h = srv.H.__new__(srv.H)
+        seg = None
+        for i in range(60):
+            cand = base64.urlsafe_b64encode(json.dumps(
+                {'stream_langs': ['es'], 'stream_required': ['x' * i]}
+            ).encode()).decode().rstrip('=')
+            # len%4==2 (pad '==') y len%5==0 -> mutante -len%5 da pad 0 -> roto
+            if len(cand) % 4 == 2 and len(cand) % 5 == 0:
+                seg, want = cand, ['x' * i]
+                break
+        self.assertIsNotNone(seg, 'ningún seg con len%20==10 en 60 pruebas')
+        out = h._profile(f'/cfg/{seg}/stream/movie/tt.json')
+        self.assertEqual(out, '/stream/movie/tt.json')
+        self.assertEqual(srv._PROF.cfg['stream_required'], want)
+        self.assertEqual(srv._PROF.name, 'cfg-' + seg[:8])
+
+
+class TestFormCapYTokenLen(unittest.TestCase):
+    """Body 64KB cap (65536+1@346, Or@343) y token [:128] (128+1@352)."""
+
+    def test_form_cap_64k(self):
+        h = srv.H.__new__(srv.H)
+        h.headers = {'Content-Type': 'application/x-www-form-urlencoded',
+                     'Content-Length': '999999'}
+        h.rfile = MagicMock()
+        h.rfile.read.return_value = b''
+        h._form()
+        h.rfile.read.assert_called_once_with(65536)
+
+    def test_login_token_trunca_128(self):
+        """admin_token de 128 chars + POST de 129 con mismo prefijo:
+        [:128] coincide; [:129] rechazaría."""
+        import urllib.parse
+        _, undo = cfg_swap(admin_token='x' * 128)
+        try:
+            h = srv.H.__new__(srv.H)
+            body = urllib.parse.urlencode(
+                {'token': 'x' * 129, 'to': '/admin'}).encode()
+            h.headers = {'Content-Type': 'application/x-www-form-urlencoded',
+                         'Content-Length': str(len(body))}
+            h.rfile = type('R', (), {'read': lambda s, n: body})()
+            h.send_response = MagicMock()
+            h.send_header = MagicMock()
+            h.end_headers = MagicMock()
+            h.wfile = MagicMock()
+            h._login()
+        finally:
+            undo()
+        hdrs = {c.args[0]: c.args[1] for c in h.send_header.call_args_list}
+        self.assertIn('conflux_auth=', hdrs.get('Set-Cookie', ''))
+
+
+class TestRoutesGroups(unittest.TestCase):
+    """m.group(N) correctos por ruta (2+1/3+1@387-395: índices cruzados)."""
+
+    def _dispatch(self, path):
+        h = srv.H.__new__(srv.H)
+        h.reply = MagicMock()
+        h._timed_route(path)
+        return h
+
+    def test_stream_args(self):
+        import unittest.mock as um
+        with um.patch.object(srv, 'handle_stream', return_value={}) as hs:
+            self._dispatch('/stream/movie/tt1.json')
+        hs.assert_called_once_with('movie', 'tt1')
+
+    def test_catalog_args_extra_y_sin(self):
+        import unittest.mock as um
+        with um.patch.object(srv, 'handle_catalog', return_value={}) as hc:
+            self._dispatch('/catalog/movie/cat.id/extra%20p.json')
+        hc.assert_called_once_with('movie', 'cat.id', 'extra%20p')
+        with um.patch.object(srv, 'handle_catalog', return_value={}) as hc:
+            self._dispatch('/catalog/series/cat.id.json')
+        hc.assert_called_once_with('series', 'cat.id', None)
+
+    def test_meta_y_subtitles_args(self):
+        import unittest.mock as um
+        with um.patch.object(srv, 'handle_meta', return_value={}) as hm:
+            self._dispatch('/meta/series/tt2.json')
+        hm.assert_called_once_with('series', 'tt2')
+        with um.patch.object(srv, 'handle_subtitles', return_value={}) as hs:
+            self._dispatch('/subtitles/anime/k.json')
+        hs.assert_called_once_with('anime', 'k')
+
+
+class TestSrvAttrsYDemonios(unittest.TestCase):
+    """daemon_threads/request_queue_size/backlog y daemon=True de los threads
+    de main (True@401/436/441/442, 64+1@402) — no-daemon bloquearía el cierre."""
+
+    def test_srv_class_attrs(self):
+        self.assertTrue(srv._Srv.daemon_threads)
+        self.assertEqual(srv._Srv.request_queue_size, 64)
+
+    def test_main_threads_daemon(self):
+        import unittest.mock as um
+        made, daemons = [], []
+
+        class FakeSrv:
+            daemon_threads = True
+            def __init__(self, addr, h):
+                self.socket = MagicMock()
+                self.serve_forever = MagicMock()
+                made.append(self)
+        faketh = type('T', (), {
+            'Thread': staticmethod(
+                lambda target=None, daemon=None: (
+                    daemons.append(daemon), MagicMock())[1]),
+            'Semaphore': threading.Semaphore,
+            'current_thread': staticmethod(lambda: 'm'),
+            'main_thread': staticmethod(lambda: 'm')})
+        with um.patch.object(srv, '_load_manifests_cache', return_value=[{}]), \
+                um.patch.object(srv, 'refresh_manifests'), \
+                um.patch.object(srv, 'threading', faketh), \
+                um.patch.object(srv, '_Srv', FakeSrv), \
+                um.patch.object(srv, 'CFG', {}):
+            srv.main()
+        self.assertEqual(len(daemons), 3)
+        self.assertTrue(all(daemons))
+
+    def test_tls_exige_cert_y_key(self):
+        """cert sin key -> sin wrap (And@452: or envolvería con key None)."""
+        import unittest.mock as um
+        made = []
+
+        class FakeSrv:
+            daemon_threads = True
+            def __init__(self, addr, h):
+                self.socket = MagicMock()
+                self.serve_forever = MagicMock()
+                made.append(self)
+        faketh = type('T', (), {
+            'Thread': staticmethod(lambda target=None, daemon=None: MagicMock()),
+            'Semaphore': threading.Semaphore,
+            'current_thread': staticmethod(lambda: 'm'),
+            'main_thread': staticmethod(lambda: 'm')})
+        ctx = MagicMock()
+        with um.patch.object(srv, '_load_manifests_cache', return_value=[{}]), \
+                um.patch.object(srv, 'refresh_manifests'), \
+                um.patch.object(srv, 'threading', faketh), \
+                um.patch.object(srv, '_Srv', FakeSrv), \
+                um.patch.object(srv, 'CFG', {'tls_cert': 'c.pem'}), \
+                um.patch.object(srv.ssl, 'SSLContext', return_value=ctx):
+            srv.main()
+        ctx.wrap_socket.assert_not_called()
 
 
 class TestDobleBind(unittest.TestCase):

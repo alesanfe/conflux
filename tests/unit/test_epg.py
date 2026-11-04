@@ -2,6 +2,7 @@
 """Unit tests conflux.infra.epg — XMLTV -> parrilla por canal m3u."""
 import gzip
 import io
+import os
 import time
 import unittest
 
@@ -173,6 +174,256 @@ class TestStateIO(unittest.TestCase):
         m = E.epg_meta({'id': 'la1'})
         self.assertEqual(len(m['videos']), 2)
         self.assertEqual(E.epg_meta(None), {})
+
+
+class TestTzOffset(unittest.TestCase):
+    def test_minutos_de_tz_cuentan(self):
+        """'+0130' = 3600+1800 = 5400s (Mult/Add@59, Sub@61 cambian la resta)."""
+        a = E._xmltv_ts('20251103220000 +0130')
+        b = E._xmltv_ts('20251103220000 +0000')
+        self.assertEqual(b - a, 5400)
+        c = E._xmltv_ts('20251103220000 -0330')
+        self.assertEqual(b - c, -12600)   # -3h30m: signo tb en los minutos
+
+
+class TestBuildVentana(unittest.TestCase):
+    """lo=now-26h, hi=now+2d — bordes exactos (26/3600/2/86400+1@93, LtE@101)."""
+
+    def setUp(self):
+        self._cfg = dict(E.CFG)
+        self._open = E._OPENER.open
+        self._pub = E._public_url
+        E._public_url = lambda u: True
+        E.CFG['epg_url'] = 'https://epg.test/x.xml'
+
+    def tearDown(self):
+        E.CFG.clear(); E.CFG.update(self._cfg)
+        E._OPENER.open = self._open
+        E._public_url = self._pub
+
+    def _build(self, progs):
+        from freezegun import freeze_time
+        xml = _xmltv(progs, canales=('la1.es',))
+        E._OPENER.open = lambda req, timeout=0: io.BytesIO(xml)
+        import unittest.mock as um
+        with freeze_time('2025-06-01 12:00:00'), um.patch.object(E, '_log'):
+            return E._build([{'id': 'la1', 'tvg': 'la1.es'}])
+
+    def _tslocal(self, dt):
+        import time as _t
+        return _t.strftime('%Y%m%d%H%M%S +0000', _t.gmtime(dt))
+
+    def test_borde_ventana(self):
+        from freezegun import freeze_time
+        with freeze_time('2025-06-01 12:00:00'):
+            import time as _t
+            now = _t.time()
+        progs = [
+            ('la1.es', self._tslocal(now - 26 * 3600), self._tslocal(now - 25 * 3600), 'Borde26', 'dd', ''),
+            ('la1.es', self._tslocal(now - 27 * 3600), self._tslocal(now - 26 * 3600), 'Fuera27', '', ''),
+            ('la1.es', self._tslocal(now - 26 * 3600 - 20), self._tslocal(now - 25 * 3600), 'Fuera26y20s', '', ''),
+            ('la1.es', self._tslocal(now + 47 * 3600), self._tslocal(now + 48 * 3600), 'Dentro47', '', ''),
+            ('la1.es', self._tslocal(now + 48 * 3600), self._tslocal(now + 49 * 3600), 'Borde48', '', ''),
+            ('la1.es', self._tslocal(now + 48 * 3600 + 1), self._tslocal(now + 50 * 3600), 'Fuera48y1s', '', ''),
+            ('la1.es', self._tslocal(now + 49 * 3600), self._tslocal(now + 50 * 3600), 'Fuera49', '', ''),
+        ]
+        out = self._build(progs)
+        titles = [p['title'] for d in out['days'].values()
+                  for ps in d.values() for p in ps]
+        self.assertIn('Borde26', titles)
+        self.assertIn('Dentro47', titles)
+        self.assertIn('Borde48', titles)
+        self.assertNotIn('Fuera27', titles)
+        self.assertNotIn('Fuera26y20s', titles)
+        self.assertNotIn('Fuera48y1s', titles)
+        self.assertNotIn('Fuera49', titles)
+
+    def test_desc_conservada(self):
+        """(p.findtext('desc') or '') (Or@104: and -> '')."""
+        from freezegun import freeze_time
+        with freeze_time('2025-06-01 12:00:00'):
+            import time as _t
+            now = _t.time()
+        out = self._build([('la1.es', self._tslocal(now), self._tslocal(now + 60),
+                            'T', 'descripcion-real', '')])
+        prog = next(p for d in out['days'].values()
+                    for ps in d.values() for p in ps)
+        self.assertEqual(prog['desc'], 'descripcion-real')
+
+    def test_read_cap_y_timeout(self):
+        """read(40MB) cap + open(timeout=60) (60/40000000+1@122)."""
+        import unittest.mock as um
+        resp = um.MagicMock()
+        resp.read.return_value = b''
+        op = um.MagicMock(return_value=resp)
+        with um.patch.object(E._OPENER, 'open', op), \
+                um.patch.object(E, '_log'):
+            E._build([{'id': 'la1', 'tvg': 'la1.es'}])
+        self.assertEqual(op.call_args[1].get('timeout') or op.call_args[0][1], 60)
+        self.assertEqual(resp.read.call_args[0][0], 40_000_000)
+
+
+class TestReloadDiscoYLoading(unittest.TestCase):
+    """_reload: cache disco solo si fetched==0 y fresco (Eq/And@142, Sub/Lt@149);
+    _LOADING se libera en finally (False@164)."""
+
+    def setUp(self):
+        self._st = dict(E._STATE); self._ld = E._LOADING[0]
+        self._kick = E.epg_kick
+        E.epg_kick = lambda: None                 # sin _reload en background
+        E._STATE.clear(); E._STATE.update({'days': {}, 'map': {}, 'fetched': 0})
+        E._LOADING[0] = False
+
+    def tearDown(self):
+        E._STATE.clear(); E._STATE.update(self._st)
+        E._LOADING[0] = self._ld
+        E.epg_kick = self._kick
+
+    def _disco(self, disk):
+        """_EPG_FILE -> fichero temporal con `disk`; devuelve ctx managers."""
+        import json
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix='.json')
+        os.close(fd)
+        with open(path, 'w', encoding='utf-8') as fh:
+            json.dump(disk, fh)
+        self.addCleanup(os.unlink, path)
+        return path
+
+    def test_disco_solo_si_fetched_cero(self):
+        """fetched!=0 + fichero existe -> el disco NO pisa el estado en caliente
+        (Eq/And@142)."""
+        import unittest.mock as um
+        path = self._disco({'days': {'d': {}}, 'map': {'x': 'y'},
+                           'fetched': time.time()})
+        with um.patch.object(E, '_EPG_FILE', path), \
+                um.patch('conflux.domain.lists._m3u_metas',
+                         return_value=[]) as mm, \
+                um.patch.object(E, '_build'):
+            E._STATE['fetched'] = 12345.0
+            E._reload()
+        mm.assert_called_once()                    # fue a la ruta de fetch
+        self.assertEqual(E._STATE['map'], {})      # el disco no pisó
+
+    def test_disco_fresco_evita_fetch(self):
+        """fetched==0 + disco fresco -> carga y return (Sub/Lt@149)."""
+        import unittest.mock as um
+        path = self._disco({'days': {'d': {}}, 'map': {'x': 'y'},
+                           'fetched': time.time()})
+        with um.patch.object(E, '_EPG_FILE', path), \
+                um.patch('conflux.domain.lists._m3u_metas') as mm:
+            E._reload()
+        mm.assert_not_called()
+        self.assertEqual(E._STATE['map'], {'x': 'y'})
+
+    def test_disco_viejo_refresca(self):
+        """disco con edad > TTL -> ignora y fetch (Lt@149: <= lo creería fresco)."""
+        import unittest.mock as um
+        path = self._disco({'days': {'d': {}}, 'map': {},
+                           'fetched': time.time() - E._EPG_TTL - 10})
+        with um.patch.object(E, '_EPG_FILE', path), \
+                um.patch('conflux.domain.lists._m3u_metas',
+                         return_value=[]) as mm:
+            E._reload()
+        mm.assert_called_once()
+
+    def test_loading_se_libera(self):
+        """finally: _LOADING[0]=False siempre (False@164)."""
+        import unittest.mock as um
+        with um.patch.object(E, '_EPG_FILE', '/no/existe.json'), \
+                um.patch('conflux.domain.lists._m3u_metas', return_value=[]):
+            E._LOADING[0] = True
+            E._reload()
+        self.assertFalse(E._LOADING[0])
+
+    def test_metas_presentes_fetcha(self):
+        """not metas -> return (not-elim@154: con metas retornaría)."""
+        import unittest.mock as um
+        with um.patch.object(E, '_EPG_FILE', '/no/existe.json'), \
+                um.patch('conflux.domain.lists._m3u_metas',
+                         return_value=[{'id': 'c', 'tvg': 'x'}]), \
+                um.patch.object(E, '_build',
+                                return_value={'days': {}, 'map': {}}) as bd, \
+                um.patch.object(E, '_atomic_json'):
+            E._reload()
+        bd.assert_called_once()
+
+
+class TestKickStale(unittest.TestCase):
+    """stale = (not days) or (age > TTL) — Gt@169, Or@169, True@175, TTL@26."""
+
+    def setUp(self):
+        self._st = dict(E._STATE); self._ld = E._LOADING[0]
+        self._sub = E._POOL_BG.submit
+        self.enviados = []
+        E._POOL_BG.submit = lambda f, *a: self.enviados.append(f)
+        E._LOADING[0] = False
+
+    def tearDown(self):
+        E._STATE.clear(); E._STATE.update(self._st)
+        E._LOADING[0] = self._ld
+        E._POOL_BG.submit = self._sub
+
+    def test_ttl_valor(self):
+        self.assertEqual(E._EPG_TTL, 43200)         # 12*3600 (@26)
+
+    def test_vacio_aunque_fresco_stale(self):
+        """days vacío -> stale aunque fetched sea reciente (Or@169: and no)."""
+        E._STATE['days'] = {}
+        E._STATE['fetched'] = time.time()
+        E.epg_kick()
+        self.assertEqual(self.enviados, [E._reload])
+
+    def test_fresco_exacto_ttl_no_kick(self):
+        """age == TTL no stale (Gt@169: >= dispararía)."""
+        from freezegun import freeze_time
+        with freeze_time('2025-06-01 12:00:00'):
+            E._STATE['days'] = {'2099-01-01': {}}
+            E._STATE['fetched'] = time.time() - E._EPG_TTL
+            E.epg_kick()
+        self.assertEqual(self.enviados, [])
+
+    def test_doble_kick_no_duplica(self):
+        """_LOADING[0]=True antes de submit (True@175: False -> doble)."""
+        E._STATE['days'] = {}
+        E.epg_kick(); E.epg_kick()
+        self.assertEqual(self.enviados, [E._reload])
+
+
+class TestEpgMetaManana(unittest.TestCase):
+    """epg_meta: hoy + hasta 6 de mañana (Add/86400+1@210, 6+1@212, Add@185)."""
+
+    def setUp(self):
+        self._kick = E.epg_kick
+        E.epg_kick = lambda: None
+
+    def tearDown(self):
+        E.epg_kick = self._kick
+
+    def test_manana_cap_y_episodios(self):
+        import unittest.mock as um
+        calls = []
+        def fake_vids(cid, day):
+            calls.append(day)
+            return [{'id': f'{cid}:h{i}', 'episode': i} for i in range(8)]
+        with um.patch.object(E, '_videos', side_effect=fake_vids):
+            m = E.epg_meta({'id': 'la1'})
+        import time as _t
+        today = _t.strftime('%Y-%m-%d', _t.gmtime())
+        self.assertEqual(calls[0], today)
+        self.assertNotEqual(calls[1], today)       # mañana = today+86400
+        # hoy(8) + mañana[:6] = 14 vídeos total
+        self.assertEqual(len(m['videos']), 14)
+
+    def test_episodio_secuencia_desde_1(self):
+        """'episode': i+1 — el primero es 1, no 0 (Add@185)."""
+        vs = E._videos('la1', '2099-01-01')
+        # semilla mínima vía _STATE
+        E._STATE['days'] = {'2099-01-01': {'la1': [
+            {'title': 'A', 'desc': '', 'icon': '', 'start': 1, 'stop': 2}]}}
+        vs = E._videos('la1', '2099-01-01')
+        E._STATE['days'] = {}
+        self.assertEqual(vs[0]['episode'], 1)
 
 
 class TestKick(unittest.TestCase):

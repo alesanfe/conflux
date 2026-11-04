@@ -89,6 +89,119 @@ class TestAtomicJson(unittest.TestCase):
         os.unlink(path)
 
 
+class TestManifestsCache(unittest.TestCase):
+    """_load_manifests_cache: solo dict, umbral >= len//2 (not-elim@27,
+    GtE@30, 2+1@30)."""
+    def _srcs(self, n):
+        from conflux.core.state import Source
+        return [Source(f'S{i}', f'u{i}') for i in range(n)]
+
+    def _load(self, disk, n_sources=4):
+        import io, json
+        from unittest import mock
+        with mock.patch.object(_sources, 'SOURCES', self._srcs(n_sources)), \
+                mock.patch.object(_sources, '_open',
+                                  return_value=io.StringIO(json.dumps(disk))):
+            return _sources._load_manifests_cache()
+
+    def test_dict_suficiente_devuelve(self):
+        out = self._load({'S0': {'a': 1}, 'S1': {'b': 2}})
+        self.assertEqual(out, [{'a': 1}, {'b': 2}, None, None])
+
+    def test_umbral_exacto_mitad(self):
+        """4 fuentes, 2 manifests: >=len//2 acepta, > lo rechazaría (GtE@30)."""
+        self.assertIsNotNone(self._load({'S0': {'a': 1}, 'S2': {'b': 2}}))
+
+    def test_menos_de_mitad_none(self):
+        """1 de 4 (//2=2) -> None; //3 (2+1) aceptaría 1."""
+        self.assertIsNone(self._load({'S0': {'a': 1}}))
+
+    def test_no_dict_none(self):
+        """Lista posicional (formato viejo) -> None (not-elim@27)."""
+        self.assertIsNone(self._load([{'a': 1}, {'b': 2}]))
+
+
+class TestPersistManifests(unittest.TestCase):
+    def test_descarta_extra_y_no_dict(self):
+        """i<len(SOURCES) y dict (Lt@38, And@38: or incluiría basura/más)."""
+        from conflux.core.state import Source
+        old = list(_sources.manifests)
+        try:
+            _sources.manifests[:] = [{'a': 1}, 'basura', {'c': 3}]
+            with unittest.mock.patch.object(
+                    _sources, 'SOURCES', [Source('S0', 'u'), Source('S1', 'v')]):
+                out = _sources._persist_manifests()
+        finally:
+            _sources.manifests[:] = old
+        self.assertEqual(out, {'S0': {'a': 1}})      # idx2 fuera, 'basura' fuera
+
+
+class TestRefreshManifests(unittest.TestCase):
+    def test_fetch_url_y_retry_solo_fallidas(self):
+        """manifest.json por fuente (Add@49); retry solo si not m con timeout 20
+        (not-elim@55 reintentaría las OK, Add@54)."""
+        from unittest import mock
+        from conflux.core.state import Source
+        urls, timeouts = [], []
+        def fake_fetch(url, t):
+            urls.append(url); timeouts.append(t)
+            return {'ok': 1} if url.startswith('http://a') else None
+        old = list(_sources.manifests)
+        try:
+            with mock.patch.object(_sources, 'SOURCES',
+                                   [Source('S0', 'http://a'), Source('S1', 'http://b')]), \
+                    mock.patch.object(_sources, 'fetch', fake_fetch), \
+                    mock.patch.object(_sources, '_atomic_json'):
+                _sources.refresh_manifests()
+            self.assertEqual(_sources.manifests[0], {'ok': 1})
+            self.assertIsNone(_sources.manifests[1])
+        finally:
+            _sources.manifests[:] = old
+        self.assertIn('http://a/manifest.json', urls[0])
+        self.assertIn('http://b/manifest.json', urls[1])
+        retry = [u for u, t in zip(urls, timeouts) if t == 20]
+        self.assertEqual(retry, ['http://b/manifest.json'])   # solo la fallida
+
+
+class TestVideoSeAbsEp(unittest.TestCase):
+    def test_video_se_por_id_sin_season(self):
+        """Sin s/e válidos -> ':S:E' del propio id (And@115, Or@117,
+        3+1/GtE/2+1/Add@118)."""
+        self.assertEqual(_sources._video_se({'id': 'kitsu:49847:2'}), ':49847:2')
+        self.assertIsNone(_sources._video_se({'id': 'a:b'}))       # <3 segs
+        self.assertEqual(_sources._video_se({'id': 'x:y:z:w'}), ':z:w')  # [-2:]
+        self.assertIsNone(_sources._video_se({}))                   # sin id
+        # s dígito + e no-dígito -> cae al path del id (And@115: or -> int('x'))
+        self.assertEqual(_sources._video_se(
+            {'season': '1', 'episode': 'x', 'id': 'k:9:2:3'}), ':2:3')
+
+    def test_abs_ep_guardas(self):
+        """ep multi-seg o no-dígito -> intacto (Or@124); n==len(vs) resuelve el
+        último (Lt@127); n=0/fuera de rango -> intacto."""
+        vs = [{'season': '1', 'episode': '1'}, {'season': '1', 'episode': '2'}]
+        self.assertEqual(_sources._abs_ep(':1:2', vs), ':1:2')
+        self.assertEqual(_sources._abs_ep(':abc', vs), ':abc')
+        self.assertEqual(_sources._abs_ep(':2', vs), ':1:2')        # último ep
+        self.assertEqual(_sources._abs_ep(':0', vs), ':0')
+        self.assertEqual(_sources._abs_ep(':3', vs), ':3')          # n > len
+        self.assertEqual(_sources._abs_ep(':1', []), ':1')          # sin videos
+
+    def test_resolve_meta_usa_fuente_del_prefijo(self):
+        """base = la de _PREFIX_SRC[pref] (Eq@103 elegiría otra fuente)."""
+        from unittest import mock
+        from conflux.core.state import Source
+        _sources._idmap.clear()
+        got = []
+        with mock.patch.object(_sources, 'SOURCES',
+                               [Source('Otra', 'http://x'),
+                                Source('Kitsu', 'http://kitsu')]), \
+                mock.patch.object(_sources, 'fetch',
+                                  lambda u, t: (got.append(u), {'meta': {}})[1]):
+            _sources._resolve_meta('series', 'kitsu', '99')
+        _sources._idmap.clear()
+        self.assertEqual(got, ['http://kitsu/meta/series/kitsu:99.json'])
+
+
 class TestResPrefixesColon(unittest.TestCase):
     """idPrefixes con ':' final (DesiFlix 'dsx:', MediaFusion 'tmdb:') ->
     normalizados; _id_prefix nunca devuelve colon (R1)."""

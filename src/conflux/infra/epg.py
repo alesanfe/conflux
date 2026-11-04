@@ -9,6 +9,7 @@ Formato Stremio: programas como meta.videos con startTime/endTime ISO-UTC.
 """
 # pylint: disable=broad-exception-caught
 # broad-exception: la guía es best-effort; un XML malo no puede tumbar el catálogo
+import calendar
 import gzip
 import io
 import os
@@ -56,10 +57,11 @@ def _xmltv_ts(v):
     if not m:
         return None
     y, mo, d, h, mi, s, tz = m.groups()
-    off = int(tz[:3]) * 3600 + int(tz[3:]) * 60 if tz else 0
+    off = ((-1 if tz.startswith('-') else 1)
+           * (abs(int(tz[:3])) * 3600 + int(tz[3:]) * 60)) if tz else 0
     try:
-        return time.mktime((int(y), int(mo), int(d), int(h), int(mi), int(s),
-                            0, 0, -1)) - time.timezone - off
+        return float(calendar.timegm(
+            (int(y), int(mo), int(d), int(h), int(mi), int(s), 0, 0, 0)) - off)
     except (OverflowError, ValueError):
         return None
 
