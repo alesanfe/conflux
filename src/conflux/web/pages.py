@@ -79,6 +79,8 @@ def _cfg_form_fields(form, cfg):
         cfg['parental'] = form['parental'][-1] == '1'
     if 'mediafusion' in form:
         cfg['mediafusion'] = form['mediafusion'][-1] == '1'
+    if 'torrent_health' in form:
+        cfg['torrent_health'] = form['torrent_health'][-1] == '1'
     if 'stream_langs' in form:
         cfg['stream_langs'] = _csv_list(form, 'stream_langs') or CFG['stream_langs']
     for k in ('torznab_url', 'zilean_url', 'newznab_url', 'catalog_lists',
@@ -280,7 +282,11 @@ def _configure_page():
             f"mediafusion <input type='hidden' name='mediafusion' value='0'>"
             f"<input type='checkbox' name='mediafusion' value='1'"
             f"{' checked' if CFG.get('mediafusion') else ''} style='width:auto'>"
-            f" <span class='dim'>(regional India/Asia + live TV vía ElfHosted — perfil auto-provisionado)</span></p>"
+            f" <span class='dim'>(regional India/Asia + live TV vía ElfHosted — perfil auto-provisionado)</span> · "
+            f"torrent health <input type='hidden' name='torrent_health' value='0'>"
+            f"<input type='checkbox' name='torrent_health' value='1'"
+            f"{' checked' if CFG.get('torrent_health', True) else ''} style='width:auto'>"
+            f" <span class='dim'>(scrape de trackers: fuera infoHash con 0 seeds y sin hints — swarms inalcanzables)</span></p>"
             f"<h2>Catálogos</h2>"
             f"<p>Listas externas <span class='dim'>(URLs Trakt /lists/, IMDb /list/ o mdblist:ID — separadas por coma)</span><br>"
             f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://trakt.tv/users/me/lists/mis-favs, https://www.imdb.com/list/ls123456/'>"
@@ -328,6 +334,8 @@ def _configure_page():
             f"if(px.length&&px[px.length-1].checked)o.parental=true;"
             f"var mf=document.querySelectorAll('[name=mediafusion]');"
             f"if(mf.length&&mf[mf.length-1].checked===false)o.mediafusion=false;"
+            f"var th=document.querySelectorAll('[name=torrent_health]');"
+            f"if(th.length&&th[th.length-1].checked===false)o.torrent_health=false;"
             f"var sf=document.querySelector('[name=stream_format]');if(sf&&sf.value)o.stream_format=sf.value;"
             f"var sd=[];document.querySelectorAll('[name=src]').forEach(c=>{{if(!c.checked)sd.push(c.value);}});"
             f"if(sd.length)o.sources_disabled=sd;"

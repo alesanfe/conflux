@@ -232,6 +232,13 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
 - Búsqueda: dedup por id CANÓNICO (`_search_key` — `_resolve_sid` solo para
   prefijos alien; tt es gratis). Kitsu:X y su tt resuelto no duplican.
 - `_URL_BAD`/`_URL_OK` acotados (`_url_prune` a >2000).
+- `torrent_health` (default on): scrape UDP de trackers públicos por infoHash
+  (`infra/torrent_health.py`, tandas de 20, veredicto 6h en `_SEED`). Regla:
+  seeds>0 -> vive; 0 seeds **con** `sources` -> swarm privado posible, se
+  mantiene; 0 seeds **sin** hints -> inalcanzable, se descarta; scrape sin
+  respuesta -> desconocido, fail-open. Se aplica en ambos caminos de
+  `handle_stream` (fresco y cacheado) — los veredictos filtran el caché sin
+  re-collect. `patch_fetch` neutraliza `_scrape_hashes` (tests herméticos).
 - Cinemeta standalone NO se re-añade solo: su reaparición fue por editar el
   perfil SQLite con la app abierta (ésta lo persistía de vuelta al salir).
   **Siempre matar la app DE VERDAD antes de tocar localstorage** —

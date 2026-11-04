@@ -35,6 +35,7 @@ from conflux.infra.debrid import _debrid_mark
 from conflux.infra.net import _session, fetch
 from conflux.infra.easynews import _easynews
 from conflux.infra.newznab import _newznab
+from conflux.infra.torrent_health import _hash_health
 from conflux.infra.torznab import _torznab
 from conflux.infra.zilean import _zilean
 
@@ -340,6 +341,7 @@ def handle_stream(stype, sid):
     if hit is not None:
         out = _adult_out(_req_out(_ex_out(_rows_out(hit))))
         _debrid_mark(out)                          # debrid marca copias: fuera del caché
+        _hash_health(out)                          # veredictos scrape: filtran también el caché
         return {'streams': out}
     state = _ensure_collect(key)
     state['done'].wait(STREAM_BUDGET)
@@ -348,6 +350,7 @@ def handle_stream(stype, sid):
     out = _adult_out(_req_out(_ex_out(out)))                 # filtros usuario tras dedup/rank
     _debrid_mark(out)                                        # si hay key: cache + resolve /r/
     _url_health(out)                                         # HEAD async a streams http
+    _hash_health(out)                                        # infoHash sin swarm ni hints fuera
     return {'streams': out}
 
 
