@@ -550,14 +550,15 @@ class TestExtraSources(unittest.TestCase):
     def test_aplica_y_limpia(self):
         from tests import cfg_swap
         from conflux.core.state import SOURCES, _SOURCES_BASE
-        n0 = len(SOURCES)
         _, undo = cfg_swap(extra_sources=['https://addon.x.com/manifest.json',
                                           'notaurl',
                                           SOURCES[0].base])   # dupe ignorado
         try:
             from conflux.core.cfg import _apply_extra_sources
             _apply_extra_sources()
-            self.assertEqual(len(SOURCES), n0 + 1)
+            # SOURCES = _SOURCES_BASE + extras: el config real puede traer
+            # extras previos — nunca comparar contra len(SOURCES) de entrada
+            self.assertEqual(len(SOURCES), len(_SOURCES_BASE) + 1)
             self.assertEqual(SOURCES[-1].base, 'https://addon.x.com')
             self.assertEqual(SOURCES[-1].name, 'addon.x.com')
         finally:
