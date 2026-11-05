@@ -1,0 +1,3 @@
+[bandit.formatters]
+sarif = bandit_sarif_formatter.formatter:report
+

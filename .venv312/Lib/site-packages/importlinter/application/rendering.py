@@ -1,0 +1,153 @@
+from importlinter.domain.contract import Contract, ContractCheck
+
+from . import output
+from .ports.reporting import Report
+
+TEXT_LOGO = """
+╔══╗─────────▶╔╗ ╔╗      ╔╗◀───┐
+╚╣╠╝◀─────┐  ╔╝╚╗║║────▶╔╝╚╗   │
+ ║║   ╔══╦══╦╩╗╔╝║║  ╔╦═╩╗╔╝╔═╦══╗
+ ║║╔══╣╔╗║╔╗║╔╣║ ║║ ╔╬╣╔╗║║ ║│║╔═╝
+╔╣╠╣║║║╚╝║╚╝║║║╚╗║╚═╝║║║║║╚╗║═╣║
+╚══╩╩╩╣╔═╩══╩╝╚═╝╚═══╩╩╝╚╩═╩╩═╩╝
+  └──▶║║                    ▲ 
+      ╚╝────────────────────┘
+"""
+BRAND_COLOR = "pale_turquoise1"
+
+# Public functions
+# ----------------
+
+
+def render_report(report: Report) -> None:
+    """
+    Output the supplied report to the console.
+    """
+    if report.could_not_run:
+        _render_could_not_run(report)
+        return
+
+    if report.show_timings:
+        output.print(f"Building graph took {format_duration(report.graph_building_duration)}.")
+        output.new_line()
+
+    output.print_heading("Contracts", output.HEADING_LEVEL_TWO)
+    file_count = report.module_count
+    dependency_count = report.import_count
+    output.print_heading(
+        f"Analyzed {file_count} files, {dependency_count} dependencies.",
+        output.HEADING_LEVEL_THREE,
+    )
+
+    for contract, contract_check in report.get_contracts_and_checks():
+        duration = report.get_duration(contract) if report.show_timings else None
+        render_contract_result_line(contract, contract_check, duration=duration)
+
+    output.new_line()
+
+    output.print(f"Contracts: {report.kept_count} kept, {report.broken_count} broken.")
+
+    if report.warnings_count:
+        output.new_line()
+        _render_warnings(report)
+
+    if report.broken_count:
+        output.new_line()
+        output.new_line()
+        _render_broken_contracts_details(report)
+
+
+def render_contract_result_line(
+    contract: Contract, contract_check: ContractCheck, duration: int | None
+) -> None:
+    """
+    Render the one-line contract check result.
+
+    Args:
+        ...
+        duration: The contract check duration in milliseconds (optional).
+                  The duration will only be displayed if it is provided.
+    """
+    result_text = "KEPT" if contract_check.kept else "BROKEN"
+    warning_text = _build_warning_text(warnings_count=len(contract_check.warnings))
+    color_key = output.SUCCESS if contract_check.kept else output.ERROR
+    color = output.COLORS[color_key]
+    output.print(f"{contract.name} ", newline=False)
+    output.print(result_text, color=color, newline=False)
+    output.print(warning_text, color=output.COLORS[output.WARNING], newline=False)
+    if duration is not None:
+        output.print(f" [{format_duration(duration)}]", newline=False)
+    output.new_line()
+
+
+def render_exception(exception: Exception) -> None:
+    """
+    Render any exception to the console.
+    """
+    output.print_error(str(exception))
+
+
+# Private functions
+# -----------------
+
+
+def _render_could_not_run(report: Report) -> None:
+    for contract_name, exception in report.invalid_contract_options.items():
+        output.print_error(f'Contract "{contract_name}" is not configured correctly:')
+        for field_name, message in exception.errors.items():
+            output.indent_cursor()
+            output.print_error(f"{field_name}: {message}", bold=False)
+
+
+def _build_warning_text(warnings_count: int) -> str:
+    if warnings_count:
+        noun = "warning" if warnings_count == 1 else "warnings"
+        return f" ({warnings_count} {noun})"
+    else:
+        return ""
+
+
+def _render_warnings(report: Report) -> None:
+    output.print_heading("Warnings", output.HEADING_LEVEL_TWO, style=output.WARNING)
+    no_contract_outputted_yet = True
+
+    for contract, check in report.get_contracts_and_checks():
+        if check.warnings:
+            if no_contract_outputted_yet:
+                no_contract_outputted_yet = False
+            else:
+                output.new_line()
+            output.print_heading(contract.name, output.HEADING_LEVEL_THREE, style=output.WARNING)
+            for warning in check.warnings:
+                output.print_warning(f"- {warning}")
+
+
+def _render_broken_contracts_details(report: Report) -> None:
+    output.print_heading("Broken contracts", output.HEADING_LEVEL_TWO, style=output.ERROR)
+
+    for contract, check in report.get_contracts_and_checks():
+        if check.kept:
+            continue
+        output.print_heading(contract.name, output.HEADING_LEVEL_THREE, style=output.ERROR)
+
+        contract.render_broken_contract(check)
+
+
+def format_duration(milliseconds: int) -> str:
+    """
+    Format a duration in milliseconds with units always in seconds:
+    - < 1s: to three decimal places, e.g. 0.127s
+    - < 10s: to one decimal place, e.g. 5.9s, 3.0s
+    - >= 10s: to 0 decimal places, e.g. 10s, 132s
+    """
+    try:
+        ms = int(milliseconds)
+    except Exception:
+        return f"{milliseconds}ms"
+
+    s = ms / 1000.0
+    if s < 1:
+        return f"{s:.3f}s"
+    if s < 10:
+        return f"{s:.1f}s"
+    return f"{int(round(s))}s"

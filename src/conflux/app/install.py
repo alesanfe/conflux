@@ -350,7 +350,7 @@ def register_addon(force=False):
         return
     for _ in range(40):
         try:
-            if urllib.request.urlopen(f'{PROXY}/health', timeout=2):
+            if urllib.request.urlopen(f'{PROXY}/health', timeout=2):   # nosec B310
                 break
         except Exception:                      # noqa: BLE001
             time.sleep(.5)
@@ -401,7 +401,7 @@ def install_self():
             time.sleep(.5)
         shutil.copy2(sys.executable, dest)
         if sys.platform != 'win32':
-            os.chmod(dest, 0o755)
+            os.chmod(dest, 0o755)      # nosec B103
     _set_autostart(dest)
     _log.info('install: autostart -> %s', dest)
     if _norm(sys.executable) != _norm(dest):

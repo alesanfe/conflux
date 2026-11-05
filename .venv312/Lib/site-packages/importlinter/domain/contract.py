@@ -1,0 +1,137 @@
+import abc
+from typing import Any
+
+from grimp import ImportGraph
+
+from . import fields
+
+
+class Contract(abc.ABC):
+    def __init__(
+        self,
+        name: str,
+        session_options: dict[str, Any],
+        contract_options: dict[str, Any],
+    ) -> None:
+        self.name = name
+        self.session_options = session_options
+        self.contract_options = contract_options
+
+        self._populate_fields()
+
+    def _populate_fields(self) -> None:
+        """
+        Populate the contract's fields from the contract options.
+
+        Raises:
+            InvalidContractOptions if the contract options could not be matched to the fields.
+        """
+        errors = {}
+        for field_name in self.__class__._get_field_names():
+            field = self.__class__._get_field(field_name)
+
+            try:
+                raw_data = self.contract_options[field_name]
+            except KeyError:
+                if field.default is not fields.NotSupplied:
+                    setattr(self, field_name, field.default)
+                elif field.required:
+                    errors[field_name] = "This is a required field."
+                else:
+                    setattr(self, field_name, None)
+                continue
+
+            try:
+                clean_data = field.parse(raw_data)
+            except fields.ValidationError as e:
+                errors[field_name] = str(e)
+                continue
+            setattr(self, field_name, clean_data)
+
+        if errors:
+            raise InvalidContractOptions(errors)
+
+        self.validate()
+
+    def validate(self) -> None:
+        """
+        Hook method for validating inter-field dependencies.
+
+        Raise InvalidContractOptions with an error dictionary keyed with the relevant field.
+        """
+        pass
+
+    @classmethod
+    def _get_field_names(cls) -> list[str]:
+        """
+        Returns:
+            The names of all the fields on this contract class.
+        """
+        return [name for name, attr in cls.__dict__.items() if isinstance(attr, fields.Field)]
+
+    @classmethod
+    def _get_field(cls, field_name: str) -> fields.Field:
+        return getattr(cls, field_name)
+
+    @abc.abstractmethod
+    def check(self, graph: ImportGraph, verbose: bool) -> "ContractCheck":
+        """
+        Args:
+            graph:   Copy of the ImportGraph. May be mutated without affecting other contracts.
+            verbose: Whether to output progress noisily. Can be used as a flag to pass
+                     to output.verbose_print.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def render_broken_contract(self, check: "ContractCheck") -> None:
+        raise NotImplementedError
+
+
+class InvalidContractOptions(Exception):
+    """
+    Exception if a contract itself is invalid.
+
+    N. B. This is not the same thing as if a contract is violated; this is raised if the contract
+    is not suitable for checking in the first place.
+    """
+
+    def __init__(self, errors: dict[str, str]) -> None:
+        self.errors = errors
+
+
+class ContractCheck:
+    """
+    Data class to store the result of checking a contract.
+    """
+
+    def __init__(
+        self,
+        kept: bool,
+        metadata: dict[str, Any] | None = None,
+        warnings: list[str] | None = None,
+    ) -> None:
+        self.kept = kept
+        self.metadata = metadata or {}
+        self.warnings = warnings or []
+
+
+class NoSuchContractType(Exception):
+    pass
+
+
+class ContractRegistry:
+    def __init__(self):
+        self._classes_by_name = {}
+
+    def register(self, contract_class: type[Contract], name: str) -> None:
+        self._classes_by_name[name] = contract_class
+
+    def get_contract_class(self, name: str) -> type[Contract]:
+        try:
+            return self._classes_by_name[name]
+        except KeyError:
+            raise NoSuchContractType(name)
+
+
+registry = ContractRegistry()

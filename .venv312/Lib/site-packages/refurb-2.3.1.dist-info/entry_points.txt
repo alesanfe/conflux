@@ -1,0 +1,3 @@
+[console_scripts]
+refurb=refurb.__main__:main
+

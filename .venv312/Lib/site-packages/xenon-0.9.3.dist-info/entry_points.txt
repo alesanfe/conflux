@@ -1,0 +1,2 @@
+[console_scripts]
+xenon = xenon:main
