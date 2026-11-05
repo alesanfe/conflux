@@ -367,6 +367,13 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   evaluado a import), torrent_health fallbacks randbytes (py≥3.9), trakt/calendar
   caps internos. Ojo con `cfg_swap`: hace merge — los defaults enmascarados por el
   CFG real hay que ejercitarlos con `CFG.pop` explícito.
+- Scripts toolados: cov_gate 19/20 killed + `Eq@78` (__main__ corre main() al
+  importar = crash de facto); apply_env 37/39 + `Or@85` equivalente (mkstemp
+  `dir=''`≡`dir='.'` ambos = cwd) y `Eq@182` false-negative del runner
+  (__main__→`!=` corre `sys.exit(main())` al importar: unittest sale 0 SIN
+  correr tests — el runner lo lee como pass). SSRF guard de apply_env: literal
+  IPv4 para mutantes de scheme ('localhost' resuelve ::1 = is_reserved y el
+  guard real mata el mutante de gratis).
 - e2e hermética: fixture VCR gzip; CI nunca toca la red
 - Escrituras de estado atómicas (tmp+rename): config.json, .manifests-cache.json
 
