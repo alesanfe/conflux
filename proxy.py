@@ -22,7 +22,7 @@ from conflux.domain.sources import (
     res_of,
     res_types,
 )
-from conflux.domain.text import RANK, _id_prefix, _spam, norm_stream, parse_seeds
+from conflux.domain.text import RANK, _ad_link, _id_prefix, _spam, norm_stream, parse_seeds
 from conflux.infra.debrid import _db_resolve
 from conflux.infra.net import fetch
 from conflux.web.server import H, main
@@ -32,6 +32,7 @@ __all__ = [
     'RANK',
     'SOURCES',
     '_UTYPE',
+    '_ad_link',
     'H',
     '_db_resolve',
     '_id_prefix',

@@ -30,7 +30,7 @@ from conflux.core.state import (
 )
 from conflux.domain.lists import _M3U, _m3u_metas
 from conflux.domain.sources import _resolve_sid
-from conflux.domain.text import RANK, _qscore, _skip_manifest, _spam, build_display, norm_stream
+from conflux.domain.text import RANK, _ad_link, _qscore, _skip_manifest, _spam, build_display, norm_stream
 from conflux.infra.debrid import _debrid_mark
 from conflux.infra.net import _session, fetch
 from conflux.infra.easynews import _easynews
@@ -112,7 +112,7 @@ def _merge_key(s):
 def _collect_merge(state, name, streams):
     """Merge dedup + norm de los streams de la fuente en state."""
     for s in streams:
-        if not isinstance(s, dict) or _spam(s):
+        if not isinstance(s, dict) or _spam(s) or _ad_link(s):
             continue
         k = _merge_key(s)
         if not k or k in state['seen']:

@@ -322,6 +322,14 @@ def _spam(s):
         or 'ERROR!' in raw0 or _RE_SPAM.search(raw0))
 
 
+def _ad_link(s):
+    """externalUrl como ÚNICO enlace = promo/pago/config, jamás contenido
+    reproducible (corpus real: payments.stravo.site, t.me, discord.gg,
+    paypal). Con url/infoHash/ytId presentes el stream es real y pasa."""
+    return 'externalUrl' in s and not (
+        s.get('infoHash') or s.get('url') or s.get('ytId'))
+
+
 def _skip_manifest(m, stype, sid):
     """Lo que el manifest declara que NO cubre la fuente para este (tipo,id)."""
     if m is not None and m.get('resources') and 'stream' not in res_of(m):

@@ -69,6 +69,31 @@ class TestSpam(unittest.TestCase):
         self.assertTrue(px._spam({'title': 'upgrade your account to premium'}))
 
 
+class TestAdLink(unittest.TestCase):
+    def test_externalurl_solo_es_anuncio(self):
+        """externalUrl como único enlace = promo/pago/config — fuera."""
+        self.assertTrue(px._ad_link({'externalUrl': 'https://www.paypal.com/ncp/x'}))
+        self.assertTrue(px._ad_link({'externalUrl': 'https://payments.stravo.site/p/1',
+                                     'name': 'x', 'title': '🔗 directo'}))
+        self.assertTrue(px._ad_link({'externalUrl': 'https://t.me/+abc'}))
+
+    def test_con_localizador_real_pasa(self):
+        """url/infoHash/ytId presentes -> externalUrl es un extra, no el stream."""
+        self.assertFalse(px._ad_link({'externalUrl': 'https://x',
+                                      'url': 'https://cdn/v.mp4'}))
+        self.assertFalse(px._ad_link({'externalUrl': 'https://x',
+                                      'infoHash': 'a' * 40}))
+        self.assertFalse(px._ad_link({'externalUrl': 'https://x', 'ytId': 'abc'}))
+        self.assertFalse(px._ad_link({'url': 'https://cdn/v.mp4'}))
+        self.assertFalse(px._ad_link({}))
+
+    def test_notorrent_paypal_sale(self):
+        """NoTorrent.json: el anuncio paypal real del fixture cae por _ad_link."""
+        nt = fixture('NoTorrent')
+        self.assertTrue(any(px._ad_link(s) for s in nt),
+                        'el fixture NoTorrent debe tener el ad externalUrl')
+
+
 class TestParseo(unittest.TestCase):
     def test_meteor_usa_behaviorhints(self):
         for s in fixture('Meteor'):
