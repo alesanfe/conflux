@@ -9,7 +9,6 @@ import requests
 
 from conflux.core.state import (
     _POOL_BG,
-    _YEARS,
     CFG,
     SOURCES,
     _cat_c,
@@ -152,8 +151,3 @@ def _m3u_extinf(ln):
             'tvg': (m.group(1) if (m := re.search(r'tvg-id="([^"]*)"', ln)) else '')}
 
 
-
-def tmdb_year():
-    """Año actual (etiqueta/picker de los catálogos de estrenos)."""
-    tmdb = next(b for n, b in SOURCES if n == 'TMDB')
-    return f"{tmdb}/catalog/movie/tmdb.year/genre={_YEARS[0]}.json"

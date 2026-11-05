@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "conflux"
 version = "1.0.0"
-description = "Proxy local que unifica streams, catálogos, metas y calendario de addons Stremio"
+description = "Proxy local que unifica streams, catálogos y metas de addons Stremio"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -45,7 +45,6 @@ ignore = ["E401", "E702"]
 # Bootstraps: sys.path/stubs deben ir antes de los imports de modulo.
 "tests/__init__.py" = ["E402"]
 "tests/unit/test_debrid.py" = ["E402"]
-"tests/unit/test_trakt.py" = ["E402"]
 "scripts/record_e2e.py" = ["E402"]
 
 [tool.pylint.main]
