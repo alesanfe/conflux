@@ -5,12 +5,20 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read          # por defecto; cada job amplía solo lo necesario
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true   # runs obsoletos del mismo ref se cancelan
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
         with:
           python-version: '3.12'
           cache: pip
@@ -23,41 +31,48 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       id-token: write      # attestation keyless signing
       attestations: write
       contents: read
       security-events: write   # SARIF de bandit -> pestaña Security
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
         with:
           python-version: '3.12'
           cache: pip
       - run: pip install -r requirements.txt && pip install -r requirements-dev.txt
       - run: pip-audit -r requirements.txt
+      - run: zizmor .github/workflows                # análisis estático de workflows
+      - name: actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.9
+          ./actionlint -oneline .github/workflows/*.yml
       - run: detect-secrets scan --all-files --exclude-files 'requirements.txt' --baseline .secrets.baseline | python3 -c "import json,sys; t=sys.stdin.read().strip(); r=json.loads(t)['results'] if t else {}; assert not r, r"
       - run: bandit -r src/conflux -f sarif -o bandit.sarif || true
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@9418214df1f2c4b8128c770156c409013b07d6b9  # v3
         if: always()
         with:
           sarif_file: bandit.sarif
           category: bandit
       - run: cyclonedx-py requirements requirements.txt -o sbom.json
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
         with:
           subject-path: sbom.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: sbom
           path: sbom.json
 
   dependency-review:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/dependency-review-action@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5
 
   test:
     strategy:
@@ -70,9 +85,10 @@ jobs:
           - os: windows-latest
             python-version: '3.13'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -83,7 +99,7 @@ jobs:
       - run: coverage report --include='src/*' --fail-under=80
       - name: artefactos de test (junit + historial de tiempos)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: test-report-${{ matrix.os }}-py${{ matrix.python-version }}
           path: |
@@ -114,6 +130,7 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - run: docker build .

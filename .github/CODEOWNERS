@@ -1,0 +1,14 @@
+# Propiedad de código — los owners deben aprobar cambios en sus rutas.
+# Default owner para todo el repo:
+* @alesanfe
+
+# Componentes sensibles — revisión obligatoria:
+/src/conflux/infra/stremio.py        @alesanfe   # scraping authKey / api.strem.io
+/src/conflux/infra/net.py            @alesanfe   # SSRF guard + fetch
+/src/conflux/app/install.py          @alesanfe   # instalador + autostart
+/src/conflux/web/server.py           @alesanfe   # superficie HTTP + auth admin
+/src/conflux/core/                   @alesanfe   # estado + config
+/.github/workflows/                  @alesanfe   # CI/release pipeline
+/.github/dependabot.yml              @alesanfe
+/SECURITY.md                         @alesanfe
+/requirements*.txt                   @alesanfe   # supply chain (locks con hashes)

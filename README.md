@@ -237,3 +237,10 @@ scripts/check.sh        # smoke test: endpoints + fuentes vivas
 
 Ver `AGENTS.md` para las reglas operativas (gotchas de localStorage UTF-16LE,
 sincronización remota del perfil, semántica de ids, etc.).
+
+## Seguridad
+
+Para reportar una vulnerabilidad usa
+[GitHub Security Advisories](https://github.com/alesanfe/conflux/security/advisories/new)
+— **no abras un issue público**. Política completa en `SECURITY.md`;
+modelo de amenazas en `docs/threat-model.md`.
