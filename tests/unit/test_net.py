@@ -18,6 +18,9 @@ class TestSession(unittest.TestCase):
 
 
 class TestFetch(unittest.TestCase):
+    def setUp(self):
+        net._fails.clear()               # disyuntor por host: estado fresco
+
     def _resp(self, body=b'{"a":1}', ok=True):
         r = MagicMock()
         r.raw.read.return_value = body
@@ -95,6 +98,7 @@ if __name__ == '__main__':
 class TestDisyuntorHost(unittest.TestCase):
     def setUp(self):
         self._f = dict(net._fails)
+        net._fails.clear()               # estado fresco: nada heredado
 
     def tearDown(self):
         net._fails.clear(); net._fails.update(self._f)
