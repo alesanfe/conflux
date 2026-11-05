@@ -21,7 +21,7 @@ env-backup*/
 env-backup-*.tar.gz
 
 # local windows runtime
-.venv/
+.venv*/
 conflux.log
 start-conflux.bat
 .env

@@ -1,3 +1,0 @@
-[console_scripts]
-cyclonedx-py=cyclonedx_py._internal.cli:run
-
