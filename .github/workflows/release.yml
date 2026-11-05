@@ -46,9 +46,9 @@ jobs:
       - name: renombra el artefacto por plataforma
         shell: bash
         run: |
-          src=dist/conflux
-          [ -f "$src.exe" ] && src=$src.exe
-          mv "$src" "dist/${{ matrix.asset }}"
+          # windows ya sale como conflux.exe; posix sale como 'conflux'
+          [ -f dist/conflux ] && mv dist/conflux "dist/${{ matrix.asset }}" || true
+          ls -l dist/
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/${{ matrix.asset }}
