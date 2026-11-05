@@ -1,8 +1,10 @@
 """apply_env.py — vuelca .env a config.json/sources.json (tipado, sources
 extra, guard SSRF de M3U_URL, escrituras atomicas)."""
 import io
+import ipaddress
 import json
 import os
+import socket
 import sys
 import tempfile
 import unittest
@@ -246,6 +248,53 @@ class TestAtomicJson(Base):
         self.assertFalse(os.path.exists(p))
         self.assertEqual([x for x in os.listdir(self.tmp.name)
                           if x.endswith('.tmp')], [])
+
+
+class TestSsrfGuardSync(unittest.TestCase):
+    """_public_url vive duplicado: copia en apply_env (bootstrap pre-venv,
+    solo stdlib) y original en infra/net.py. Esta batería fija que ambas
+    copias devuelven el mismo veredicto — si una deriva rompe aquí, no en
+    prod."""
+
+    CASES = [
+        # (url, veredicto esperado en AMBAS copias)
+        ('http://8.8.8.8/x', True),
+        ('https://1.1.1.1', True),
+        ('http://127.0.0.1:9700', True),               # loopback: uso LAN legitimo
+        ('http://192.168.1.20/x', True),               # RFC1918 permitido
+        ('http://10.0.0.8', True),
+        ('http://172.16.4.2', True),
+        ('http://169.254.169.254/latest', False),      # metadata cloud
+        ('http://169.254.0.1', False),                 # link-local
+        ('http://224.0.0.1', False),                   # multicast
+        ('http://240.0.0.1', False),                   # reservado
+        ('http://0.0.0.0', False),                     # unspecified
+        ('http://[::1]/', False),                      # v6 loopback -> reserved
+        ('http://[fe80::1]/', False),                  # v6 link-local
+        ('http://[ff02::1]/', False),                  # v6 multicast
+        ('http://[2606:4700:4700::1111]/', True),      # v6 publico
+        ('ftp://8.8.8.8/x', False),                    # scheme
+        ('http://', False),                            # sin host
+        ('http://meta.evil.invalid', False),           # DNS falla -> gaierror
+        ('http://8.8.8.8:malo/x', False),              # puerto no numerico
+    ]
+
+    def test_veredictos_identicos(self):
+        from conflux.infra import net
+
+        def fake_gai(host, port, proto=None):
+            ipaddress.ip_address(host)  # no-IP -> gaierror
+            fam = socket.AF_INET6 if ':' in host else socket.AF_INET
+            return [(fam, socket.SOCK_STREAM, 6, '', (host, port or 0))]
+
+        for url, esperado in self.CASES:
+            with self.subTest(url=url), \
+                    mock.patch.object(socket, 'getaddrinfo',
+                                      side_effect=fake_gai):
+                a, n = apply_env._public_url(url), net._public_url(url)
+                self.assertEqual(a, n,
+                                 f'drift: apply_env={a} net={n} para {url}')
+                self.assertEqual(a, esperado, f'verdicto inesperado: {url}')
 
 
 if __name__ == '__main__':

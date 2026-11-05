@@ -42,7 +42,7 @@ python3 -m mypy                             # type-check (config en pyproject)
 # escrituras de ficheros de estado SIEMPRE via _atomic_json (tmp+rename):
 # config.json, .manifests-cache.json — un corte a mitad de write no corrompe
 # CI: matrix py3.11-3.13 + pip-audit + detect-secrets + SBOM + docker build
-# e2e es VCR: replay de tests/fixtures/e2e_responses.json.gz (396 urls).
+# e2e es VCR: replay de tests/fixtures/e2e_responses.json.gz (395 urls).
 # Regenerar tras tocar routing: python3 scripts/record_e2e.py && gzip -9kf
 # Live real: CONFLUX_E2E_LIVE=1 python3 -m unittest tests.e2e.test_server_e2e
 # restart Windows: matar por cmdline y relanzar (ver R7 — nunca por nombre de proc)

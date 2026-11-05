@@ -171,8 +171,7 @@ def remove_runtime(keep_cfg=True, say=print, skip=()):
     sources.json (claves del usuario). skip: nombres a no tocar."""
     import shutil
     paths = ['.venv', 'm3u', '.manifests-cache.json', 'epg-cache.json',
-             'conflux.log', 'start-conflux.bat', 'post1337.json',
-             'resp1337.json', 'tz.xml', 'sc.json', 'tu.cs', 'os.json']
+             'conflux.log', 'start-conflux.bat']
     if not keep_cfg:
         paths += ['.env', 'config.json', 'sources.json']
     for p in paths:
