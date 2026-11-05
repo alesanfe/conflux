@@ -165,8 +165,9 @@ class TestRefreshManifests(unittest.TestCase):
             self.assertIsNone(_sources.manifests[1])
         finally:
             _sources.manifests[:] = old
-        self.assertIn('http://a/manifest.json', urls[0])
-        self.assertIn('http://b/manifest.json', urls[1])
+        # el pool lanza ambos fetch a la vez: el orden de llegada es una carrera
+        self.assertEqual(set(urls[:2]),
+                         {'http://a/manifest.json', 'http://b/manifest.json'})
         retry = [u for u, t in zip(urls, timeouts) if t == 20]
         self.assertEqual(retry, ['http://b/manifest.json'])   # solo la fallida
         self.assertEqual(timeouts[:2], [10, 10])              # mutante 10+1@49
