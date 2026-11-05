@@ -26,3 +26,19 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+  exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt pyinstaller==6.22.3
+      - run: pyinstaller --onefile --noconsole --name conflux --paths src --clean proxy.py
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/conflux.exe
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/conflux.exe

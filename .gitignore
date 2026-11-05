@@ -41,3 +41,6 @@ conflux.log.*
 .schemathesis/
 junit.xml
 history.jsonl
+dist/
+build/
+*.spec

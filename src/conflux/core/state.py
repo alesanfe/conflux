@@ -12,8 +12,9 @@ from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__)))))
+_ROOT = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
+         else os.path.dirname(os.path.dirname(os.path.dirname(
+             os.path.dirname(os.path.abspath(__file__))))))
 _LOG_FILE = os.environ.get('CONFLUX_LOG', os.path.join(_ROOT, 'conflux.log'))
 
 _handlers: list[logging.Handler] = []
