@@ -110,6 +110,12 @@ if __name__ == '__main__':
     unittest.main()
 
 
+
+
+
+
+
+
 class TestHealthBatch(unittest.TestCase):
     """_hash_health con 500 streams: lookups O(1), nada de trabajo por stream."""
 

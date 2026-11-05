@@ -362,6 +362,8 @@ if __name__ == '__main__':
     unittest.main()
 
 
+
+
 class ServerE2EInterfaces(ServerE2E):
     """Las interfaces HTTP que el e2e base no cubre: OPTIONS, redirects
     especiales, cfg-en-URL, gzip, extras de catálogo, métodos no soportados."""

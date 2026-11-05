@@ -1322,6 +1322,16 @@ class TestSinkYFiltro(unittest.TestCase):
         self.assertEqual(len(TH._SEED), 4001)        # creció, sin poda
 
 
+
+
+
+
+
+
+
+
+
+
 class TestWireFormatMut(unittest.TestCase):
     """Mutantes wire-format UDP/announce — padding, close-spy, randint bounds."""
 

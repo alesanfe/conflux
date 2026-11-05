@@ -108,6 +108,10 @@ class TestTzQuery(unittest.TestCase):
         self.assertEqual(out[0]['behaviorHints']['seeders'], 7)
 
 
+
+
+
+
 class TestProwlarrIds(unittest.TestCase):
     """_tz_prowlarr_ids: caché 600s + endpoint indexers."""
 

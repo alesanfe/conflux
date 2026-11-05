@@ -23,6 +23,10 @@ if __name__ == '__main__':
     unittest.main()
 
 
+
+
+
+
 class TestAiringLoop(unittest.TestCase):
     """_anilist_airing: páginas hasta vacío, dedup (idMal,ep), row None fuera."""
 
