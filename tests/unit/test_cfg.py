@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import sys
 import unittest
 from unittest import mock
 
@@ -94,10 +95,13 @@ class TestLoadDerivations(unittest.TestCase):
         cfg.RE_ES, cfg.RE_EX = re_es, re_ex
 
     def _load(self, data):
+        # tests/__init__ inyecta el stub en sys.modules SIN ligarlo al
+        # paquete -> se parchea el objeto módulo, no la ruta por nombre
+        mf = sys.modules['conflux.infra.mediafusion']
         with mock.patch.object(cfg, '_open',
                                return_value=io.StringIO(json.dumps(data))), \
                 mock.patch.object(cfg, 'maybe_provision', create=True), \
-                mock.patch('conflux.infra.mediafusion.maybe_provision'):
+                mock.patch.object(mf, 'maybe_provision'):
             cfg.load_config()
 
     def test_sources_disabled_deriva(self):

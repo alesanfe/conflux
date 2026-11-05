@@ -193,10 +193,9 @@ class TestInstallSelf(_TmpCase):
         exe, la, appdata = _frozen(self.tmp, self.mon)
         (self.tmp / 'bin' / 'config.json').write_text('{"a":1}')
         (self.tmp / 'bin' / 'sources.json').write_text('[]')
-        startup = appdata.s + ('\\Microsoft\\Windows\\Start Menu'
-                               '\\Programs\\Startup')
-        os.makedirs(startup)
-        with open(os.path.join(startup, 'Conflux.lnk'), 'w') as f:
+        lnk = install._lnk_path()             # la ruta real que mira el código
+        os.makedirs(os.path.dirname(lnk), exist_ok=True)
+        with open(lnk, 'w') as f:
             f.write('lnk')
         wr = _FakeWinreg()
         self.mon.setattr(install, 'winreg', wr)
@@ -204,10 +203,10 @@ class TestInstallSelf(_TmpCase):
         self.mon.setattr(install.subprocess, 'Popen', popen)
         reg = mock.Mock()
         self.mon.setattr(install, 'register_addon_bg', reg)
-        return exe, la, startup, wr, popen, reg
+        return exe, la, lnk, wr, popen, reg
 
     def test_primera_vez_copia_relanza_y_no_sirve(self):
-        exe, la, startup, wr, popen, reg = self._wire()
+        exe, la, lnk, wr, popen, reg = self._wire()
         self.assertFalse(install.install_self())
         dest = os.path.join(str(la), 'Conflux')
         self.assertTrue(os.path.exists(os.path.join(dest, 'conflux.exe')))
@@ -215,12 +214,12 @@ class TestInstallSelf(_TmpCase):
         self.assertTrue(os.path.exists(os.path.join(dest, 'sources.json')))
         self.assertEqual(wr.store.get('Conflux'),
                          f'"{os.path.join(dest, "conflux.exe")}"')
-        self.assertFalse(os.path.exists(os.path.join(startup, 'Conflux.lnk')))
+        self.assertFalse(os.path.exists(lnk))
         popen.assert_called_once()
         reg.assert_not_called()          # el addon lo registra la copia lanzada
 
     def test_ya_en_destino_sirve_y_registra(self):
-        exe, la, startup, wr, popen, reg = self._wire()
+        exe, la, lnk, wr, popen, reg = self._wire()
         dest = os.path.join(str(la), 'Conflux')
         os.makedirs(dest)
         new_exe = os.path.join(dest, 'conflux.exe')
@@ -232,7 +231,7 @@ class TestInstallSelf(_TmpCase):
         reg.assert_called_once_with(force=True)
 
     def test_upgrade_no_pisa_config(self):
-        exe, la, startup, wr, popen, reg = self._wire()
+        exe, la, lnk, wr, popen, reg = self._wire()
         dest = os.path.join(str(la), 'Conflux')
         os.makedirs(dest)
         with open(os.path.join(dest, 'config.json'), 'w') as f:
