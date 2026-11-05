@@ -127,3 +127,104 @@ def cfg_swap(**kv):
 
 
 __all__ = ['FIX', 'ROOT', 'cfg_swap', 'fake_session', 'fixture', 'patch_fetch', 'px']
+
+
+# ---------------------------------------------------------------------------
+# CONFLUX-002 · Aislamiento global: cada test corre con snapshot/restore del
+# estado mutable compartido + entorno + reloj. Se instala una envoltura en
+# unittest.TestCase.run — equivale a un fixture autouse sin cambiar 50 archivos.
+# Restaura contenido IN SITU (los módulos comparten referencias a los mismos
+# contenedores; re-asignar no aislaría nada) y también re-bindea el nombre si
+# el test rebindó el objeto entero.
+# ---------------------------------------------------------------------------
+
+_STATE_ATTRS = {
+    'conflux.core.state': ['_fails', 'COOLDOWN', 'HEALTH', '_rtime', '_rts',
+                           '_SERVED', '_cache', '_meta_c', '_cat_c',
+                           '_DEAD_OPT', 'manifests', 'SOURCES', 'CFG',
+                           '_DISABLED', '_SESS', '_LOGIN_TRIES',
+                           'addon_state'],
+    'conflux.app.stream': ['_URL_BAD', '_URL_OK'],
+    'conflux.app.subs': ['_OS_TOK'],
+    'conflux.infra.torznab': ['_TZ_IDS', '_TZ_C', '_TZ_DL'],
+    'conflux.infra.wikidata': ['_wd_c'],
+    'conflux.infra.epg': ['_STATE'],
+    'conflux.web.server': ['_LOGIN_TRIES'],
+}
+
+
+def _snapshot_state():
+    import conflux.core.state as _st
+    snap = {'env': dict(os.environ), 'clock': _st.CLOCK._d,
+            'prof': None, 'objs': {}}
+    cfg_mod = sys.modules.get('conflux.core.cfg')
+    if cfg_mod is not None and hasattr(cfg_mod, '_PROF'):
+        snap['prof'] = (cfg_mod._PROF,
+                        getattr(cfg_mod._PROF, 'name', None),
+                        dict(getattr(cfg_mod._PROF, 'cfg', None) or {}))
+    for mod_name, attrs in _STATE_ATTRS.items():
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        for a in attrs:
+            obj = getattr(mod, a, None)
+            if isinstance(obj, dict):
+                snap['objs'][(mod_name, a)] = ('d', obj, dict(obj))
+            elif isinstance(obj, list):
+                snap['objs'][(mod_name, a)] = ('l', obj, list(obj))
+            elif isinstance(obj, set):
+                snap['objs'][(mod_name, a)] = ('s', obj, set(obj))
+    return snap
+
+
+def _restore_state(snap):
+    os.environ.clear()
+    os.environ.update(snap['env'])
+    _st = sys.modules.get('conflux.core.state')
+    if _st is not None:
+        _st.CLOCK._d = snap['clock']
+        try:
+            _st._REQ_ID.set('')
+        except Exception:
+            pass
+    if snap['prof']:
+        prof, name, cfg_ = snap['prof']
+        prof.name, prof.cfg = name, cfg_
+    for (mod_name, a), (kind, obj, val) in snap['objs'].items():
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        cur = getattr(mod, a, None)
+        if cur is not obj:                  # el test rebindó el nombre
+            setattr(mod, a, obj)
+            cur = obj
+        try:
+            if kind == 'l':
+                cur[:] = val
+            else:
+                cur.clear()
+                cur.update(val)
+        except (AttributeError, TypeError):
+            setattr(mod, a, val if kind == 'l' else type(obj)(val))
+
+
+import unittest as _ut
+
+
+def _install_isolation():
+    if getattr(_ut.TestCase.run, '_conflux_iso', False):
+        return
+    _orig = _ut.TestCase.run
+
+    def _iso_run(self, result=None):
+        snap = _snapshot_state()
+        try:
+            return _orig(self, result)
+        finally:
+            _restore_state(snap)
+
+    _iso_run._conflux_iso = True
+    _ut.TestCase.run = _iso_run
+
+
+_install_isolation()
