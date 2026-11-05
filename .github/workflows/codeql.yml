@@ -19,4 +19,6 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: python
+          build-mode: none          # puro intérprete: sin autobuild
+          queries: security-and-quality
       - uses: github/codeql-action/analyze@v3

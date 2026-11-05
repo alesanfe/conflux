@@ -28,17 +28,30 @@ jobs:
           generate_release_notes: true
 
   exe:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-latest, asset: conflux.exe, flags: '--noconsole'}
+          - {os: ubuntu-latest, asset: conflux-linux, flags: ''}
+          - {os: macos-latest, asset: conflux-macos, flags: ''}
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: pip install -r requirements.in pyinstaller==6.22.3
-      - run: pyinstaller --onefile --noconsole --name conflux --paths src --clean proxy.py
+      - run: pyinstaller --onefile ${{ matrix.flags }} --name conflux --paths src --clean proxy.py
+      - name: renombra el artefacto por plataforma
+        shell: bash
+        run: |
+          src=dist/conflux
+          [ -f "$src.exe" ] && src=$src.exe
+          mv "$src" "dist/${{ matrix.asset }}"
       - uses: actions/attest-build-provenance@v2
         with:
-          subject-path: dist/conflux.exe
+          subject-path: dist/${{ matrix.asset }}
       - uses: softprops/action-gh-release@v3
         with:
-          files: dist/conflux.exe
+          files: dist/${{ matrix.asset }}

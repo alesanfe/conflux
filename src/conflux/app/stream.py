@@ -367,7 +367,7 @@ def _lang_rows(rows):
             rr.append((r, 'SD', 0, 0, 0, 0))
             continue
         out, res, seeds, size, cached, f, short = r
-        es = bool(pat.search(f['text']))
+        es = bool(pat.search(f.get('text', '')))
         if es != f['es']:
             f = dict(f)
             f['es'] = es

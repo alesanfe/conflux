@@ -41,9 +41,13 @@ python3 -m mypy                             # type-check (config en pyproject)
 # requirements.txt = lock con hashes (pip-compile desde requirements.in)
 # escrituras de ficheros de estado SIEMPRE via _atomic_json (tmp+rename):
 # config.json, .manifests-cache.json — un corte a mitad de write no corrompe
-# conflux.exe (PyInstaller, tag v*): self-install — se copia a
-# %LOCALAPPDATA%\Conflux, Run key HKCU autostart, registra addon en Stremio
-# tras /health (marca addon.ok); `conflux.exe uninstall|install|addon|serve`
+# binario frozen (PyInstaller, tag v* -> conflux.exe/conflux-linux/conflux-macos):
+# self-install — se copia al dir de datos de la plataforma
+# (%LOCALAPPDATA%\Conflux | ~/Library/Application Support/Conflux |
+# ${XDG_DATA_HOME:-~/.local/share}/conflux), autostart por SO (Run key HKCU /
+# LaunchAgent site.conflux.plist / systemd user unit con fallback XDG
+# autostart), pidfile conflux.pid, registra addon en Stremio tras /health
+# (marca addon.ok); `conflux uninstall|install|addon|serve`
 # (conflux/app/install.py + conflux/infra/stremio.py)
 # CI: matrix py3.11-3.13 + pip-audit + detect-secrets + SBOM + docker build
 # e2e es VCR: replay de tests/fixtures/e2e_responses.json.gz (395 urls).

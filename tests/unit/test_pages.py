@@ -106,13 +106,14 @@ class TestHealthPageDatos(unittest.TestCase):
             pg.HEALTH['A'] = dict(h)
             pg.HEALTH['B'] = dict(h)
             pg.HEALTH['C'] = dict(h)
-            pg.COOLDOWN['A'] = (now + 690, 'cuota')    # activo: cd_min=12
+            pg.COOLDOWN['A'] = (now + 690, 'cuota')    # activo: cd_min=12 (11.5 -> round)
             pg.COOLDOWN['B'] = (now - 5, 'viejo')      # expirado: sin campos
             pg._fails.clear()                          # strikes reales de otros tests
             pg._fails['dead'] = (3, now)
             pg._rtime['/x'] = (3, 100.0, 50.0)
             pg._rts['/x'] = [10, 20, 30, 40]
-            d = pg._health_page()
+            with patch.object(pg.time, 'time', return_value=now):
+                d = pg._health_page()                  # reloj fijo: sin deriva al borde .5
         finally:
             snap.restore()
         self.assertEqual(d['sources']['A']['cd_min'], 12)      # 690/60 redondeado

@@ -12,6 +12,14 @@ agrupados con selectores, catálogo de estrenos (series + anime de temporada
 
 El addon corre en tu máquina — GitHub aloja el código, no el servicio.
 
+**Binario auto-instalable** (la opción más simple — sin Python):
+
+Descarga de [Releases](../../releases) el de tu plataforma y ejecútalo —
+`conflux.exe` (Windows), `conflux-linux` o `conflux-macos`. La primera vez se
+copia a su carpeta de datos, registra el autostart (Run key / LaunchAgent /
+systemd user), arranca en `:9700` y registra el addon en Stremio. Comandos:
+`conflux install|uninstall|addon|serve` (`uninstall` lo desmonta todo).
+
 **Todo en uno** (Ubuntu + flatpak Stremio):
 
 ```bash

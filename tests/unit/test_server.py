@@ -12,6 +12,9 @@ class TestProfile(unittest.TestCase):
     def _h(self):
         return srv.H.__new__(srv.H)
 
+    def tearDown(self):
+        srv._PROF.name, srv._PROF.cfg = None, None
+
     def test_perfil_valido(self):
         h = self._h()
         self.assertEqual(h._profile('/p/micfg/stream/movie/tt.json'),
@@ -220,6 +223,9 @@ class TestCfgUrlKeys(unittest.TestCase):
 
 class TestCfgUrlB64(unittest.TestCase):
     """_profile con /cfg/<b64>: whitelist + passthrough si roto."""
+
+    def tearDown(self):
+        srv._PROF.name, srv._PROF.cfg = None, None
 
     def _h(self):
         return srv.H.__new__(srv.H)
@@ -960,6 +966,10 @@ class TestPagesDispatch(unittest.TestCase):
 
 
 class TestCfgB64Padding(unittest.TestCase):
+    def tearDown(self):
+        srv._PROF.name, srv._PROF.cfg = None, None
+
+
     """'=' * (-len % 4) de padding y _PROF.name = 'cfg-'+seg[:8]
     (4+1@166, 8+1@168)."""
 

@@ -27,6 +27,7 @@ jobs:
       id-token: write      # attestation keyless signing
       attestations: write
       contents: read
+      security-events: write   # SARIF de bandit -> pestaña Security
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -36,6 +37,12 @@ jobs:
       - run: pip install -r requirements.txt && pip install -r requirements-dev.txt
       - run: pip-audit -r requirements.txt
       - run: detect-secrets scan --all-files --exclude-files 'requirements.txt' --baseline .secrets.baseline | python3 -c "import json,sys; t=sys.stdin.read().strip(); r=json.loads(t)['results'] if t else {}; assert not r, r"
+      - run: bandit -r src/conflux -f sarif -o bandit.sarif || true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
       - run: cyclonedx-py requirements requirements.txt -o sbom.json
       - uses: actions/attest-build-provenance@v2
         with:
