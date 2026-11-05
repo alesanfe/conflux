@@ -4,7 +4,6 @@ import unittest
 from unittest.mock import patch
 
 import conflux.web.pages as pg
-from tests import cfg_swap
 
 
 class TestPages(unittest.TestCase):
@@ -17,71 +16,12 @@ class TestPages(unittest.TestCase):
         h = pg._configure_page()
         self.assertIn('<form', h)
 
-    def test_trakt_auth_html(self):
-        h = pg._trakt_auth_page()
-        self.assertIn('<', h)
-
     def test_health_page_json(self):
         d = pg._health_page()
         self.assertIn('sources', d)
 
-    def test_trakt_status_json(self):
-        d = pg._trakt_status()
-        self.assertIsInstance(d, dict)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
-
-
-
-class TestTraktAuthBranches(unittest.TestCase):
-    def setUp(self):
-        self._dev = dict(pg._TRAKT_DEV)
-
-    def tearDown(self):
-        pg._TRAKT_DEV.clear(); pg._TRAKT_DEV.update(self._dev)
-
-    def test_sin_credenciales_avisa(self):
-        _, undo = cfg_swap(trakt_client_id='', trakt_client_secret='')
-        try:
-            html = pg._trakt_auth_page()
-        finally:
-            undo()
-        self.assertIn('trakt.tv/oauth/applications', html)
-
-    def test_conectado_muestra_exp(self):
-        _, undo = cfg_swap(trakt_client_id='C', trakt_client_secret='S',
-                           trakt_access_token='AT', trakt_expires=0)
-        try:
-            html = pg._trakt_auth_page()
-        finally:
-            undo()
-        self.assertIn('Trakt conectado', html)
-
-    def test_device_flow_muestra_codigo(self):
-        _, undo = cfg_swap(trakt_client_id='C', trakt_client_secret='S',
-                           trakt_access_token='')
-        try:
-            with patch.object(pg, '_trakt_device_start', return_value={
-                    'verification_url': 'https://trakt.tv/activate',
-                    'user_code': 'ABCD'}):
-                html = pg._trakt_auth_page()
-        finally:
-            undo()
-        self.assertIn('ABCD', html)
-
-    def test_device_flow_fallo(self):
-        _, undo = cfg_swap(trakt_client_id='C', trakt_client_secret='S',
-                           trakt_access_token='')
-        try:
-            with patch.object(pg, '_trakt_device_start', return_value=None):
-                html = pg._trakt_auth_page()
-        finally:
-            undo()
-        self.assertIn('No se pudo iniciar', html)
 
 
 class TestLandingPage(unittest.TestCase):
@@ -135,27 +75,6 @@ class TestCfgFormFields(unittest.TestCase):
         with patch.dict(pg.CFG, {'stream_langs': ['es', 'en']}):
             pg._cfg_form_fields({'stream_langs': ['']}, cfg)
         self.assertEqual(cfg['stream_langs'], ['es', 'en'])  # fallback CFG
-
-
-class TestTraktHelpers(unittest.TestCase):
-    def test_trakt_status_estados(self):
-        with patch.dict(pg.CFG, {'trakt_access_token': 'tok'}), \
-                patch.object(pg, '_TRAKT_DEV', None):
-            self.assertEqual(pg._trakt_status(), {'state': 'ok'})
-        with patch.dict(pg.CFG, {'trakt_access_token': ''}), \
-                patch.object(pg, '_TRAKT_DEV', None):
-            self.assertEqual(pg._trakt_status(), {'state': 'none'})
-        with patch.dict(pg.CFG, {'trakt_access_token': ''}), \
-                patch.object(pg, '_TRAKT_DEV', {'code': 'x'}):
-            self.assertEqual(pg._trakt_status(), {'state': 'pending'})
-
-    def test_cfg_trakt_link_solo_si_falta_token(self):
-        with patch.dict(pg.CFG, {'trakt_client_id': 'cid',
-                                 'trakt_access_token': ''}):
-            self.assertIn('/auth/trakt', pg._cfg_trakt_link())
-        with patch.dict(pg.CFG, {'trakt_client_id': 'cid',
-                                 'trakt_access_token': 'tok'}):
-            self.assertEqual(pg._cfg_trakt_link(), '')
 
 
 class TestCsvList(unittest.TestCase):
@@ -257,15 +176,6 @@ class TestCfgScalarClamps(unittest.TestCase):
         pg._cfg_form_fields({'max_connections': ['2']}, cfg)
         self.assertEqual(cfg['max_connections'], 8)
 
-    def test_calendar_clamp_24(self):
-        """calendar_months_ahead se acota a [1,24] (24+1@98)."""
-        cfg = {}
-        pg._cfg_form_fields({'calendar_months_ahead': ['30']}, cfg)
-        self.assertEqual(cfg['calendar_months_ahead'], 24)
-        pg._cfg_form_fields({'calendar_months_ahead': ['0']}, cfg)
-        self.assertEqual(cfg['calendar_months_ahead'], 1)
-
-
 class TestSrcCheckbox(unittest.TestCase):
     def test_src_ausente_no_desactiva(self):
         """'src' fuera del form no produce sources_disabled (In@137 -> notin
@@ -287,15 +197,15 @@ class TestSrcCheckbox(unittest.TestCase):
 
 class TestConfigureSave(unittest.TestCase):
     def test_campos_presentes_pisan(self):
-        """trakt_client_id/debrid_provider/m3u_path en form -> CFG (In@146/150/154)."""
+        """mdblist_key/debrid_provider/m3u_path en form -> CFG (In@146/150/154)."""
         old = dict(pg.CFG)
         try:
             with patch.object(pg, '_save_cfg'), patch.object(pg, 'load_config'):
-                pg._configure_save({'trakt_client_id': [' cid '],
+                pg._configure_save({'mdblist_key': [' k1 '],
                                     'debrid_provider': ['torbox'],
                                     'm3u_path': ['/x/canales.m3u'],
                                     'debrid_key': ['K']})
-            self.assertEqual(pg.CFG['trakt_client_id'], 'cid')
+            self.assertEqual(pg.CFG['mdblist_key'], 'k1')
             self.assertEqual(pg.CFG['debrid_provider'], 'torbox')
             self.assertEqual(pg.CFG['m3u_path'], '/x/canales.m3u')
             self.assertEqual(pg.CFG['debrid_key'], 'K')
@@ -351,15 +261,13 @@ class TestHtmlDefaults(unittest.TestCase):
         return old
 
     def test_defaults_numericos(self):
-        """calendar_months_ahead 2, max_connections 64, nntp_port 563,
-        nntp_connections 5 (mutantes +1 solo difieren sin la clave)."""
-        old = self._pop('calendar_months_ahead', 'max_connections',
-                        'nntp_port', 'nntp_connections')
+        """max_connections 64, nntp_port 563, nntp_connections 5
+        (mutantes +1 solo difieren sin la clave)."""
+        old = self._pop('max_connections', 'nntp_port', 'nntp_connections')
         try:
             h = pg._configure_page()
         finally:
             pg.CFG.update(old)
-        self.assertIn("value='2'", h)
         self.assertIn("value='64'", h)
         self.assertIn("value='563'", h)
         self.assertIn("value='5'", h)
@@ -515,24 +423,7 @@ class TestConfigurePageHtml(unittest.TestCase):
         self.assertIn("name='source_order' value='X,Y'", h)
 
 
-class TestTraktAuthParcial(unittest.TestCase):
-    def test_solo_id_sigue_pidiendo_secret(self):
-        """client_id sin secret -> rama 'Faltan credenciales' (Or@452: and
-        dejaría pasar con credenciales a medias)."""
-        with patch.dict(pg.CFG, {'trakt_client_id': 'cid'}, clear=False):
-            pg.CFG.pop('trakt_client_secret', None)
-            pg.CFG.pop('trakt_access_token', None)
-            h = pg._trakt_auth_page()
-        self.assertIn('Faltan credenciales', h)
-
-    def test_solo_secret_sigue_pidiendo_id(self):
-        with patch.dict(pg.CFG, {'trakt_client_secret': 'sec'}, clear=False):
-            pg.CFG.pop('trakt_client_id', None)
-            pg.CFG.pop('trakt_access_token', None)
-            h = pg._trakt_auth_page()
-        self.assertIn('Faltan credenciales', h)
-
-
+class TestConfigurePageRender(unittest.TestCase):
     def test_or_listas_renderizan(self):
         """Cada `CFG.get(k) or []/{}` alimenta un campo (mutantes and ->
         campo vacío pese a haber valores)."""

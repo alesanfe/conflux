@@ -1,12 +1,11 @@
 """Routing /catalog: sintéticos, listas, búsqueda, anime-rewrite."""
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
-import threading
 import time
 import urllib.parse
 from concurrent.futures import as_completed
 
-from conflux.core.cfg import _cfgget, _eff_disabled
+from conflux.core.cfg import _eff_disabled
 from conflux.core.state import (
     _DEAD_OPT,
     _POOL,
@@ -18,7 +17,6 @@ from conflux.core.state import (
     as_dict,
     manifests,
 )
-from conflux.domain.calendar import _estrenos_cal
 from conflux.domain.lists import _list_metas, _m3u_metas
 from conflux.infra.epg import epg_metas
 from conflux.domain.manifest import _GRP, _LEGACY, _SYNTH, _UTYPE, _YR_OPTS
@@ -26,7 +24,6 @@ from conflux.domain.metafix import _fix_metas, _rpdb
 from conflux.domain.sources import _PREFIX_SRC, _resolve_sid
 from conflux.domain.text import _id_prefix
 from conflux.infra.net import fetch
-from conflux.infra.trakt import _recom
 
 
 def _cat_searchable(src, c, t):
@@ -143,34 +140,6 @@ def _cat_grp_extra(cid, extra):
     return utype, real, urllib.parse.urlencode(kv, safe=',')
 
 
-_CAL_LOCK = threading.Lock()   # builds de calendario >10s: un build a la vez
-
-
-def _synth_recom(utype, extra, _defx, _key):
-    """recomendaciones trakt (cache en _cat_c: related es caro)."""
-    hit2 = _cget(_cat_c, ('recom', utype))
-    if hit2 is None:
-        hit2 = _recom(utype)
-        _cset(_cat_c, ('recom', utype), hit2)
-    return hit2, utype, extra
-
-def _synth_cal(utype, extra, _defx, key):
-    """estrenos del calendario (extra=ids pedidos; respuesta cacheada con clave
-    única — el extra se ignora y todas las variantes de ids comparten la build;
-    sin compartir, cada set de ids de biblioteca repetía el build >10s y el
-    cliente moría por timeout cada vez). Una build degradada (<20) no se cachea:
-    así la siguiente petición reintenta en vez de servir vacío 10 min."""
-    ck = ('estrenoscal', _cfgget('calendar_months_ahead', 2))   # meses varía por perfil
-    hit2 = _cget(_cat_c, ck)
-    if hit2 is None:
-        with _CAL_LOCK:                                   # build >10s: nada de thundering-herd
-            hit2 = _cget(_cat_c, ck)                      # doble-check: otro request la llenó
-            if hit2 is None:
-                hit2 = _estrenos_cal(extra)
-                if hit2 and len(hit2.get('metasDetailed') or ()) >= 20:
-                    _cset(_cat_c, ck, hit2)
-    return hit2 or {'metas': []}, utype, extra
-
 def _synth_m3u(extra):
     """M3U: sin extra = lista de canales; con date= = guía EPG de ese día."""
     kv = dict(urllib.parse.parse_qsl(extra or ''))
@@ -182,10 +151,8 @@ def _synth_m3u(extra):
 
 
 _SYNTH_H = {'_busqueda': lambda utype, extra, defx, key: (_busqueda(utype, extra), utype, extra),
-            '_recom': _synth_recom,
             '_list': lambda utype, extra, defx, key: (_list_metas(defx, utype), utype, extra),
-            '_m3u': lambda utype, extra, defx, key: (_synth_m3u(extra), utype, extra),
-            '_estrenos_cal': _synth_cal}
+            '_m3u': lambda utype, extra, defx, key: (_synth_m3u(extra), utype, extra)}
 
 def _cat_synth(cid, utype, extra, key):
     """Sintéticos con handler propio -> respuesta; None si sigue el flujo normal."""
@@ -198,9 +165,9 @@ def _cat_synth(cid, utype, extra, key):
 
 
 def _cat_xlate_ids(utype, extra):
-    """ids no-tt -> tt p/ Cinemeta (calendario/biblioteca)."""
+    """ids no-tt -> tt p/ Cinemeta (Continue Watching: ids de biblioteca)."""
     kv = dict(urllib.parse.parse_qsl(extra))
-    for k in ('lastVideosIds', 'calendarVideosIds'):
+    for k in ('lastVideosIds',):
         if k in kv:
             ids = kv[k].split(',')[:100]          # optionsLimit:100 — fan-out acotado
             kv[k] = ','.join(_POOL.map(lambda i: _resolve_sid(utype, i.strip()), ids))
@@ -217,7 +184,7 @@ def _cat_resolve(cid, stype, extra, key):
         resp, utype, real, extra = _cat_synth(cid, utype, extra, key)
         if resp is not None:
             return resp
-    if extra:                                            # ids no-tt -> tt p/ Cinemeta (calendario/biblioteca)
+    if extra:                                            # ids no-tt -> tt p/ Cinemeta (biblioteca)
         extra = _cat_xlate_ids(utype, extra)
     return base, utype, real, extra
 

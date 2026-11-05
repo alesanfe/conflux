@@ -42,7 +42,7 @@ _YR_OPTS: dict = {}                                  # cid agrupado -> [años] d
 
 _REQ: set = set()                               # cids con extras requeridos upstream: quedan planos
 
-_FEED_EXTRA = frozenset({'lastVideosIds', 'calendarVideosIds'})   # endpoints de app-feed: solo vía sintéticos
+_FEED_EXTRA = frozenset({'lastVideosIds'})   # endpoints de app-feed: solo vía sintéticos
 
 _TYPE_ES = {'movie': 'Películas', 'series': 'Series', 'anime': 'Anime',
             'tv': 'TV', 'channel': 'Canales'}
@@ -95,9 +95,9 @@ def _mf_cat_req(c):
     catálogo exige algo que el cliente no puede rellenar ('search','skip'...)."""
     req = list(c.get('extraRequired') or []) + \
           [e.get('name') for e in (c.get('extra') or []) if e.get('isRequired')]
-    # 'search'/'skip' requeridos -> opción muerta; lastVideosIds/calendarVideosIds
-    # los aporta LA APP desde tu biblioteca (Continue Watching / Calendario)
-    if any(r not in ('genre', 'lastVideosIds', 'calendarVideosIds') for r in req):
+    # 'search'/'skip' requeridos -> opción muerta; lastVideosIds los aporta
+    # LA APP desde tu biblioteca (Continue Watching / feed de app)
+    if any(r not in ('genre', 'lastVideosIds') for r in req):
         return None
     return req
 
@@ -241,33 +241,22 @@ def _mf_group(cats):
 
 
 def _mf_synth_cats(cats):
-    """Catálogos sintéticos: estrenos, calendario-estrenos, búsqueda global,
-    listas externas, 'porque viste' Trakt, canales M3U."""
+    """Catálogos sintéticos: estrenos, búsqueda global, listas externas,
+    canales M3U."""
     _mf_cal_cats(cats)
     _mf_search_cats(cats)
     _mf_list_cats(cats)
-    _mf_recom_cats(cats)
     _mf_m3u_cat(cats)
 
 
 def _mf_cal_cats(cats):
-    """'Estrenos' (cinemeta year+genre) + 'Próximos estrenos' en calendario.
-    Este último va declarado 'series' porque el calendario solo consulta
-    catálogos series — los metas siguen type=movie y la ficha abre bien."""
+    """'Estrenos' (cinemeta year+genre) + 'Últimos vídeos' (Continue Watching:
+    ids de biblioteca -> tt -> cinemeta last-videos)."""
     ecid = 'scinemeta_movie_estrenos'
     _SYNTH[ecid] = ('movie', 'year', f'genre={_YEARS[0]}')
     cats.append((_eff_rank('Cinemeta'), {'id': ecid, 'type': 'movie',
                  'name': 'Cinemeta · Estrenos',
                  'extra': [{'name': 'genre', 'isRequired': False, 'options': _YEARS}]}))
-    ccid = 'scinemeta_series_estrenoscal'
-    _SYNTH[ccid] = ('movie', '_estrenos_cal', None)
-    cats.append((_eff_rank('Cinemeta'), {'id': ccid, 'type': 'series',
-                 'name': 'Cinemeta · Próximos estrenos',
-                 'extra': [{'name': 'calendarVideosIds', 'isRequired': True}]}))
-    bcid = 'scinemeta_series_calendario'               # gemelo navegable: el mismo
-    _SYNTH[bcid] = ('movie', '_estrenos_cal', None)    # feed en Board/Discover (el
-    cats.append((_eff_rank('Cinemeta'), {'id': bcid, 'type': 'series',
-                 'name': 'Cinemeta · Calendario estrenos'}))  # cal solo lo pide la vista Calendario)
     lvid = 'scinemeta_series_lastvids'             # Continue Watching: ids biblio -> tt -> cinemeta
     _SYNTH[lvid] = ('series', 'last-videos', None)
     cats.append((_eff_rank('Cinemeta'), {'id': lvid, 'type': 'series',
@@ -294,17 +283,6 @@ def _mf_list_cats(cats):
             _SYNTH[rid] = (t, '_list', url)
             cats.append((_eff_rank('Cinemeta') + 1, {'id': rid, 'type': t,
                          'name': f'☰ {lname}'}))
-
-
-def _mf_recom_cats(cats):
-    """'Porque viste X' — solo con cuenta Trakt conectada (/auth/trakt)."""
-    if not CFG.get('trakt_access_token'):
-        return
-    for t in ('movie', 'series'):
-        rid = f'suniform_{t}_recom'
-        _SYNTH[rid] = (t, '_recom', None)
-        cats.append((_eff_rank('Cinemeta'), {'id': rid, 'type': t,
-                     'name': 'Recomendados · tu Trakt'}))
 
 
 def _mf_m3u_cat(cats):
@@ -337,7 +315,7 @@ def build_manifest():
     """Manifest unificado: catálogos upstream reagrupados + sintéticos.
     Los dicts de routing (_SYNTH/_GRP/_UTYPE/_YR_OPTS) se reconstruyen por
     completo en cada build — sin reset acumulaban huérfanos tras quitar
-    m3u_path, listas o un token Trakt (catálogos fantasma aún ruteables)."""
+    m3u_path o listas (catálogos fantasma aún ruteables)."""
     with _MF_LOCK:                                   # dos builds concurrentes
         _SYNTH.clear(); _GRP.clear(); _UTYPE.clear(); _YR_OPTS.clear(); _REQ.clear()
         cats = _mf_group(_mf_collect_cats())

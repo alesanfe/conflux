@@ -329,78 +329,6 @@ class TestCatGrpExtraAno(unittest.TestCase):
         self.assertIn('genre=2025', extra)               # el más reciente
 
 
-class TestSynthRecom(unittest.TestCase):
-    """_synth_recom: cache hit no llama a trakt; miss -> _recom + _cset."""
-
-    def setUp(self):
-        import conflux.core.state as st
-        st._cat_c.clear()
-
-    def test_miss_llama_recom_y_cachea(self):
-        import conflux.core.state as st
-        with patch.object(C, '_recom', return_value={'metas': [{'id': 'x'}]}) as r:
-            out, _, _ = C._synth_recom('movie', None, None, 'k')
-        r.assert_called_once_with('movie')
-        self.assertIsNotNone(st._cget(st._cat_c, ('recom', 'movie')))
-
-    def test_hit_no_llama(self):
-        import conflux.core.state as st
-        st._cset(st._cat_c, ('recom', 'movie'), {'metas': [{'id': 'c'}]})
-        with patch.object(C, '_recom') as r:
-            out, _, _ = C._synth_recom('movie', None, None, 'k')
-        r.assert_not_called()
-        self.assertEqual(out['metas'][0]['id'], 'c')
-
-
-class TestSynthCal(unittest.TestCase):
-    """_synth_cal: cache por meses; <20 metas no cachea; None -> metas []."""
-
-    def setUp(self):
-        import conflux.core.state as st
-        st._cat_c.clear()
-
-    def test_hit_no_rebuild(self):
-        import conflux.core.state as st
-        st._cset(st._cat_c, ('estrenoscal', 2), {'metasDetailed': [{}] * 25})
-        with patch.object(C, '_estrenos_cal') as ec:
-            out, _, _ = C._synth_cal('series', None, None, 'k')
-        ec.assert_not_called()
-
-    def test_menos_de_20_no_cachea(self):
-        import conflux.core.state as st
-        with patch.object(C, '_estrenos_cal',
-                          return_value={'metasDetailed': [{}] * 19}):
-            C._synth_cal('series', None, None, 'k')
-        self.assertIsNone(st._cget(st._cat_c, ('estrenoscal', 2)))
-
-    def test_20_si_cachea(self):
-        import conflux.core.state as st
-        with patch.object(C, '_estrenos_cal',
-                          return_value={'metasDetailed': [{}] * 20}):
-            C._synth_cal('series', None, None, 'k')
-        self.assertIsNotNone(st._cget(st._cat_c, ('estrenoscal', 2)))
-
-    def test_default_meses_2_sin_cfg(self):
-        """_cfgget('calendar_months_ahead', 2): sin la clave la clave de caché
-        usa 2 (mutante 2+1@163 — el CFG real trae el valor y lo enmascara)."""
-        import conflux.core.state as st
-        saved = st.CFG.pop('calendar_months_ahead', None)
-        try:
-            st._cset(st._cat_c, ('estrenoscal', 2), {'metasDetailed': [{}] * 25})
-            with patch.object(C, '_estrenos_cal') as ec:
-                out, _, _ = C._synth_cal('series', None, None, 'k')
-            ec.assert_not_called()
-            self.assertEqual(len(out['metasDetailed']), 25)
-        finally:
-            if saved is not None:
-                st.CFG['calendar_months_ahead'] = saved
-
-    def test_none_a_metas_vacio(self):
-        with patch.object(C, '_estrenos_cal', return_value=None):
-            out, _, _ = C._synth_cal('series', None, None, 'k')
-        self.assertEqual(out, {'metas': []})
-
-
 class TestSynthM3u(unittest.TestCase):
     """_synth_m3u: date -> guía EPG del día; sin date -> lista canales."""
 
@@ -417,14 +345,14 @@ class TestSynthM3u(unittest.TestCase):
 
 
 class TestXlateIdsMas(unittest.TestCase):
-    """_cat_xlate_ids: cap optionsLimit=100; ambas claves traducen."""
+    """_cat_xlate_ids: cap optionsLimit=100; lastVideosIds traduce."""
 
     def test_cap_100_ids(self):
-        extra = 'calendarVideosIds=' + ','.join(f'tt{i:07d}' for i in range(150))
+        extra = 'lastVideosIds=' + ','.join(f'tt{i:07d}' for i in range(150))
         with patch.object(C, '_resolve_sid', side_effect=lambda u, i: i):
             out = C._cat_xlate_ids('movie', extra)
         ids = dict(__import__('urllib.parse', fromlist=['parse_qsl'])
-                   .parse_qsl(out))['calendarVideosIds'].split(',')
+                   .parse_qsl(out))['lastVideosIds'].split(',')
         self.assertEqual(len(ids), 100)
 
     def test_lastvideosids_tambien(self):

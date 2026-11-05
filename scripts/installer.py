@@ -2,14 +2,12 @@
 """installer.py — instalador gráfico de conflux (wizard tkinter, sin deps extra).
 
 Pasos: entorno Python -> Prowlarr+indexers -> .env/config -> proxy+autostart ->
-addon en Stremio -> login Trakt (muestra el código). También DESINSTALAR.
+addon en Stremio. También DESINSTALAR.
 Lanzar con:  python scripts/installer.py   (o conflux-setup.bat -> pythonw)
 """
 # pylint: disable=broad-exception-caught,too-many-locals,too-many-statements
-import json
 import os
 import queue
-import re
 import subprocess
 import sys
 import threading
@@ -25,8 +23,6 @@ DEFAULT_ENV = """\
 # conflux .env — generado por el instalador
 PROWLARR=1
 TORZNAB_URL=http://127.0.0.1:9696/0/api
-TRAKT_CLIENT_ID=bfdd2e032c30c35b368f97ef4ec81587b899bcb028b91a1d4ba5589a4b6a7267
-TRAKT_CLIENT_SECRET=bf9fce37cf45c1de91da009e7ac6fca905a35d7a718bf65a52f92199073a2503
 OPENSUBTITLES_KEY=gUCLWGoAg2PmyseoTM0INFFVPcDCeDlT
 OPENSUBTITLES_USER=
 OPENSUBTITLES_PASS=
@@ -44,6 +40,9 @@ except ImportError:
 BG, BG2, BG3 = '#141416', '#1e1e23', '#26262b'
 FG, DIM, ACC, OK, BAD = '#e8e8ea', '#8a8a93', '#7c5ce0', '#4caf50', '#e05555'
 BORD = '#33333c'
+
+
+_SPAWNED = []   # procesos desacoplados lanzados por install_proxy (evita GC)
 
 
 def _stremio_exe():
@@ -74,14 +73,132 @@ def _sh(cmd, timeout=300, shell=False):
         return 1, str(e)
 
 
+# ---------- operaciones de montaje (misma lógica que usan los pasos GUI;
+# también las ejercita tests/e2e/test_install_uninstall.py) ----------
+
+def kill_proxy(say=print):
+    """Detiene el proxy: PID escuchando en :9700 y procesos python corriendo
+    proxy.py. Devuelve cuántos mató."""
+    killed = 0
+    if sys.platform == 'win32':
+        rc, out = _sh('netstat -ano | findstr :9700 | findstr LISTENING',
+                      shell=True, timeout=15)
+        for ln in out.splitlines():
+            pid = ln.strip().rsplit(None, 1)[-1]
+            if pid.isdigit():
+                _sh(f'taskkill /PID {pid} /F', shell=True, timeout=15)
+                killed += 1
+        rc, out = _sh(['powershell', '-NoProfile', '-Command',
+                       "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" "
+                       "| Where-Object {$_.CommandLine -match 'proxy\\.py'} "
+                       '| ForEach-Object {$_.ProcessId}'], 30)
+        for ln in out.splitlines():
+            pid = ln.strip()
+            if pid.isdigit():
+                _sh(f'taskkill /PID {pid} /F', shell=True, timeout=15)
+                killed += 1
+    say(f'{killed} proceso(s) detenidos')
+    return killed
+
+
+def install_proxy(say=print):
+    """Launcher start-conflux.bat + acceso directo en Startup + arranque
+    desacoplado; espera a /health. Devuelve True si el proxy responde."""
+    bat = os.path.join(ROOT, 'start-conflux.bat')
+    with open(bat, 'w', encoding='ascii') as f:
+        # mismo launcher portable que setup_win.ps1: %~dp0, sin >> conflux.log
+        # (el proxy rota el log él solo; la redirección lo duplicaba y crecía)
+        f.write('@echo off\ncd /d "%~dp0"\n'
+                'if exist .venv\\Scripts\\pythonw.exe (\n'
+                '  start "" /min "%~dp0.venv\\Scripts\\pythonw.exe" proxy.py\n'
+                ') else (\n'
+                '  start "" /min pythonw.exe proxy.py\n'
+                ')\n')
+    if sys.platform == 'win32':
+        startup = os.path.join(os.environ['APPDATA'],
+                               'Microsoft\\Windows\\Start Menu\\Programs\\Startup')
+        _sh(['powershell', '-NoProfile', '-Command',
+             f"$w=New-Object -ComObject WScript.Shell; "
+             f"$l=$w.CreateShortcut('{startup}\\\\Conflux.lnk'); "
+             f"$l.TargetPath='{bat}'; $l.WindowStyle=7; "
+             f"$l.WorkingDirectory='{ROOT}'; $l.Save()"], 30)
+        say('autostart registrado')
+    # arranque desacoplado: sin pipes heredados (capture_output haria que el
+    # pythonw hijo retuviera el pipe y communicate() se bloqueara siempre).
+    # La referencia queda viva en _SPAWNED: si el Popen se GC con el hijo aún
+    # corriendo Python emite ResourceWarning "subprocess is still running".
+    _SPAWNED.append(subprocess.Popen(
+        f'cmd /c "{bat}"', shell=True,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)))
+    for _ in range(30):
+        try:
+            urllib.request.urlopen(f'{PROXY}/health', timeout=3)
+            say('proxy: OK en 127.0.0.1:9700')
+            return True
+        except Exception:
+            time.sleep(2)
+    say('el proxy no responde — revisa conflux.log')
+    return False
+
+
+def remove_autostart(say=print):
+    """Quita Conflux.lnk de la carpeta Inicio."""
+    lnk = os.path.join(os.environ.get('APPDATA', ''),
+                       'Microsoft\\Windows\\Start Menu\\Programs\\Startup',
+                       'Conflux.lnk')
+    try:
+        os.unlink(lnk)
+        say('autostart eliminado')
+    except OSError:
+        say('autostart no existía')
+
+
+def remove_addon(say=print):
+    """Elimina el addon de la colección de Stremio (remoto)."""
+    try:
+        import install_addon
+        st, msg = install_addon.remove(f'{PROXY}/manifest.json')
+        say(f'addon stremio: {st} {msg}'
+            + ('' if st != 'manual' else ' — quítalo a mano en Addons'))
+    except Exception as e:
+        say(f'addon remoto: {e} — quítalo a mano en Stremio')
+
+
+def remove_runtime(keep_cfg=True, say=print, skip=()):
+    """Borra el entorno generado. keep_cfg conserva .env/config.json/
+    sources.json (claves del usuario). skip: nombres a no tocar."""
+    import shutil
+    paths = ['.venv', 'm3u', '.manifests-cache.json', 'epg-cache.json',
+             'conflux.log', 'start-conflux.bat', 'post1337.json',
+             'resp1337.json', 'tz.xml', 'sc.json', 'tu.cs', 'os.json']
+    if not keep_cfg:
+        paths += ['.env', 'config.json', 'sources.json']
+    for p in paths:
+        if p in skip:
+            continue
+        fp = os.path.join(ROOT, p)
+        try:
+            if os.path.isdir(fp):
+                shutil.rmtree(fp, ignore_errors=True)
+            elif os.path.exists(fp):
+                os.unlink(fp)
+            say(f'{p}: eliminado')
+        except OSError as e:
+            say(f'{p}: {e}')
+    if keep_cfg:
+        say('.env/config.json: conservados')
+
+
 class Installer(tk.Tk):
     """Wizard estilo instalador moderno: banner, sidebar, progreso, log plegable."""
 
     STEPS = ['Entorno', 'Prowlarr', 'Usenet', 'Configuración', 'Proxy + autostart',
-             'Addon Stremio', 'Trakt (opcional)', 'Fin']
+             'Addon Stremio', 'Fin']
     USTEPS = ['Detener procesos', 'Autostart + addon', 'Borrar runtime',
               'Prowlarr', 'Fin']
-    ICONS = ['1', '2', '3', '4', '5', '6', '7', '8']
+    ICONS = ['1', '2', '3', '4', '5', '6', '7']
     U_ICONS = ['1', '2', '3', '4', '5']
 
     def __init__(self):
@@ -343,7 +460,7 @@ class Installer(tk.Tk):
             return c
 
         card('Instalar', 'dl', 'Monta todo el entorno:\nvenv · Prowlarr · indexers\n'
-                               'proxy · autostart · addon\nlogin Trakt opcional',
+                               'proxy · autostart · addon',
              lambda: self._set_mode('install'))
         card('Desinstalar', 'trash', 'Quita todo lo instalado:\nprocesos · autostart · runtime\n'
                                      'Prowlarr · (opcional) claves\ny la propia carpeta',
@@ -473,7 +590,7 @@ class Installer(tk.Tk):
 
     def _step3(self):
         self._lbl('Crea/actualiza .env con las integraciones gratuitas '
-                  '(Trakt, OpenSubtitles, IPTV, Torznab) y lo aplica a config.json.')
+                  '(OpenSubtitles, IPTV, Torznab) y lo aplica a config.json.')
         self._run(self._do_cfg)
 
     def _do_cfg(self):
@@ -495,41 +612,7 @@ class Installer(tk.Tk):
         self._run(self._do_proxy)
 
     def _do_proxy(self):
-        bat = os.path.join(ROOT, 'start-conflux.bat')
-        with open(bat, 'w', encoding='ascii') as f:
-            # mismo launcher portable que setup_win.ps1: %~dp0, sin >> conflux.log
-            # (el proxy rota el log él solo; la redirección lo duplicaba y crecía)
-            f.write('@echo off\ncd /d "%~dp0"\n'
-                    'if exist .venv\\Scripts\\pythonw.exe (\n'
-                    '  start "" /min "%~dp0.venv\\Scripts\\pythonw.exe" proxy.py\n'
-                    ') else (\n'
-                    '  start "" /min pythonw.exe proxy.py\n'
-                    ')\n')
-        if sys.platform == 'win32':
-            startup = os.path.join(os.environ['APPDATA'],
-                                   'Microsoft\\Windows\\Start Menu\\Programs\\Startup')
-            _sh(['powershell', '-NoProfile', '-Command',
-                 f"$w=New-Object -ComObject WScript.Shell; "
-                 f"$l=$w.CreateShortcut('{startup}\\\\Conflux.lnk'); "
-                 f"$l.TargetPath='{bat}'; $l.WindowStyle=7; "
-                 f"$l.WorkingDirectory='{ROOT}'; $l.Save()"], 30)
-            self.say('autostart registrado')
-        # arranque desacoplado: sin pipes heredados (capture_output haria que el
-        # pythonw hijo retuviera el pipe y communicate() se bloqueara siempre)
-        subprocess.Popen(f'cmd /c "{bat}"', shell=True,
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL,
-                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-        for _ in range(30):
-            try:
-                urllib.request.urlopen(f'{PROXY}/health', timeout=3)
-                self.say('proxy: OK en 127.0.0.1:9700')
-                self.q.put(('done', 'OK'))
-                return
-            except Exception:
-                time.sleep(2)
-        self.say('el proxy no responde — revisa conflux.log')
-        self.q.put(('done', 'FALLO'))
+        self.q.put(('done', 'OK' if install_proxy(self.say) else 'FALLO'))
 
     def _step5(self):
         self._lbl('Registra el addon «conflux» en Stremio. Se intenta de forma '
@@ -560,50 +643,6 @@ class Installer(tk.Tk):
             self.q.put(('addon_manual',))
 
     def _step6(self):
-        self._lbl('Conecta tu cuenta trakt.tv (gratis): pulsa abrir, inicia sesión '
-                  'y escribe el código. Se detecta solo.')
-        self.code_lbl = tk.Label(self.body, text='········', bg=BG, fg=ACC,
-                                 font=self.f_code)
-        self.code_lbl.pack(pady=10)
-        self._mkbtn(self.body, 'Abrir trakt.tv/activate',
-                    lambda: webbrowser.open('https://trakt.tv/activate')).pack()
-        self.status_lbl = self._lbl('…', color=DIM)
-        self.btn_skip.config(state='normal')
-        self.btn_next.config(state='normal')
-        self._run(self._do_trakt)
-
-    def _do_trakt(self):
-        cfg = json.load(open(os.path.join(ROOT, 'config.json'), encoding='utf-8'))
-        if cfg.get('trakt_access_token'):
-            self.q.put(('log', 'trakt ya conectado'))
-            self.q.put(('done', 'ya conectado'))
-            return
-        try:
-            html = urllib.request.urlopen(f'{PROXY}/auth/trakt', timeout=15).read().decode()
-            m = re.search(r'<b>([A-Z0-9]{6,10})</b>', html)
-            if m:
-                self.code_lbl.config(text=m.group(1))
-        except Exception as e:
-            self.q.put(('log', f'auth page: {e}'))
-            self.q.put(('done', 'sin proxy'))
-            return
-        webbrowser.open('https://trakt.tv/activate')
-        for _ in range(120):
-            time.sleep(5)
-            try:
-                cfg = json.load(open(os.path.join(ROOT, 'config.json'), encoding='utf-8'))
-                if cfg.get('trakt_access_token'):
-                    self.status_lbl.config(text='Conectado — token guardado', fg=OK)
-                    self.q.put(('log', 'trakt conectado'))
-                    self.q.put(('done', 'conectado'))
-                    return
-            except Exception:
-                pass
-        self.status_lbl.config(text='expirado — reintenta con '
-                                    'python scripts/trakt_auth.py')
-        self.q.put(('done', 'expirado'))
-
-    def _step7(self):
         ok = sum(self.done_flags.get(i, False) for i in range(len(self.steps) - 1))
         self._lbl(f'{ok} de {len(self.steps) - 1} pasos completados.\n\n'
                   'El addon corre en http://127.0.0.1:9700 y arranca solo al '
@@ -618,25 +657,7 @@ class Installer(tk.Tk):
         self._run(self._do_kill)
 
     def _do_kill(self):
-        killed = 0
-        if sys.platform == 'win32':
-            rc, out = _sh('netstat -ano | findstr :9700 | findstr LISTENING',
-                          shell=True, timeout=15)
-            for ln in out.splitlines():
-                pid = ln.strip().rsplit(None, 1)[-1]
-                if pid.isdigit():
-                    _sh(f'taskkill /PID {pid} /F', shell=True, timeout=15)
-                    killed += 1
-            rc, out = _sh(['powershell', '-NoProfile', '-Command',
-                           "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" "
-                           "| Where-Object {$_.CommandLine -match 'proxy\\.py'} "
-                           '| ForEach-Object {$_.ProcessId}'], 30)
-            for ln in out.splitlines():
-                pid = ln.strip()
-                if pid.isdigit():
-                    _sh(f'taskkill /PID {pid} /F', shell=True, timeout=15)
-                    killed += 1
-        self.say(f'{killed} proceso(s) detenidos')
+        kill_proxy(self.say)
         self.q.put(('done', 'OK'))
 
     def _ustep1(self):
@@ -645,21 +666,8 @@ class Installer(tk.Tk):
         self._run(self._do_auto_rm)
 
     def _do_auto_rm(self):
-        lnk = os.path.join(os.environ.get('APPDATA', ''),
-                           'Microsoft\\Windows\\Start Menu\\Programs\\Startup',
-                           'Conflux.lnk')
-        try:
-            os.unlink(lnk)
-            self.say('autostart eliminado')
-        except OSError:
-            self.say('autostart no existía')
-        try:
-            import install_addon
-            st, msg = install_addon.remove(f'{PROXY}/manifest.json')
-            self.say(f'addon stremio: {st} {msg}'
-                     + ('' if st != 'manual' else ' — quítalo a mano en Addons'))
-        except Exception as e:
-            self.say(f'addon remoto: {e} — quítalo a mano en Stremio')
+        remove_autostart(self.say)
+        remove_addon(self.say)
         self.q.put(('done', 'OK'))
 
     def _ustep2(self):
@@ -677,29 +685,7 @@ class Installer(tk.Tk):
         return cb
 
     def _do_rm_runtime(self):
-        import shutil
-        for p in ('.venv', 'm3u', '.manifests-cache.json', 'epg-cache.json',
-                  'conflux.log', 'start-conflux.bat', 'post1337.json',
-                  'resp1337.json', 'tz.xml', 'sc.json', 'tu.cs', 'os.json'):
-            fp = os.path.join(ROOT, p)
-            try:
-                if os.path.isdir(fp):
-                    shutil.rmtree(fp, ignore_errors=True)
-                elif os.path.exists(fp):
-                    os.unlink(fp)
-                self.say(f'{p}: eliminado')
-            except OSError as e:
-                self.say(f'{p}: {e}')
-        if not self.keep_cfg.get():
-            for p in ('.env', 'config.json', 'sources.json'):
-                fp = os.path.join(ROOT, p)
-                try:
-                    os.unlink(fp)
-                    self.say(f'{p}: eliminado')
-                except OSError:
-                    self.say(f'{p}: no existía')
-        else:
-            self.say('.env/config.json: conservados')
+        remove_runtime(self.keep_cfg.get(), self.say)
         self.q.put(('done', 'OK'))
 
     def _ustep3(self):

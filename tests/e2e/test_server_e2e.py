@@ -74,7 +74,7 @@ def _post(port, path, data=b''):
 
 def _get_retry(port, path, tries=3, timeout=60):
     """Upstream transitorio: reintenta antes de fallar (flakes R5).
-    Search/calendar/stream hacen fan-out real: timeout generoso."""
+    Search/stream hacen fan-out real: timeout generoso."""
     for _ in range(tries):
         try:
             code, d = _get(port, path, timeout=timeout)
@@ -190,15 +190,12 @@ class ServerE2E(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn(b'<form', b)
 
-    def test_trakt_status_200(self):
-        code, d = _get(self.port, '/auth/trakt/status')
-        self.assertEqual(code, 200)
-        self.assertIsInstance(d, dict)
-
-    def test_trakt_auth_page_200(self):
-        code, b = _get(self.port, '/auth/trakt', raw=True)
-        self.assertEqual(code, 200)
-        self.assertIn(b'<', b)
+    def test_auth_trakt_retirado_404(self):
+        """OAuth retirado: /auth/trakt* ya no existe."""
+        code, _ = _get(self.port, '/auth/trakt/status')
+        self.assertEqual(code, 404)
+        code, _ = _get(self.port, '/auth/trakt')
+        self.assertEqual(code, 404)
 
     # ---- stream ----
     def test_stream_0_veneno_cooldown(self):
@@ -295,11 +292,14 @@ class ServerE2E(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn('metas', d)
 
-    def test_catalog_calendario(self):
-        code, d = _get_retry(self.port,
-            '/catalog/series/scinemeta_series_estrenoscal/calendarVideosIds=tt0944947.json')
+    def test_catalog_estrenoscal_retirado(self):
+        """Calendario+recom retirados: ni el sintético ni los catálogos Trakt
+        aparecen en el manifest."""
+        code, d = _get(self.port, '/manifest.json')
         self.assertEqual(code, 200)
-        self.assertIn('metasDetailed', d)
+        ids = {c['id'] for c in d['catalogs']}
+        self.assertNotIn('scinemeta_series_estrenoscal', ids)
+        self.assertNotIn('suniform_movie_recom', ids)
 
     # ---- subtitles ----
     def test_subtitles_endpoint(self):
@@ -514,7 +514,7 @@ class ServerE2EInterfaces(ServerE2E):
     def test_schemathesis_no_5xx(self):
         """Miles de casos generados desde docs/openapi.yaml contra el servidor
         real: invariante universal = ningún 5xx. Solo GET — los POST del spec
-        (/configure, /reload) mutan estado (subproceso trakt_sync)."""
+        (/configure, /reload) mutan estado."""
         import subprocess
         env = dict(os.environ, PYTHONIOENCODING='utf-8')
         r = subprocess.run(

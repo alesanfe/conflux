@@ -214,7 +214,8 @@ class TestCfgUrlKeys(unittest.TestCase):
         self.assertFalse(ok('stream_prefetch', 'false')) # str no es bool
         self.assertFalse(ok('stream_prefetch', 0))       # int no es bool
         self.assertFalse(ok('stream_max_gb', 10**9))     # fuera de cota
-        self.assertFalse(ok('calendar_months_ahead', 99))
+        self.assertFalse(ok('calendar_months_ahead', 2)) # clave retirada
+        self.assertFalse(ok('trakt_access_token', 'x'))  # OAuth retirado
 
 
 class TestCfgUrlB64(unittest.TestCase):
@@ -805,8 +806,7 @@ class TestCfgUrlOkBounds(unittest.TestCase):
 
     def test_cotas_borde(self):
         ok = srv.H._cfg_url_ok
-        for k, lo, hi in [('calendar_months_ahead', 0, 24),
-                          ('stream_max_gb', 0, 100000),
+        for k, lo, hi in [('stream_max_gb', 0, 100000),
                           ('source_timeout', 0, 30),
                           ('nntp_port', 1, 65535),
                           ('nntp_connections', 1, 64)]:

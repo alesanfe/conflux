@@ -53,7 +53,6 @@ t configure "$(curl -s -o /dev/null -w '%{http_code}' $B/configure)" 200
 t streams  "$(curl -s -o /dev/null -w '%{http_code}' $B/stream/movie/tt0133093.json)" 200
 t catalog  "$(curl -s -o /dev/null -w '%{http_code}' $B/catalog/movie/scinemeta_movie_estrenos.json)" 200
 t search   "$(curl -s "$B/catalog/movie/suniform_movie_search/search=dune.json" | "$PY" -c 'import json,sys;print(len(json.load(sys.stdin).get("metas",[]))>0)' 2>/dev/null)" "True"
-t calendar "$(curl -s "$B/catalog/series/scinemeta_series_estrenoscal/calendarVideosIds=kitsu:49847.json" | "$PY" -c 'import json,sys;print(len(json.load(sys.stdin).get("metasDetailed",[]))>0)' 2>/dev/null)" "True"
 echo "== fuentes =="
 curl -s $B/health | "$PY" -c '
 import json, sys

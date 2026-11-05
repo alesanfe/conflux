@@ -52,13 +52,14 @@ class TestHealth(unittest.TestCase):
 
 class TestCfgDefaults(unittest.TestCase):
     def test_defaults_cargados(self):
-        for k in ('calendar_months_ahead', 'stream_langs'):
+        for k in ('stream_max_gb', 'stream_langs'):
             self.assertIn(k, st.CFG)
 
     def test_defaults_contrato(self):
         """Los defaults son el contrato del producto (mutantes const flip)."""
         d = st._CFG_DEFAULTS
-        self.assertEqual(d['calendar_months_ahead'], 2)
+        self.assertNotIn('calendar_months_ahead', d)   # feature retirada
+        self.assertNotIn('trakt_client_id', d)         # OAuth retirado
         self.assertTrue(d['stream_prefetch'])
         self.assertFalse(d['debrid_proxy'])
         self.assertFalse(d['parental'])

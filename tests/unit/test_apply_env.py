@@ -59,24 +59,24 @@ class TestMain(Base):
         self.assertFalse(os.path.exists(self.cfg_path))
 
     def test_tipos(self):
-        p = self._env('STREAM_LANGS=es, en ,x\nCALENDAR_MONTHS_AHEAD=4\n'
+        p = self._env('STREAM_LANGS=es, en ,x\nSOURCE_TIMEOUT=4\n'
                       'PARENTAL=true\nTORRENT_HEALTH=0\nRPDB_KEY=k1\n')
         rc, _ = self._main(p)
         cfg = self._cfg()
         self.assertEqual(rc, 0)
         self.assertEqual(cfg['stream_langs'], ['es', 'en', 'x'])
-        self.assertEqual(cfg['calendar_months_ahead'], 4)
+        self.assertEqual(cfg['source_timeout'], 4)
         self.assertIs(cfg['parental'], True)
         self.assertIs(cfg['torrent_health'], False)
         self.assertEqual(cfg['rpdb_key'], 'k1')
 
     def test_vacio_no_pisa(self):
         """v == '' salta la clave (Eq@124: '' se colaría como valor)."""
-        p = self._env('RPDB_KEY=\nTRAKT_CLIENT_ID=t\n')
+        p = self._env('RPDB_KEY=\nMDBLIST_KEY=t\n')
         self._main(p)
         cfg = self._cfg()
         self.assertNotIn('rpdb_key', cfg)
-        self.assertEqual(cfg['trakt_client_id'], 't')
+        self.assertEqual(cfg['mdblist_key'], 't')
 
     def test_clave_desconocida_omitida(self):
         p = self._env('UNKNOWN_ENV_KEY=x\n')

@@ -87,13 +87,13 @@ Sub-paquetes por capa — cada uno solo depende "hacia abajo":
 - `conflux/core/`   `state.py` (CFG/cachés/HEALTH/COOLDOWN/pools/log — nunca re-asignar
   nombres compartidos; mutar in situ: `manifests[:] =`, `_M3U.clear()`; solo `cfg.RE_ES`
   se rebindea) + `cfg.py` (config.json + perfiles)
-- `conflux/infra/`  adaptadores externos: `net.py` (sesiones+fetch), `trakt.py`,
+- `conflux/infra/`  adaptadores externos: `net.py` (sesiones+fetch),
   `anilist.py`, `wikidata.py`, `debrid.py`, `torznab.py` (Prowlarr/Jackett, defusedxml),
   `zilean.py` (hashlists DMM self-hosted → streams `behaviorHints.cached`)
 - `conflux/domain/` lógica Stremio: `text.py` (parseo streams, RANK), `sources.py`
   (manifests upstream, res_*, impedancia ids R1), `manifest.py` (contrato: `_UTYPE`/
-  `_SYNTH`/`_YR_OPTS`/agrupación), `lists.py` (listas ext + M3U), `calendar.py`
-  (estrenos sintéticos), `catalog.py` (routing /catalog), `metafix.py` (_fix_meta*)
+  `_SYNTH`/`_YR_OPTS`/agrupación), `lists.py` (listas ext + M3U),
+  `catalog.py` (routing /catalog), `metafix.py` (_fix_meta*)
 - `conflux/app/`    casos de uso: `stream.py` (/stream: _collect* + url-health),
   `meta.py` (/meta race/fallback), `subs.py` (OpenSubtitles), `bg.py` (prefetch+refresher)
   · `_idmap` (sources): mapeo prefijo->imdb SIN TTL (estable; cap 400 vía _cset)
@@ -173,15 +173,15 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
 - `time.time()` (no monotonic) en TODOS los TTLs: los dicts comparten reloj y
   tests siembran tuplas `(epoch, val)` — una mezcla monotonic/epoch haría
   edades negativas gigantes (fresh/stale para siempre). Los persistidos
-  (epg fetched, trakt_expires) exigen epoch igualmente. Saltos NTP son
-  raros y se autocurran por TTL.
+  (epg fetched) exigen epoch igualmente. Saltos NTP son raros y se
+  autocurran por TTL.
 - `_cfg_public(cfg)` redacta secretos para log/respuestas (`key|token|secret|
   pass|admin` -> `***`) — usar en todo volcado de CFG, nunca `CFG.copy()` crudo.
 - `build_manifest` resetea `_SYNTH/_GRP/_UTYPE/_YR_OPTS/_REQ` bajo `_MF_LOCK`:
   los dicts de routing se reconstruyen por build — quien añada un dict global
   mutable derivado del build debe incluirlo en el reset.
 - Caches con clave perfil-sensible: si una key de `/cfg/` o `/p/` cambia el
-  resultado, va en la clave del cache (ver `estrenoscal`, collect `dis`) o se
+  resultado, va en la clave del cache (ver collect `dis`) o se
   aplica post-cache sobre copia (rpdb, debrid, stream_langs re-score).
 - dicts con crecimiento no acotado prohibidos: `_SESS<=64`, `_fails<=200
   (podados por HOST_CD)`, `_DB_OK<=5000`, `_rtime<=64`, `_URL_*<=2000`,
@@ -253,18 +253,19 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   rotos (Orion sin config) — siguen aportando streams.
 - `_CAT_KEEP['AllIPTV']`: géneros + ES/EN/PT — el descriptor remoto rechaza >~140 cats.
 - Cinemeta dentro del proxy (metas canónicos `tt:` + catálogos `Cinemeta · …`).
-- `calendarVideosIds`/`lastVideosIds`: `handle_catalog` traduce ids no-`tt` a `tt`
-  vía `_resolve_sid` (pool paralelo) antes de llamar a Cinemeta — animes guardados
-  por Kitsu aparecen en calendario/"continuar viendo". **Ojo**: reconstruir el extra
-  con `urlencode(kv, safe=',')` — sin `safe` las comas se codifican `%2C`→`%252C`
+- `lastVideosIds`: `handle_catalog` traduce ids no-`tt` a `tt` vía `_resolve_sid`
+  (pool paralelo) antes de llamar a Cinemeta — animes guardados por Kitsu
+  aparecen en "continuar viendo". **Ojo**: reconstruir el extra con
+  `urlencode(kv, safe=',')` — sin `safe` las comas se codifican `%2C`→`%252C`
   (doble encoding) y upstream recibe 1 solo id mutilado → `metasDetailed:[null]`.
 - `scinemeta_movie_estrenos` (en `_SYNTH`): catálogo sintético = cinemeta
   `year`+`genre=<año actual>` — incluye no-estrenados del año; picker de años.
-- `scinemeta_series_estrenoscal`: estrenos de cine EN EL CALENDARIO — declarado
-  `series` porque el calendario solo consulta catálogos series; devuelve metas
-  movie con `videos` sintéticos cuyo `released` = fecha de estreno (Cinemeta
-  year×5 páginas + TMDB meta→imdb_id, filtrado >hoy). El feed upstream es
-  escaso (~1-5 títulos) — crece al acercarse estrenos.
+- **Trakt OAuth y calendario retirados**: sin `infra/trakt.py`, `domain/calendar.py`,
+  `/auth/trakt*`, claves `trakt_*`/`calendar_months_ahead`, catálogos `*_recom`/
+  `estrenoscal`, ni `trakt_sync` en bg. `catalog_lists` solo IMDb/MDBList
+  (URL trakt.tv → ValueError explícito). `calendarVideosIds` ya no se traduce:
+  el catálogo `calendar-videos` upstream sigue filtrándose como no-navegable
+  (`extraRequired` no servible). Continue Watching (`lastVideosIds`) se queda.
 - `scinemeta_series_lastvids`: Continue Watching — `lastVideosIds` requerido;
   la app envía los ids de la biblioteca, `_cat_xlate_ids` traduce no-tt→tt y
   se reenvía a Cinemeta `last-videos`. Los catálogos upstream de feed
@@ -364,8 +365,8 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   cfg `And@62`/`Add@89`, state `Gt@35` (crash de suite entera = detectado),
   stream `Or@125`/`80+1@272`/`Gt@350`, mediafusion `Or@59`, torzapi `2000+1@116`
   (rama stype=None), server `LtE@151` (no-op del runner) y `64+1@403` (Semaphore
-  evaluado a import), torrent_health fallbacks randbytes (py≥3.9), trakt/calendar
-  caps internos. Ojo con `cfg_swap`: hace merge — los defaults enmascarados por el
+  evaluado a import), torrent_health fallbacks randbytes (py≥3.9).
+  Ojo con `cfg_swap`: hace merge — los defaults enmascarados por el
   CFG real hay que ejercitarlos con `CFG.pop` explícito.
 - Scripts toolados: cov_gate 19/20 killed + `Eq@78` (__main__ corre main() al
   importar = crash de facto); apply_env 37/39 + `Or@85` equivalente (mkstemp

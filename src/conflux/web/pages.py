@@ -1,4 +1,4 @@
-"""HTML embebido: /configure, /admin, /health, auth Trakt, POSTs."""
+"""HTML embebido: /configure, /admin, /health, POSTs."""
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import threading
@@ -23,7 +23,6 @@ from conflux.core.state import (
     manifests,
 )
 from conflux.domain.manifest import build_manifest
-from conflux.infra.trakt import _TRAKT_DEV, _trakt_device_start
 
 
 # ---- servidor ----
@@ -93,11 +92,6 @@ def _cfg_dict_fields(form, cfg):
 
 def _cfg_scalar_fields(form, cfg):
     """Nums acotados, bools (checkbox hidden+1), textos y secrets."""
-    if 'calendar_months_ahead' in form:
-        try:
-            cfg['calendar_months_ahead'] = max(1, min(int(form['calendar_months_ahead'][0]), 24))
-        except (TypeError, ValueError):              # 'abc', '', None -> sin tocar
-            pass
     if 'stream_max_gb' in form:
         try:
             cfg['stream_max_gb'] = max(0, int(form['stream_max_gb'][0]))
@@ -143,10 +137,6 @@ def _configure_save(form):
     """POST /configure: solo campos presentes pisan; claves vacías conservan el
     valor previo (no se muestran en el form)."""
     cfg = CFG.copy()
-    if 'trakt_client_id' in form:
-        cfg['trakt_client_id'] = form['trakt_client_id'][0].strip()
-    if form.get('trakt_client_secret', [''])[0].strip():
-        cfg['trakt_client_secret'] = form['trakt_client_secret'][0].strip()
     if 'debrid_provider' in form:
         cfg['debrid_provider'] = form['debrid_provider'][0].strip()
     if form.get('debrid_key', [''])[0].strip():
@@ -158,12 +148,6 @@ def _configure_save(form):
     CFG.update(cfg)
     _save_cfg()
     load_config()
-
-
-def _trakt_status():
-    if CFG.get('trakt_access_token') and not _TRAKT_DEV:
-        return {'state': 'ok'}
-    return {'state': 'pending' if _TRAKT_DEV else 'none'}
 
 
 _PAGE_CSS = ('<style>body{font:15px/1.5 system-ui;background:#0f0f14;color:#e8e8f0;max-width:880px;margin:24px auto;padding:0 16px}'
@@ -183,7 +167,7 @@ def _landing_page(host, tls):
     return (f"<html><head><title>conflux</title>{_PAGE_CSS}</head><body>"
             f"<h1>conflux · streams unificados</h1>"
             f"<p class='dim'>Addon agregador: catálogos, streams, metas, subtítulos, "
-            f"calendario, Trakt, debrid, torznab y M3U — detrás de un solo manifest.</p>"
+            f"debrid, torznab y M3U — detrás de un solo manifest.</p>"
             f"<p><a class='btn' href='stremio://{host}/manifest.json' "
             f"style='font-size:19px;padding:12px 24px'>Instalar en Stremio</a></p>"
             f"<p class='dim'>¿No abre la app? Stremio → Addons → pega esta URL en el buscador:<br>"
@@ -251,10 +235,9 @@ def _debrid_html(opts):
 
 
 def _tuners_html(langs):
-    """Bloque de tuners: calendario/idiomas, filtros, regex, orden, formato,
+    """Bloque de tuners: idiomas, filtros, regex, orden, formato,
     límites y toggles + scrapers/pool."""
-    return (f"<p>Meses de calendario hacia adelante <input name='calendar_months_ahead' value='{CFG.get('calendar_months_ahead',2)}' style='width:80px'>"
-            f" · idiomas streams <input name='stream_langs' value='{langs}' style='width:200px'></p>"
+    return (f"<p>idiomas streams <input name='stream_langs' value='{langs}' style='width:200px'></p>"
             f"<p>Filtros de stream <span class='dim'>(términos a excluir, coma — p.ej. cam,screener,ts,720p)</span><br>"
             f"<input name='stream_exclude' value='{','.join(CFG.get('stream_exclude') or [])}' placeholder='cam, camrip, hdcam, hdts, ts, screener, telesync'>"
             f"<input name='rpdb_key' value='' placeholder='rpdb apikey — posters con rating (ratingposterdb.com)'></p>"
@@ -334,17 +317,6 @@ def _sg_text():
                      for t, v in (CFG.get('source_groups') or {}).items())
 
 
-def _cfg_trakt_state():
-    return '<b class=ok>conectado ✓</b>' if CFG.get('trakt_access_token') else ''
-
-
-def _cfg_trakt_link():
-    if CFG.get('trakt_client_id') and not CFG.get('trakt_access_token'):
-        return ('<p><a class="btn" href="/auth/trakt">Conectar cuenta Trakt</a> '
-                '<span class=dim>device flow: autorizas una vez en trakt.tv/activate</span></p>')
-    return ''
-
-
 def _configure_page():
     src_chk = ''.join(
         f"<label style='display:flex;gap:8px;padding:4px 0'><input type='checkbox' name='src' value='{s.name}'"
@@ -359,11 +331,6 @@ def _configure_page():
             f"<p class='dim'>Guarda en config.json. Tras guardar, POST /reload aplica en caliente.</p>"
             f"<form method='post' action='/configure'>"
             f"<h2>Integraciones</h2>"
-            f"<p>Trakt <span class='dim'>(app en trakt.tv/oauth/applications — feed global + personal)</span>"
-            f" {_cfg_trakt_state()}<br>"
-            f"<input name='trakt_client_id' value='{CFG.get('trakt_client_id','')}' placeholder='client_id — vacío = Trakt off'>"
-            f"<input name='trakt_client_secret' value='' placeholder='client_secret (no se muestra el guardado)'></p>"
-            f"{_cfg_trakt_link()}"
             f"{_debrid_html(opts)}"
             f"<p>M3U propio <span class='dim'>(ruta local, catálogo tv 'Mis canales')</span><br>"
             f"<input name='m3u_path' value='{CFG.get('m3u_path','')}' placeholder='/home/…/canales.m3u'></p>"
@@ -383,8 +350,8 @@ def _configure_page():
             f"<input name='opensubtitles_pass' type='password' value='' placeholder='contraseña (no se muestra)'></p>"
             f"{_tuners_html(langs)}"
             f"<h2>Catálogos</h2>"
-            f"<p>Listas externas <span class='dim'>(URLs Trakt /lists/, IMDb /list/ o mdblist:ID — separadas por coma)</span><br>"
-            f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://trakt.tv/users/me/lists/mis-favs, https://www.imdb.com/list/ls123456/'>"
+            f"<p>Listas externas <span class='dim'>(IMDb /list/ls… o mdblist:ID — separadas por coma)</span><br>"
+            f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://www.imdb.com/list/ls123456/, mdblist:1234'>"
             f"<input name='mdblist_key' value='' placeholder='mdblist apikey (solo si usas MDBList)'></p>"
             f"<p>Addons extra <span class='dim'>(URLs de addons Stremio — base o .../manifest.json, coma; marketplace-lite: cualquier addon de la comunidad entra como fuente)</span><br>"
             f"<input name='extra_sources' value='{','.join(CFG.get('extra_sources') or [])}' placeholder='https://addon.ejemplo.com, https://otro.org/manifest.json'></p>"
@@ -420,8 +387,6 @@ def _configure_page():
             f".forEach(k=>{{var e=document.querySelector('[name='+k+']');if(e&&e.value)o[k]=e.value;}});"
             f"['source_order','catalogs_disabled','stream_required','stream_sort','stream_preferred'].forEach(k=>{{var e=document.querySelector('[name='+k+']');"
             f"if(e&&e.value)o[k]=e.value.split(',').map(x=>x.trim()).filter(Boolean);}});"
-            f"var cm=document.querySelector('[name=calendar_months_ahead]').value;"
-            f"var ci=parseInt(cm,10);if(!isNaN(ci)&&ci>=1&&ci<=24)o.calendar_months_ahead=ci;"
             f"var mg=document.querySelector('[name=stream_max_gb]').value;"
             f"var mi=parseInt(mg,10);if(!isNaN(mi)&&mi>0)o.stream_max_gb=mi;"
             f"var st=document.querySelector('[name=source_timeout]').value;"
@@ -444,36 +409,3 @@ def _configure_page():
             f"document.getElementById('cfginstall').href='stremio://'+location.host+'/cfg/'+b+'/manifest.json';}}"
             f"document.querySelectorAll('input,select').forEach(e=>e.addEventListener('input',_gen));_gen();</script>"
             f"</body></html>")
-
-
-def _trakt_auth_page():
-    """Device Authorization: muestra user_code, el usuario lo introduce en
-    trakt.tv/activate y el poll en background guarda el token."""
-    if not CFG.get('trakt_client_id') or not CFG.get('trakt_client_secret'):
-        return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
-                f"<h1>Conectar Trakt</h1><p>Faltan credenciales de app: crea una en "
-                f"<a href='https://trakt.tv/oauth/applications/new' style='color:#7c5ce0'>"
-                f"trakt.tv/oauth/applications/new</a> (redirect URI: <code>urn:ietf:wg:oauth:2.0:oob</code>)"
-                f" y guarda client_id + client_secret en <a class='btn' href='/configure'>/configure</a>.</p></body></html>")
-    if CFG.get('trakt_access_token'):
-        exp = time.strftime('%Y-%m-%d', time.localtime(CFG.get('trakt_expires', 0)))
-        return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
-                f"<h1>Trakt conectado</h1><p class='ok'>Token activo (expira {exp}).</p>"
-                f"<p><a class='btn' href='/configure'>volver</a></p></body></html>")
-    d = _trakt_device_start() if not _TRAKT_DEV else _TRAKT_DEV
-    if not d:
-        return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
-                f"<h1>Trakt</h1><p class='bad'>No se pudo iniciar el device flow.</p></body></html>")
-    # auth.trakt.tv/activate (lo que devuelve la API) redirige a app.trakt.tv
-    # que da 404 — la página real es trakt.tv/activate
-    url = 'https://trakt.tv/activate'
-    return (f"<html><head><title>trakt</title>{_PAGE_CSS}</head><body>"
-            f"<h1>Autorizar en Trakt</h1>"
-            f"<p>1. Abre <a href='{url}' style='color:#7c5ce0'>{url}</a><br>"
-            f"2. Introduce el código:</p>"
-            f"<p style='font-size:34px;letter-spacing:4px;color:#7c5ce0'><b>{d['user_code']}</b></p>"
-            f"<p id='st' class='dim'>esperando autorización…</p>"
-            f"<script>setInterval(()=>fetch('/auth/trakt/status').then(r=>r.json()).then(d=>{{"
-            f"if(d.state==='ok'){{document.getElementById('st').innerHTML=\"<span class=ok>Conectado — token guardado</span>\";}}"
-            f"if(d.state==='none')document.getElementById('st').textContent='expirado — recarga para reintentar';"
-            f"}}),4000)</script></body></html>")

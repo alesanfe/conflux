@@ -90,10 +90,10 @@ class TestSecretos(unittest.TestCase):
         """POST /reload devuelve config con secretos enmascarados (key/token/
         secret/pass/admin — el masker vive en _cfg_public y cubre más que 'key')."""
         from conflux.web.server import _cfg_public
-        out = _cfg_public({'debrid_key': 'K', 'trakt_access_token': 'T',
+        out = _cfg_public({'debrid_key': 'K', 'nntp_pass': 'T',
                            'admin_token': 'A', 'stream_langs': ['es']})
         self.assertEqual(out['debrid_key'], '***')
-        self.assertEqual(out['trakt_access_token'], '***')
+        self.assertEqual(out['nntp_pass'], '***')
         self.assertEqual(out['admin_token'], '***')
         self.assertEqual(out['stream_langs'], ['es'])
 

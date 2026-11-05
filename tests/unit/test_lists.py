@@ -42,64 +42,18 @@ class TestMdblistItems(unittest.TestCase):
         self.assertEqual(len(out), 2)
 
 
-class TestTraktItems(unittest.TestCase):
-    def test_filtra_sin_imdb(self):
-        rows = [{'movie': {'ids': {'imdb': 'tt1'}}},
-                {'show': {'ids': {'imdb': 'tt2'}}},
-                {'movie': {'ids': {}}}]
-        out = L._trakt_items(rows)
-        self.assertIn(('movie', 'tt1'), out)
-        self.assertIn(('series', 'tt2'), out)
-        self.assertEqual(len(out), 2)
+class TestTraktRetirado(unittest.TestCase):
+    """Las listas Trakt se retiraron con OAuth: URL trakt.tv -> error claro,
+    sin fetch (la excepción la captura _list_fetch -> default)."""
+
+    def test_trakt_url_rechazada(self):
+        with patch.object(L, '_session', side_effect=AssertionError('no red')):
+            name, items = L._list_fetch('https://trakt.tv/users/foo/lists/x')
+        self.assertEqual((name, items), ('Lista', []))
 
 
 if __name__ == '__main__':
     unittest.main()
-
-
-class TestListTrakt(unittest.TestCase):
-    def test_parseo_meta_e_items(self):
-        url = 'https://trakt.tv/users/foo/lists/mi-lista'
-        s, _ = fake_session(
-            {'json': {'name': 'Mi Lista'}},
-            {'json': [{'type': 'movie', 'movie': {'ids': {'imdb': 'tt1'}}},
-                      {'type': 'show', 'show': {'ids': {'imdb': 'tt2'}}},
-                      {'type': 'movie', 'movie': {'ids': {}}}]})
-        with patch.object(L, '_session', return_value=s), \
-             patch.object(L, '_trakt_h', return_value={}):
-            name, items = L._list_trakt(url)
-        self.assertEqual(name, 'Mi Lista')
-        self.assertEqual(items, [('movie', 'tt1'), ('series', 'tt2')])
-
-    def test_timeouts_8_y_10(self):
-        """meta timeout=8, items timeout=10 (@37/@39)."""
-        url = 'https://trakt.tv/users/foo/lists/x'
-        s, calls = fake_session({'json': {'name': 'L'}}, {'json': []})
-        with patch.object(L, '_session', return_value=s), \
-             patch.object(L, '_trakt_h', return_value={}):
-            L._list_trakt(url)
-        self.assertEqual([c[2].get('timeout') for c in calls], [8, 10])
-
-    def test_url_mala_valueerror(self):
-        self.assertRaises(ValueError, L._list_trakt, 'https://trakt.tv/otra')
-
-
-class TestTraktItemsTipo(unittest.TestCase):
-    def test_movie_sin_show_incluye(self):
-        """ids de movie OR show (Or@28: and -> exige ambos, salta movies)."""
-        rows = [{'type': 'movie',
-                 'movie': {'ids': {'imdb': 999}}},   # sin clave 'show'
-                {'type': 'show',
-                 'show': {'ids': {'imdb': 888}}}]
-        out = L._trakt_items(rows)
-        self.assertEqual(out, [('movie', 'tt999'), ('series', 'tt888')])
-
-    def test_tipo_por_clave(self):
-        rows = [{'movie': {'ids': {'imdb': 'tt1', 'trakt': 5}}},
-                {'show': {'ids': {'imdb': 'tt2'}}},
-                'basura', {'movie': {'ids': {}}}]
-        self.assertEqual(L._trakt_items(rows),
-                         [('movie', 'tt1'), ('series', 'tt2')])
 
 
 class TestListImdb(unittest.TestCase):

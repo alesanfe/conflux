@@ -5,7 +5,7 @@
 Addon agregador para Stremio en `http://127.0.0.1:9700`. Unifica ~24 addons upstream
 (streams, metadatos, catálogos) detrás de un solo manifest con streams deduplicados,
 ordenados por calidad/semillas, resolución de ids (kitsu/mal/tmdb → imdb), catálogos
-agrupados con selectores, feed de calendario auto-poblado (series + anime de temporada
+agrupados con selectores, catálogo de estrenos (series + anime de temporada
 + estrenos de cine) y resiliencia ante upstreams caídos.
 
 ## Instalar como addon
@@ -71,26 +71,26 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
 ## Configuración
 
 - **`.env` (recomendado)** — copia `.env.example` a `.env`, rellena tus claves
-  (debrid, Trakt, Torznab, OpenSubtitles, MDBList, M3U, fuentes con token en
+  (debrid, Torznab, OpenSubtitles, MDBList, M3U, fuentes con token en
   `SOURCES_EXTRA`) y `setup_win.ps1`/`setup.sh` las vuelca a `config.json` +
   `sources.json` automáticamente. Para re-aplicar sin reinstalar:
   `python scripts/apply_env.py` + `POST /reload`. `.env` está gitignored.
   **Vía recomendada — instalador gráfico:** `conflux-setup.bat` lanza un
   wizard (tkinter, sin deps) que hace TODOS los pasos: entorno, Prowlarr,
-  indexers, config, proxy+autostart, addon en Stremio y login Trakt con el
-  código a pantalla completa. Alternativa headless: `scripts/setup_win.ps1`.
+  indexers, config, proxy+autostart y addon en Stremio.
+  Alternativa headless: `scripts/setup_win.ps1`.
   Con `PROWLARR=1` se instala Prowlarr, conecta Torznab solo
   (extrae la ApiKey del config.xml) y **siembra indexers públicos por API**
   (`scripts/prowlarr_indexers.py` — lista personalizable con
   `PROWLARR_INDEXERS`; re-ejecutable, omite los existentes).
-- **`/configure`** — UI web: fuentes on/off, Trakt client_id, debrid (RD/TorBox),
-  ruta M3U, horizonte del calendario. Guarda en `config.json`.
+- **`/configure`** — UI web: fuentes on/off, debrid (RD/TorBox), ruta M3U,
+  filtros de streams. Guarda en `config.json`.
 - **`/admin`** — dashboard: salud por fuente, circuitos abiertos, latencia p50/p95/p99.
 - `sources.json` — lista de fuentes `[{"name","base"}]`; sobreescribe la embebida.
   Aquí van también **fuentes con URL configurada** (token en la URL): Orion,
   MediaFusion, Comet, AIOStreams… — su `/configure` upstream genera la URL y
   se pega tal cual en `base`.
-- `config.json` — `trakt_client_id`, `debrid_provider`/`debrid_key`, `m3u_path`,
+- `config.json` — `debrid_provider`/`debrid_key`, `m3u_path`,
   `stream_langs`, `sources_disabled`, `torznab_url`/`torznab_key`,
   `mdblist_key`, `catalog_lists`, `opensubtitles_key` (todas opcionales).
 - `POST /reload` — aplica `config.json` en caliente y limpia cachés.
@@ -100,12 +100,8 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
 
 - **Búsqueda unificada** — catálogo «Buscar todo» por tipo: fan-out a todos los
   upstreams que soportan `search`, dedup por id.
-- **Calendario autónomo** — `metasDetailed` con episodios reales (Cinemeta/Kitsu/
-  AniSeason) + AniList airing (fechas exactas) + Trakt anticipated (con key) +
-  estrenos de cine TMDB; sin depender de la biblioteca.
-- **Trakt personal** — `/auth/trakt` (device flow, una autorización) → mi
-  calendario (episodios de series seguidas + watchlist) y catálogos
-  «Recomendados · tu Trakt» (history → related). Token auto-renovado.
+- **Estrenos** — catálogo sintético Cinemeta `year`+`genre=<año actual>` con
+  picker de años; «Mis canales» M3U con EPG nativa.
 - **Debrid** — 8 providers (RD, TorBox, AllDebrid, Premiumize, EasyDebrid,
   Debrid-Link, Offcloud, Put.io): marca ⚡ los cacheados (instantAvailability —
   Put.io lo detecta por transfers previos de la cuenta) y los sirve vía
@@ -116,14 +112,6 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   consulta TODOS en paralelo y marca ⚡ con el provider que tenga el hash
   (la ruta `/r/<provider>/` ya lo resuelve); `debrid_provider`/`debrid_key`
   singular sigue funcionando.
-- **Trakt** — `TRAKT_CLIENT_ID`/`SECRET` en `.env` (par público incluido en
-  `.env.example` — listo sin registrar app). `python scripts/trakt_auth.py`
-  abre el login: cuenta trakt.tv gratuita → calendario personal y
-  "continuar viendo" activos. `python scripts/trakt_sync.py` sube lo visto en
-  Stremio al historial Trakt (bitmaps `watched` del localStorage →
-  `/sync/history`, idempotente) → siembra las recomendaciones. **Automático**:
-  el proxy lo lanza al arrancar y cada 30 min (subproceso aislado — sin
-  intervención).
 - **Torznab** — `torznab_url`+`torznab_key`: Prowlarr/Jackett local como fuente
   extra de streams. **Y al revés**: `/torznab/api` (+alias `/newznab/api`)
   expone Conflux como indexer newznab para Sonarr/Radarr/Prowlarr —
@@ -186,7 +174,7 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
 - **Preferidos** — `stream_preferred`: boost +300 en ranking (no filtro —
   cierra el trío exclude/required/preferred de AIOStreams); `source_timeout`
   ajusta el timeout por fuente (0 = 4s).
-- **Listas externas** — `catalog_lists`: URLs de listas Trakt, IMDb (`/list/ls*`)
+- **Listas externas** — `catalog_lists`: listas IMDb (`/list/ls*`)
   o `mdblist:ID` (con `mdblist_key`) aparecen como catálogos.
 - **Perfiles** — `/p/<nombre>/manifest.json` usa `config.<nombre>.json`
   (fuentes/idiomas propios); cada perfil es un addon instalable.

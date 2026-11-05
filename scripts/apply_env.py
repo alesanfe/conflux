@@ -40,8 +40,6 @@ def _public_url(url):
 ENV2CFG = {
     'DEBRID_PROVIDER': 'debrid_provider',       # realdebrid|torbox|alldebrid|premiumize|easydebrid|debridlink
     'DEBRID_KEY': 'debrid_key',
-    'TRAKT_CLIENT_ID': 'trakt_client_id',
-    'TRAKT_CLIENT_SECRET': 'trakt_client_secret',
     'OPENSUBTITLES_KEY': 'opensubtitles_key',
     'OPENSUBTITLES_USER': 'opensubtitles_user',
     'OPENSUBTITLES_PASS': 'opensubtitles_pass',
@@ -65,7 +63,6 @@ ENV2CFG = {
     'ADMIN_TOKEN': 'admin_token',
     'TLS_CERT': 'tls_cert',
     'TLS_KEY': 'tls_key',
-    'CALENDAR_MONTHS_AHEAD': 'calendar_months_ahead',
     'SOURCES_DISABLED': 'sources_disabled',
     'CATALOGS_DISABLED': 'catalogs_disabled',
     'SOURCE_ORDER': 'source_order',
@@ -75,7 +72,7 @@ ENV2CFG = {
 }
 LIST_KEYS = {'sources_disabled', 'catalogs_disabled', 'source_order', 'stream_langs',
              'stream_exclude', 'stream_required', 'stream_preferred', 'extra_sources'}
-INT_KEYS = {'calendar_months_ahead', 'trakt_expires', 'source_timeout', 'stream_max_gb'}
+INT_KEYS = {'source_timeout', 'stream_max_gb'}
 BOOL_KEYS = {'parental', 'debrid_proxy', 'stream_prefetch', 'mediafusion',
              'torrent_health'}
 

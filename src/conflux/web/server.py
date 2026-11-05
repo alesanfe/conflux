@@ -49,8 +49,6 @@ from conflux.web.pages import (
     _landing_page,
     _login_page,
     _manifest_reply,
-    _trakt_auth_page,
-    _trakt_status,
 )
 from conflux.web.torzapi import handle_torzapi
 
@@ -107,11 +105,11 @@ class H(BaseHTTPRequestHandler):
                 return True
         return False
     # claves permitidas en la cfg de la URL (nada de paths/URLs -> SSRF;
-    # nada de trakt_*/admin/tls -> tokens del servidor fuera de scope)
+    # nada de admin/tls/keys de servidor -> fuera de scope)
     _CFG_URL_KEYS = frozenset({
         'stream_langs', 'stream_exclude', 'rpdb_key',
         'catalogs_disabled', 'sources_disabled', 'source_order',
-        'debrid_provider', 'debrid_key', 'calendar_months_ahead',
+        'debrid_provider', 'debrid_key',
         'stream_max_gb', 'stream_prefetch', 'stream_required', 'stream_sort',
         'stream_format', 'debrid_proxy', 'parental', 'stream_preferred',
         'source_timeout', 'mediafusion', 'torrent_health',
@@ -123,8 +121,7 @@ class H(BaseHTTPRequestHandler):
                                'sources_disabled', 'source_order', 'stream_required',
                                'stream_sort', 'stream_preferred',
                                'stream_exclude_regex', 'stream_required_regex', 'scrapers'})
-    _CFG_URL_NUM = {'calendar_months_ahead': (0, 24),      # cota: builds de calendario
-                    'stream_max_gb': (0, 100000), 'source_timeout': (0, 30),
+    _CFG_URL_NUM = {'stream_max_gb': (0, 100000), 'source_timeout': (0, 30),
                     'nntp_port': (1, 65535), 'nntp_connections': (1, 64)}
     _CFG_URL_BOOL = frozenset({'stream_prefetch', 'debrid_proxy', 'parental',
                                'mediafusion', 'torrent_health', 'nntp_ssl'})
@@ -195,16 +192,14 @@ class H(BaseHTTPRequestHandler):
         if p in ('/admin', '/configure') and not self._authd():
             self._html(_login_page(p), 401)                     # form login -> cookie HttpOnly
             return True
-        if p in ('/manifest.json', '/health', '/auth/trakt/status'):
+        if p in ('/manifest.json', '/health'):
             self.reply({'/manifest.json': _manifest_reply,
-                        '/health': _health_page,
-                        '/auth/trakt/status': _trakt_status}[p]())
+                        '/health': _health_page}[p]())
             return True
         html = {'/': lambda: _landing_page(self.headers.get('Host') or f'127.0.0.1:{PORT}',
                                            bool(CFG.get('tls_cert'))),
                 '/admin': _admin_page,
-                '/configure': _configure_page,
-                '/auth/trakt': _trakt_auth_page}.get(p)
+                '/configure': _configure_page}.get(p)
         if html:
             self._html(html())
             return True
@@ -317,7 +312,7 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
     def do_POST(self):
-        """Router POST: /login, /configure, /reload, /auth."""
+        """Router POST: /login, /configure, /reload."""
         p = self.path.split('?', 1)[0]
         if p == '/login':                                        # fuera del gate: es el gate
             return self._login()

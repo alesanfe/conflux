@@ -4,8 +4,8 @@ info:
   version: 1.0.0
   description: |
     Addon agregador para Stremio: un manifest que fusiona ~24 addons upstream
-    (streams + metas + catálogos) con calendario de estrenos real, búsqueda
-    unificada, debrid, listas externas y administración web.
+    (streams + metas + catálogos) con estrenos, búsqueda unificada, debrid,
+    listas externas y administración web.
 servers:
   - url: http://127.0.0.1:9700
 
@@ -28,7 +28,7 @@ paths:
       description: b64json = base64url de un objeto con claves whitelisted
         (stream_langs, stream_exclude, rpdb_key, catalogs_disabled,
         sources_disabled, source_order, debrid_provider, debrid_key,
-        calendar_months_ahead, opensubtitles_key, mdblist_key). La misma
+        opensubtitles_key, mdblist_key). La misma
         convención aplica a cualquier ruta bajo /cfg/{b64json}/...
       parameters:
         - {name: b64json, in: path, required: true, schema: {type: string}}
@@ -51,7 +51,7 @@ paths:
       responses: {'200': {description: '{metas|metasDetailed: [...]}'}}
   /catalog/{type}/{id}/{extra}.json:
     get:
-      summary: Catálogo con extras (genre, year, search, calendarVideosIds…)
+      summary: Catálogo con extras (genre, year, search, lastVideosIds…)
       parameters:
         - {name: type, in: path, required: true, schema: {type: string, enum: [movie, series, anime, tv, channel]}}
         - {name: id, in: path, required: true, schema: {type: string}}
@@ -146,14 +146,6 @@ paths:
     post:
       summary: Guarda config.json y aplica en caliente
       responses: {'303': {description: redirect a /configure}}
-  /auth/trakt:
-    get:
-      summary: Device Authorization flow — muestra user_code, guarda token al autorizar
-      responses: {'200': {description: HTML con código}}
-  /auth/trakt/status:
-    get:
-      summary: Estado del device flow
-      responses: {'200': {description: '{state: pending|ok|none}'}}
   /login:
     post:
       summary: Login admin (token -> cookie HttpOnly conflux_auth, 302 a destino)

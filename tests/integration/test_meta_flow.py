@@ -36,7 +36,7 @@ class TestMetaFlow(unittest.TestCase):
             restore()
 
     def test_series_cae_a_movie(self):
-        """series sin meta upstream -> retry como movie (estrenos calendario)."""
+        """series sin meta upstream -> retry como movie (tipo falsificado R2)."""
         st.manifests[:] = [{'resources': [{'name': 'meta', 'types': ['movie']}]}]
         d_meta = {'meta': {'id': 'tt9', 'name': 'Estreno'}}
         restore = patch_fetch(lambda *a, **k: d_meta)

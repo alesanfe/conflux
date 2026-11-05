@@ -139,10 +139,6 @@ class PerfE2E(unittest.TestCase):
         _mn, med, _p95 = _ms(self.port, '/admin')
         self.assertLess(med, 1000, f'admin p50={med:.0f}ms')
 
-    def test_trakt_status_bajo_1s(self):
-        _mn, med, _p95 = _ms(self.port, '/auth/trakt/status')
-        self.assertLess(med, 1000, f'trakt-status p50={med:.0f}ms')
-
     def test_options_bajo_500ms(self):
         import urllib.request
         t0 = time.perf_counter()

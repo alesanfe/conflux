@@ -73,7 +73,8 @@ def _authkey_leveldb():
                   + glob.glob(os.path.join(d, '*.ldb')))
     for f in sorted(files, key=os.path.getmtime, reverse=True):
         try:
-            hits = _KEY_RE.findall(open(f, 'rb').read())
+            with open(f, 'rb') as fh:
+                hits = _KEY_RE.findall(fh.read())
         except OSError:
             continue
         if hits:

@@ -25,9 +25,9 @@ def _meta_race(futs):
 
 
 def _meta_try(stype):
-    """Tipos a probar EN ORDEN: el propio primero; series cae a movie (los estrenos
-    del calendario llegan como series). Set daba orden arbitrario: una peli con el
-    mismo id podía ganar el fallback antes de probar el tipo correcto."""
+    """Tipos a probar EN ORDEN: el propio primero; series cae a movie (upstream
+    declara pelis como series — tipo falsificado, R2). Set daba orden arbitrario:
+    una peli con el mismo id podía ganar el fallback antes del tipo correcto."""
     return (stype, 'movie') if stype == 'series' else (stype,)
 
 
@@ -65,7 +65,7 @@ def handle_meta(stype, mid):
     # hasta que el usuario pulse reproducir de verdad.
     if stype == 'movie' and ':' not in mid and _cfgget('stream_prefetch', True):
         _ensure_collect(('movie', mid, tuple(sorted(_eff_disabled_for('movie')))))  # clave completa del collect
-    # estrenos del calendario llegan como 'series' aunque sean pelis: fallback
+    # series->movie: upstreams que declaran una peli como series (tipo falsificado)
     for want in _meta_try(stype):
         futs = [_POOL.submit(_meta_one, i, want, mid) for i in range(len(SOURCES))]
         d = _meta_race(futs)

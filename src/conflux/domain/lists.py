@@ -1,4 +1,4 @@
-"""Catálogos externos (Trakt/IMDb/MDBList) y M3U local."""
+"""Catálogos externos (IMDb/MDBList) y M3U local."""
 # pylint: disable=broad-exception-caught,line-too-long
 
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
@@ -19,32 +19,12 @@ from conflux.core.state import (
     as_dict,
 )
 from conflux.infra.net import _session, fetch
-from conflux.infra.trakt import _trakt_h
 
 _LLIST: dict = {}
 
 def _list_defs():
-    """config.catalog_lists: URLs (Trakt/IMDb/MDBList) separadas por coma."""
+    """config.catalog_lists: URLs (IMDb/MDBList) separadas por coma."""
     return [x.strip() for x in (CFG.get('catalog_lists') or '').split(',') if x.strip()]
-
-
-def _list_trakt(url):
-    m = re.search(r'trakt\.tv/users/([^/]+)/lists/([^/?]+)', url)
-    if not m:
-        raise ValueError('url trakt no reconocida')
-    s = _session('api.trakt.tv')
-    meta = s.get(f'https://api.trakt.tv/users/{m[1]}/lists/{m[2]}',
-                 headers=_trakt_h(), timeout=8).json()
-    rows = s.get(f'https://api.trakt.tv/users/{m[1]}/lists/{m[2]}/items?extended=full&limit=200',
-                 headers=_trakt_h(), timeout=10).json()
-    return meta.get('name') or 'Lista Trakt', _trakt_items(rows)
-
-
-def _trakt_items(rows):
-    """items trakt -> [(type, tt_id)]."""
-    return [('movie' if as_dict(e).get('movie') else 'series', 'tt' + str(ids['imdb']).lstrip('t'))
-            for e in rows if isinstance(e, dict)
-            and (ids := as_dict(as_dict(e).get('movie') or as_dict(e).get('show')).get('ids')).get('imdb')]
 
 
 def _list_imdb(url):
@@ -84,8 +64,8 @@ def _list_fetch(url):
     name, items = 'Lista', []
     with suppress(requests.RequestException, TypeError, ValueError, KeyError, AttributeError):
         if 'trakt.tv' in url:
-            name, items = _list_trakt(url)
-        elif 'imdb.com' in url:
+            raise ValueError('listas Trakt retiradas — usa IMDb o MDBList')
+        if 'imdb.com' in url:
             name, items = _list_imdb(url)
         else:
             name, items = _list_mdblist(url)

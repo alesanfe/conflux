@@ -53,7 +53,7 @@ if (Test-Path $envFile) {
         $envCfg[$k.Trim().ToUpper()] = $v.Trim().Trim('"').Trim("'")
     }
 } else {
-    Write-Host 'sin .env — copia .env.example a .env para debrid/trakt/torznab/subs…'
+    Write-Host 'sin .env — copia .env.example a .env para debrid/torznab/subs…'
 }
 
 # Prowlarr: instala el indexer manager y saca su ApiKey del config.xml → torznab
@@ -122,20 +122,6 @@ foreach ($i in 1..30) {
     catch { }
 }
 if ($ok) { Write-Host 'proxy: OK (127.0.0.1:9700)' } else { Write-Warning 'el proxy no responde — revisa conflux.log' }
-
-# Trakt: credenciales sin token → login opcional (device flow, cuenta gratis)
-if ($ok -and $envCfg['TRAKT_CLIENT_ID']) {
-    $cc = Join-Path $PWD 'config.json'
-    $hasTok = (Test-Path $cc) -and ((Get-Content $cc -Raw | ConvertFrom-Json).trakt_access_token)
-    if (-not $hasTok) {
-        Write-Host '== trakt (opcional, gratis) =='
-        if ((Read-Host '¿Conectar tu cuenta trakt.tv ahora? [s/N]') -match '^[sSyY]') {
-            Start-Process $venvPy -ArgumentList 'scripts\trakt_auth.py'
-        } else {
-            Write-Host 'luego: python scripts\trakt_auth.py (un solo login)'
-        }
-    }
-}
 
 if (-not $NoAddon) {
     Write-Host '== addon en Stremio =='

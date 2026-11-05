@@ -52,7 +52,7 @@ class TestEncodingBugs(unittest.TestCase):
         try:
             C.handle_catalog(
                 'series', 'scinemeta_series_top',
-                'calendarVideosIds=tt0944947,tt0903747')
+                'lastVideosIds=tt0944947,tt0903747')
         finally:
             restore()
         self.assertTrue(captured, 'no se llamó upstream')
@@ -163,9 +163,10 @@ class TestCfgUrlTypeBugs(unittest.TestCase):
         self.assertFalse(H._cfg_url_ok('stream_langs', 'es'))
         self.assertFalse(H._cfg_url_ok('stream_langs', 5))
         self.assertFalse(H._cfg_url_ok('stream_langs', ['es', 5]))
-        self.assertTrue(H._cfg_url_ok('calendar_months_ahead', 7))
-        self.assertFalse(H._cfg_url_ok('calendar_months_ahead', '7'))
-        self.assertFalse(H._cfg_url_ok('calendar_months_ahead', True))  # bool es int
+        self.assertTrue(H._cfg_url_ok('source_timeout', 7))
+        self.assertFalse(H._cfg_url_ok('source_timeout', '7'))
+        self.assertFalse(H._cfg_url_ok('source_timeout', True))   # bool es int
+        self.assertFalse(H._cfg_url_ok('calendar_months_ahead', 7))  # retirada
         self.assertTrue(H._cfg_url_ok('rpdb_key', 'K9'))
         self.assertFalse(H._cfg_url_ok('admin_token', 'x'))
 
@@ -247,11 +248,10 @@ class TestRegexLoadOrder(unittest.TestCase):
 
 
 class TestConfigureCastBug(unittest.TestCase):
-    """Bugs: int(form['calendar_months_ahead']) lanzaba ValueError con 'abc'
-    (conexión cortada, no 500); y un POST parcial borraba TODO lo ausente
-    (docstring decía 'solo campos presentes pisan' — no era verdad: 'src'
-    ausente desactivaba las 23 fuentes, torznab_url/trakt_client_id/m3u_path
-    quedaban en '')."""
+    """Bugs: int(form[...]) lanzaba ValueError con 'abc' (conexión cortada,
+    no 500); y un POST parcial borraba TODO lo ausente (docstring decía 'solo
+    campos presentes pisan' — no era verdad: 'src' ausente desactivaba las
+    23 fuentes, torznab_url/m3u_path quedaban en '')."""
 
     def _save(self, form, check):
         from unittest.mock import patch
@@ -267,29 +267,29 @@ class TestConfigureCastBug(unittest.TestCase):
             CFG.update(backup)
 
     def test_configure_save_no_explotaba_con_texto(self):
-        self._save({'calendar_months_ahead': ['abc']},
-                   lambda c: self.assertIsInstance(c.get('calendar_months_ahead'), int))
+        self._save({'nntp_port': ['abc']},
+                   lambda c: self.assertIsInstance(c.get('nntp_port'), int))
 
-    def test_configure_save_acota_meses(self):
-        self._save({'calendar_months_ahead': ['999']},
-                   lambda c: self.assertEqual(c['calendar_months_ahead'], 24))
-        self._save({'calendar_months_ahead': ['-3']},
-                   lambda c: self.assertEqual(c['calendar_months_ahead'], 1))
+    def test_configure_save_acota_puerto(self):
+        self._save({'nntp_port': ['999999']},
+                   lambda c: self.assertEqual(c['nntp_port'], 65535))
+        self._save({'nntp_port': ['-3']},
+                   lambda c: self.assertEqual(c['nntp_port'], 1))
 
     def test_post_parcial_no_borra_ni_desactiva(self):
         from conflux.core.state import CFG
         def chk(c):
             self.assertEqual(c.get('sources_disabled'), CFG.get('sources_disabled'))
             self.assertEqual(c.get('m3u_path'), CFG.get('m3u_path'))
-        # POST solo con 'months': ni sources_disabled (todas) ni m3u_path/torznab cambian
-        self._save({'calendar_months_ahead': ['3']},
+        # POST solo con 'nntp_port': ni sources_disabled ni m3u_path/torznab cambian
+        self._save({'nntp_port': ['563']},
                    lambda c: (self.assertEqual(c.get('sources_disabled'), []),
                               self.assertNotEqual(c.get('m3u_path'), '') if CFG.get('m3u_path') else None))
 
 
 class TestSynthOrphansBug(unittest.TestCase):
     """Bug: _SYNTH/_GRP/_UTYPE/_YR_OPTS acumulaban entradas entre builds —
-    quitar m3u_path, una lista externa o el token Trakt dejaba catálogos
+    quitar m3u_path o una lista externa dejaba catálogos
     fantasma aún ruteables (routing huérfano invisible en el manifest)."""
 
     def test_build_reset_limpia_routing(self):
@@ -315,19 +315,19 @@ class TestSynthOrphansBug(unittest.TestCase):
 
 class TestReloadSecretsBug(unittest.TestCase):
     """Bug: POST /reload logueaba CFG completo al conflux.log y su respuesta
-    solo enmascaraba claves con 'key' — trakt_access_token, client_secret,
+    solo enmascaraba claves con 'key' — *_token, client_secret,
     opensubtitles_pass y admin_token quedaban en claro en log y JSON."""
 
     def test_secrets_nunca_en_claro(self):
         from conflux.web.server import _cfg_public
-        out = _cfg_public({'trakt_access_token': 'AT', 'trakt_refresh_token': 'RT',
-                           'trakt_client_secret': 'CS', 'opensubtitles_pass': 'OP',
-                           'debrid_key': 'DK', 'admin_token': 'AD',
+        out = _cfg_public({'admin_token': 'AT', 'nntp_pass': 'NP',
+                           'opensubtitles_pass': 'OP', 'opensubtitles_key': 'OK',
+                           'debrid_key': 'DK', 'newznab_key': 'NK',
                            'stream_langs': ['es'], 'm3u_path': '/x'})
-        for s in ('AT', 'RT', 'CS', 'OP', 'DK', 'AD'):
+        for s in ('AT', 'NP', 'OP', 'OK', 'DK', 'NK'):
             self.assertNotIn(s, str(out), s)
         self.assertEqual(out['stream_langs'], ['es'])           # no-secret intacto
-        self.assertEqual(out['trakt_access_token'], '***')
+        self.assertEqual(out['admin_token'], '***')
 
 
 class TestRpdbMissBug(unittest.TestCase):

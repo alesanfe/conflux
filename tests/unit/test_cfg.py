@@ -29,22 +29,23 @@ class TestCoerce(unittest.TestCase):
     """_coerce normaliza tipos de config.json contra el default (edición a mano)."""
 
     def test_int_desde_str(self):
-        self.assertEqual(cfg._coerce('calendar_months_ahead', '3'), 3)
+        self.assertEqual(cfg._coerce('source_timeout', '3'), 3)
 
     def test_int_basura_cae_al_default(self):
-        self.assertEqual(cfg._coerce('calendar_months_ahead', 'abc'),
-                         cfg._CFG_DEFAULTS['calendar_months_ahead'])
+        self.assertEqual(cfg._coerce('source_timeout', 'abc'),
+                         cfg._CFG_DEFAULTS['source_timeout'])
 
     def test_lista_desde_str_csv(self):
         self.assertEqual(cfg._coerce('stream_langs', 'es,en'), ['es', 'en'])
 
     def test_tipo_correcto_intocado(self):
-        self.assertEqual(cfg._coerce('trakt_client_id', 'abc123'), 'abc123')
+        self.assertEqual(cfg._coerce('m3u_path', 'm3u/x.m3u'), 'm3u/x.m3u')
         self.assertEqual(cfg._coerce('stream_langs', ['es']), ['es'])
 
     def test_null_cae_al_default(self):
         self.assertEqual(cfg._coerce('m3u_path', None), '')      # "k":null no propaga None
-        self.assertEqual(cfg._coerce('trakt_expires', None), 0)
+        self.assertEqual(cfg._coerce('source_timeout', None),
+                         cfg._CFG_DEFAULTS['source_timeout'])
 
     def test_clave_sin_default_pasa_intacta(self):
         """d is None -> return v: clave fuera de _CFG_DEFAULTS no se toca
@@ -71,7 +72,7 @@ class TestCoerceBool(unittest.TestCase):
 
     def test_str_desde_int(self):
         """Default str + valor int -> str(v) (rama isinstance(d,str))."""
-        self.assertEqual(cfg._coerce('trakt_client_id', 123), '123')
+        self.assertEqual(cfg._coerce('m3u_path', 123), '123')
 
     def test_lista_desde_tupla_y_basura(self):
         self.assertEqual(cfg._coerce('stream_langs', ('es', 'en')), ['es', 'en'])
@@ -192,13 +193,13 @@ class TestProfiles(unittest.TestCase):
 
     def test_cfgget_override_y_tipos(self):
         """Perfil pisa global solo con tipo compatible (In@161, Is/Or/And@163-164)."""
-        self._prof({'stream_sort': ['seeds'], 'calendar_months_ahead': 'malo',
+        self._prof({'stream_sort': ['seeds'], 'source_timeout': 'malo',
                     'stream_max_gb': 7})
         with mock.patch.dict(cfg.CFG, {'stream_sort': ['res'],
-                                       'calendar_months_ahead': 2,
+                                       'source_timeout': 4,
                                        'stream_max_gb': 0}):
             self.assertEqual(cfg._cfgget('stream_sort'), ['seeds'])
-            self.assertEqual(cfg._cfgget('calendar_months_ahead'), 2)  # tipo malo -> global
+            self.assertEqual(cfg._cfgget('source_timeout'), 4)  # tipo malo -> global
             self.assertEqual(cfg._cfgget('stream_max_gb'), 7)          # int ok
             self.assertEqual(cfg._cfgget('stream_prefetch', True), True)  # no en perfil -> global
 

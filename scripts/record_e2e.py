@@ -54,8 +54,6 @@ def main():
             ('movie', 'scinemeta_movie_top', None),
             ('series', 'scinemeta_series_top', None),
             ('movie', 'suniform_movie_search', 'search=dune'),
-            ('series', 'scinemeta_series_estrenoscal', 'calendarVideosIds=tt0944947'),
-            ('series', 'scinemeta_series_estrenoscal', 'calendarVideosIds=kitsu:49847'),
         ):
             handle_catalog(utype, cid, extra)
     finally:

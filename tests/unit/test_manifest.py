@@ -279,17 +279,14 @@ class TestSynthFlags(unittest.TestCase):
         MF._SYNTH.clear(); MF._SYNTH.update(self._s)
 
     def test_isrequired_flags(self):
-        """estrenos genre False (False@261); calendarVideosIds/lastVideosIds/
-        search True (True@266/275/285); rank+1 de listas (Add@295)."""
+        """estrenos genre False (False@261); lastVideosIds/search True
+        (True@275/285); rank+1 de listas (Add@295)."""
         cats = []
         MF._mf_synth_cats(cats)
         d = {nc['id']: nc for _, nc in cats}
         est = next(e for e in d['scinemeta_movie_estrenos']['extra']
                    if e['name'] == 'genre')
         self.assertIs(est['isRequired'], False)
-        cal = d['scinemeta_series_estrenoscal']['extra'][0]
-        self.assertEqual(cal['name'], 'calendarVideosIds')
-        self.assertIs(cal['isRequired'], True)
         lv = d['scinemeta_series_lastvids']['extra'][0]
         self.assertIs(lv['isRequired'], True)
         for t in ('movie', 'series'):
@@ -414,34 +411,6 @@ class TestMfListCats(unittest.TestCase):
         self.assertEqual(cats[0][0], MF._eff_rank('Cinemeta') + 1)  # Add@295
 
 
-class TestMfRecomCats(unittest.TestCase):
-    def setUp(self):
-        self._s = dict(MF._SYNTH)
-
-    def tearDown(self):
-        MF._SYNTH.clear(); MF._SYNTH.update(self._s)
-
-    def test_con_token_dos_catalogos(self):
-        _, undo = cfg_swap(trakt_access_token='AT')
-        try:
-            cats = []
-            MF._mf_recom_cats(cats)
-        finally:
-            undo()
-        self.assertEqual(len(cats), 2)
-        self.assertIn('suniform_movie_recom', MF._SYNTH)
-        self.assertIn('suniform_series_recom', MF._SYNTH)
-
-    def test_sin_token_vacio(self):
-        _, undo = cfg_swap(trakt_access_token='')
-        try:
-            cats = []
-            MF._mf_recom_cats(cats)
-        finally:
-            undo()
-        self.assertEqual(cats, [])
-
-
 class TestMfM3uCat(unittest.TestCase):
     def setUp(self):
         self._s = dict(MF._SYNTH)
@@ -486,8 +455,8 @@ class TestMfDedupNames(unittest.TestCase):
 
 
 class TestBrowseablesSolo(unittest.TestCase):
-    """Feed-app (lastVideosIds/calendarVideosIds) y filtros upstream no son
-    opciones navegables — los feed los sirven los sintéticos."""
+    """Feed-app (lastVideosIds y otros extraRequired no servibles) y filtros
+    upstream no son opciones navegables — el feed lo sirve el sintético."""
 
     def _cats(self):
         old = list(px.manifests)
