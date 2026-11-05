@@ -69,6 +69,8 @@ def load_config():
     RE_ES = re.compile(rf'\b({langs})\b', re.IGNORECASE)              # langs configurables en vivo
     RE_EX = _ex_re(CFG.get('stream_exclude'))
     _apply_extra_sources()
+    from conflux.core.state import apply_config_level   # local: logging ya vivo
+    apply_config_level()
 
 
 def _apply_extra_sources():

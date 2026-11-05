@@ -99,13 +99,13 @@ class TestConstantes(unittest.TestCase):
         self.assertEqual(st._YEARS[-1], str(y - 11))
 
     def test_log_rotacion(self):
-        """RotatingFileHandler: 2MB max, 1 backup (mutantes Mult/const@24)."""
+        """RotatingFileHandler en el root logger: 5MB max, 5 backups (CONFLUX-017)."""
         import logging.handlers
-        rot = [h for h in st._handlers
+        rot = [h for h in logging.getLogger().handlers
                if isinstance(h, logging.handlers.RotatingFileHandler)]
         self.assertTrue(rot)
-        self.assertEqual(rot[0].maxBytes, 2 * 1024 * 1024)
-        self.assertEqual(rot[0].backupCount, 1)
+        self.assertEqual(rot[0].maxBytes, st.LOG_MAX_BYTES)
+        self.assertEqual(rot[0].backupCount, st.LOG_BACKUPS)
 
 
 class TestPct(unittest.TestCase):

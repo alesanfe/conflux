@@ -5,6 +5,7 @@ resolución, latencia por ruta (avg/p50/p95/p99/max), fails de disyuntor por
 host y tamaños de caché. Todo gauge/counter — Prometheus scrapea cuando quiere.
 """
 from conflux.core.state import (
+    CLOCK,
     COOLDOWN,
     HEALTH,
     SOURCES,
@@ -17,7 +18,6 @@ from conflux.core.state import (
     _rts,
     manifests,
 )
-import time
 
 _H2 = '# HELP {n} {h}\n# TYPE {n} {t}\n'
 
@@ -35,7 +35,7 @@ def _pct(vals, q):
 
 
 def _metrics_text():
-    now = time.time()
+    now = CLOCK.time()
     out = [_H2.format(n='conflux_source_requests_total',
                       h='Respuestas upstream ok/fail por fuente', t='counter')]
     for n, h in HEALTH.items():

@@ -727,9 +727,10 @@ class TestCollectSkipGuard(unittest.TestCase):
         """t == cd[0] -> expirado -> None (Lt@61: <= lo contaría vigente)."""
         now = time.time()
         st.COOLDOWN['Foo'] = (now, 'cuota')
+        st.CLOCK.set(st.FakeClock(now))
+        self.addCleanup(st.CLOCK.reset)
         with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
-             mock.patch.object(S, '_skip_manifest', return_value=None), \
-             mock.patch.object(S.time, 'time', return_value=now):
+             mock.patch.object(S, '_skip_manifest', return_value=None):
             self.assertIsNone(S._collect_skip(0, 'movie', 'tt1', set()))
 
 

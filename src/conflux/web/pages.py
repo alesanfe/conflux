@@ -2,10 +2,10 @@
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import threading
-import time
 
 from conflux.app.bg import _prefetch_catalogs
 from conflux.core.cfg import _PROF, _save_cfg, load_config
+from conflux.core.state import CLOCK
 from conflux.core.state import (
     _DISABLED,
     _SERVED,
@@ -28,7 +28,7 @@ from conflux.domain.manifest import build_manifest
 # ---- servidor ----
 def _health_page():
     """Estado por fuente: contrib, cooldowns, fallos, latencias (observabilidad)."""
-    now = time.time()
+    now = CLOCK.time()
     return {'sources': {n: dict(h, cd_min=round((COOLDOWN[n][0]-now)/60), cd_motivo=COOLDOWN[n][1])
                         if n in COOLDOWN and COOLDOWN[n][0] > now else dict(h)
                         for n, h in HEALTH.items()},
@@ -194,7 +194,7 @@ def _login_page(to='/admin', err=''):
 
 
 def _admin_page():
-    now = time.time()
+    now = CLOCK.time()
     rows = []
     for n, h in HEALTH.items():
         cd = COOLDOWN.get(n, (0, ''))

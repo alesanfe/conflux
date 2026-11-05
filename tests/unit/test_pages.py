@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import patch
 
+import conflux.core.state as st
 import conflux.web.pages as pg
 
 
@@ -112,8 +113,11 @@ class TestHealthPageDatos(unittest.TestCase):
             pg._fails['dead'] = (3, now)
             pg._rtime['/x'] = (3, 100.0, 50.0)
             pg._rts['/x'] = [10, 20, 30, 40]
-            with patch.object(pg.time, 'time', return_value=now):
-                d = pg._health_page()                  # reloj fijo: sin deriva al borde .5
+            st.CLOCK.set(st.FakeClock(now))            # reloj fijo: sin deriva al borde .5
+            try:
+                d = pg._health_page()
+            finally:
+                st.CLOCK.reset()
         finally:
             snap.restore()
         self.assertEqual(d['sources']['A']['cd_min'], 12)      # 690/60 redondeado

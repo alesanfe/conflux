@@ -9,7 +9,7 @@ import urllib.parse
 
 import requests
 
-from conflux.core.state import _SESS, HOST_CD, HOST_OPEN, UA, _fails, _sess_lock
+from conflux.core.state import CLOCK, _SESS, HOST_CD, HOST_OPEN, UA, _fails, _sess_lock
 
 
 def _session(host):
@@ -27,7 +27,7 @@ def _session(host):
 def _strike(host):
     """Strike del disyuntor por host + poda de entradas ya caducadas
     (st[1] viejo = cooldown pasado: el registro es peso muerto)."""
-    now = time.time()
+    now = CLOCK.time()
     _fails[host] = (_fails.get(host, (0, 0))[0] + 1, now)
     if len(_fails) > 200:                                   # acotado: hosts muertos
         for h, (_n, ts) in list(_fails.items()):            # aleatorios no se acumulan
@@ -61,7 +61,7 @@ def fetch(url, timeout=7):
     """GET JSON con sesión por-host, reintentos y disyuntor por host."""
     host = urllib.parse.urlsplit(url).netloc
     st = _fails.get(host)
-    if st and st[0] >= HOST_OPEN and time.time() - st[1] < HOST_CD:
+    if st and st[0] >= HOST_OPEN and CLOCK.time() - st[1] < HOST_CD:
         return None                                          # disyuntor abierto: host muerto = fail-fast
     for att in range(2):                                        # 1 reintento con backoff: flakes transitorios
         try:

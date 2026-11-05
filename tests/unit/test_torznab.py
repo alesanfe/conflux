@@ -123,7 +123,7 @@ class TestProwlarrIds(unittest.TestCase):
         tz._TZ_IDS.clear(); tz._TZ_IDS.update(self._old)
 
     def test_cache_fresca_no_llama(self):
-        tz._TZ_IDS.update(ts=tz.time.time(), ids=[1, 2])
+        tz._TZ_IDS.update(ts=tz.CLOCK.time(), ids=[1, 2])
         with patch.object(tz, '_session') as ses:
             self.assertEqual(tz._tz_prowlarr_ids('http://p', 'k'), [1, 2])
             ses.assert_not_called()
@@ -147,7 +147,7 @@ class TestProwlarrIds(unittest.TestCase):
         """now-ts == 600 -> stale, refetch (Lt@33: <= creería fresco; 600+1@33)."""
         from freezegun import freeze_time
         with freeze_time('2025-06-01 12:00:00'):
-            tz._TZ_IDS.update(ts=tz.time.time() - 600, ids=[1])
+            tz._TZ_IDS.update(ts=tz.CLOCK.time() - 600, ids=[1])
         r = MagicMock(ok=True)
         r.json.return_value = [{'id': 2}]
         s2 = MagicMock(); s2.get.return_value = r
@@ -158,7 +158,7 @@ class TestProwlarrIds(unittest.TestCase):
 
     def test_cache_casi_vieja_sirve(self):
         """now-ts = 599 -> cache hit (600+1@33: 601 lo creería viejo)."""
-        tz._TZ_IDS.update(ts=tz.time.time() - 599, ids=[7])
+        tz._TZ_IDS.update(ts=tz.CLOCK.time() - 599, ids=[7])
         with patch.object(tz, '_session') as ses:
             self.assertEqual(tz._tz_prowlarr_ids('http://p', 'k'), [7])
             ses.assert_not_called()

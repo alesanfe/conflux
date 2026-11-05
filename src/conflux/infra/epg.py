@@ -20,7 +20,7 @@ import unicodedata
 import urllib.request
 import defusedxml.ElementTree as ET   # XML descargado: defused (igual que torznab)
 
-from conflux.core.state import _POOL_BG, _ROOT, _atomic_json, _log, CFG
+from conflux.core.state import CLOCK, _POOL_BG, _ROOT, _atomic_json, _log, CFG
 from conflux.infra.net import _public_url
 
 _EPG_FILE = os.path.join(_ROOT, 'epg-cache.json')
@@ -91,7 +91,7 @@ def _epg_channels(data, m3u_metas):
 def _epg_programmes(root, want):
     """<programme> del XMLTV -> {dia: {cid: [progs]}} — solo canales mapeados
     en la ventana ayer -> +2d, ordenados por start."""
-    now = time.time()
+    now = CLOCK.time()
     lo, hi = now - 26 * 3600, now + 2 * 86400         # ayer -> +2d
     days: dict = {}
     for p in root.iter('programme'):
@@ -148,7 +148,7 @@ def _reload():
                 if d.get('days'):
                     _STATE.update(d)
                     _log.info('epg: cache disco (%d canales)', len(d.get('map', {})))
-                    if time.time() - d.get('fetched', 0) < _EPG_TTL:
+                    if CLOCK.time() - d.get('fetched', 0) < _EPG_TTL:
                         return
             except (OSError, ValueError):
                 pass
@@ -158,7 +158,7 @@ def _reload():
         built = _build(metas)
         if built:
             _STATE['map'], _STATE['days'] = built['map'], built['days']
-            _STATE['fetched'] = time.time()
+            _STATE['fetched'] = CLOCK.time()
             _atomic_json(_EPG_FILE, _STATE)
     except Exception as e:                           # noqa: BLE001 — bg: nunca romper
         _log.warning('epg reload: %r', e)
@@ -168,7 +168,7 @@ def _reload():
 
 def epg_kick():
     """Dispara una recarga en background si el EPG falta o está viejo."""
-    stale = (not _STATE['days']) or time.time() - _STATE['fetched'] > _EPG_TTL
+    stale = (not _STATE['days']) or CLOCK.time() - _STATE['fetched'] > _EPG_TTL
     if not stale:
         return
     with _LOAD_LOCK:

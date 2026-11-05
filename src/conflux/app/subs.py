@@ -2,12 +2,11 @@
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import threading
-import time
 
 import requests
 
 from conflux.core.cfg import _cfgget
-from conflux.core.state import PORT, as_dict
+from conflux.core.state import CLOCK, PORT, as_dict
 from conflux.domain.sources import _resolve_sid
 from conflux.infra.net import _session
 
@@ -70,7 +69,7 @@ def _os_login():
     if not (key and user and pw):
         return None
     with _OS_LOCK:                                       # dos /s/ concurrentes:
-        if _OS_TOK.get('token') and time.time() - _OS_TOK.get('ts', 0) < 23 * 3600:
+        if _OS_TOK.get('token') and CLOCK.time() - _OS_TOK.get('ts', 0) < 23 * 3600:
             return _OS_TOK['token']                      # un login basta
         return _os_login_now(key, user, pw)
 
@@ -84,7 +83,7 @@ def _os_login_now(key, user, pw):
             headers={'Api-Key': key, 'User-Agent': 'conflux 1.0'}, timeout=8).json()
         tok = d.get('token')
         if tok:
-            _OS_TOK['token'], _OS_TOK['ts'] = tok, time.time()
+            _OS_TOK['token'], _OS_TOK['ts'] = tok, CLOCK.time()
         return tok
     except (requests.RequestException, ValueError):
         return None

@@ -23,7 +23,7 @@ import threading
 import time
 
 from conflux.core.cfg import _cfgget
-from conflux.core.state import _POOL_BG, _ROOT
+from conflux.core.state import CLOCK, _POOL_BG, _ROOT
 
 _SEED_PATH = os.path.join(_ROOT, '.seed-cache.json')
 
@@ -48,7 +48,7 @@ def _seed_load(path):
             return
         with open(path, encoding='utf-8') as f:
             data = json.load(f)
-        now = time.time()
+        now = CLOCK.time()
         for h, (sd, ts) in data.items():
             if isinstance(sd, int) and now - ts < _TTL:
                 _SEED[h] = (sd, ts)
@@ -58,7 +58,7 @@ def _seed_load(path):
 
 def _seed_save(path):
     """Persiste veredictos (tmp+rename, throttle 60s)."""
-    now = time.time()
+    now = CLOCK.time()
     if now - _LAST_SAVE[0] < 60:
         return
     _LAST_SAVE[0] = now
@@ -385,7 +385,7 @@ def _scrape_submit(items):
 def _hash_known(h):
     """Veredicto fresco del hash -> seeds | None (desconocido o caducado)."""
     v = _SEED.get(h)
-    if v is None or time.time() - v[1] > _TTL:
+    if v is None or CLOCK.time() - v[1] > _TTL:
         return None
     return v[0]
 

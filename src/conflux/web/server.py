@@ -24,6 +24,7 @@ from conflux.app.subs import _sub_download, handle_subtitles
 from conflux.core.cfg import _PROF, _profile_load, load_config
 from conflux.core.state import (
     _MF_CACHE,
+    _REQ_ID,
     CFG,
     PORT,
     SOURCES,
@@ -35,6 +36,7 @@ from conflux.core.state import (
     _rts,
     log_ev,
     manifests,
+    new_req_id,
 )
 from conflux.domain.catalog import handle_catalog
 from conflux.domain.sources import _load_manifests_cache, _persist_manifests, refresh_manifests
@@ -72,6 +74,8 @@ class H(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Cache-Control', 'no-store')     # respuestas dinámicas
+        self.send_header('X-Request-Id', _REQ_ID.get() or '-')
         if gz:
             self.send_header('Content-Encoding', 'gzip')
         self.send_header('Content-Length', str(len(body)))
@@ -192,6 +196,12 @@ class H(BaseHTTPRequestHandler):
         if p in ('/admin', '/configure') and not self._authd():
             self._html(_login_page(p), 401)                     # form login -> cookie HttpOnly
             return True
+        if p == '/health/live':                                 # proceso responde (cheap)
+            self.reply({'status': 'alive', 'version': _version()})
+            return True
+        if p == '/health/ready':                                # puede servir (fuentes/caches)
+            self.reply(_ready_page())
+            return True
         if p in ('/manifest.json', '/health'):
             self.reply({'/manifest.json': _manifest_reply,
                         '/health': _health_page}[p]())
@@ -208,6 +218,7 @@ class H(BaseHTTPRequestHandler):
     # pylint: disable=too-many-return-statements
     def do_GET(self):
         """Router GET: stream/catalog/meta/subtitles + páginas y redirects."""
+        new_req_id()                                            # correlation id por request
         p = self._profile(urllib.parse.unquote(self.path.split('?', 1)[0]))  # sin query string
         if self._pages(p):
             return None
@@ -292,6 +303,7 @@ class H(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(b)))
         self.end_headers()
         self.wfile.write(b)
@@ -313,6 +325,7 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(b)
     def do_POST(self):
         """Router POST: /login, /configure, /reload."""
+        new_req_id()
         p = self.path.split('?', 1)[0]
         if p == '/login':                                        # fuera del gate: es el gate
             return self._login()
@@ -342,7 +355,17 @@ class H(BaseHTTPRequestHandler):
 
     def _login(self):
         """POST /login: token correcto -> cookie HttpOnly + 302 a destino.
-        El token viaja UNA vez en el body del POST — nunca en URL/historial."""
+        El token viaja UNA vez en el body del POST — nunca en URL/historial.
+        Rate limit por IP: 10 intentos/min (fuerza bruta local)."""
+        ip = getattr(self, 'client_address', ('local',))[0]
+        now = time.time()
+        tries = _LOGIN_TRIES.setdefault(ip, deque())
+        while tries and now - tries[0] > 60:
+            tries.popleft()
+        if len(tries) >= 10:
+            return self.reply({'err': 'too many login attempts',
+                               'code': 'CFX-AUTH-010'}, 429)
+        tries.append(now)
         form = self._form()
         tok = _TOK_SAFE.sub('', form.get('token', [''])[0])[:128]
         to = form.get('to', ['/admin'])[0]
@@ -370,6 +393,38 @@ class H(BaseHTTPRequestHandler):
 _SECRET_RX = re.compile(r'key|token|secret|pass|admin', re.IGNORECASE)
 
 _TOK_SAFE = re.compile(r'[^A-Za-z0-9._~+-]')            # cookie/header: solo charset de token
+
+_LOGIN_TRIES: dict = {}                                 # ip -> deque(ts) — rate limit /login
+_STARTED = time.time()
+
+
+def _version():
+    """Versión del paquete (pyproject) con fallback seguro."""
+    try:
+        import importlib.metadata
+        return importlib.metadata.version('conflux')
+    except Exception:
+        return '0+local'
+
+
+def _ready_page():
+    """Readiness (CONFLUX-026): fuentes con manifest + breakers abiertos."""
+    from conflux.core.state import _fails, HEALTH, COOLDOWN
+    now = time.time()
+    src_ok = sum(1 for m in manifests if m)
+    open_brk = [h for h, (st_, ts) in _fails.items()
+                if st_ >= 4 and now - ts < 60]
+    degraded = [n for n, h in HEALTH.items() if h.get('streak', 0) >= 3]
+    status = 'ready' if src_ok else 'starting'
+    if open_brk or degraded:
+        status = 'degraded'
+    return {'status': status, 'version': _version(),
+            'uptime_s': round(now - _STARTED, 1),
+            'sources': {'total': len(SOURCES), 'with_manifest': src_ok,
+                        'degraded': sorted(degraded)[:20]},
+            'breakers_open': sorted(open_brk),
+            'cooldowns': len(COOLDOWN),
+            'cfg_ok': bool(CFG), 'ts': int(now)}
 
 
 def _cfg_public(cfg):

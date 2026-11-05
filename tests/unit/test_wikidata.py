@@ -70,7 +70,7 @@ class TestWikidata(unittest.TestCase):
         self.assertEqual(seen, [6])
 
     def test_cache_hit_sin_fetch(self):
-        W._wd_c['UCX'] = (W.time.time(), {'country': 'JP'})
+        W._wd_c['UCX'] = (W.CLOCK.time(), {'country': 'JP'})
         with patch.object(W, 'fetch', side_effect=AssertionError('no fetch')):
             self.assertEqual(W._wikidata('UCX'), {'country': 'JP'})
 

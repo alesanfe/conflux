@@ -1,10 +1,12 @@
 """Estado compartido: config, cachés, health, pools y logging."""
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import contextvars
 import json
 import logging
 import logging.handlers
 import os
+import re
 import sys
 import threading
 import time
@@ -17,16 +19,141 @@ _ROOT = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
              os.path.dirname(os.path.abspath(__file__))))))
 _LOG_FILE = os.environ.get('CONFLUX_LOG', os.path.join(_ROOT, 'conflux.log'))
 
-_handlers: list[logging.Handler] = []
-if sys.stderr is not None:                            # consola si la hay (pythonw: None)
-    _handlers.append(logging.StreamHandler())
-try:
-    _handlers.append(logging.handlers.RotatingFileHandler(
-        _LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=1, encoding='utf-8'))
-except OSError:                                       # log bloqueado: solo consola
-    pass
-logging.basicConfig(level=logging.INFO, format='%(message)s',
-                    handlers=_handlers or [logging.NullHandler()])
+
+class FakeClock:
+    """Reloj determinista para tests: avanza solo cuando se le dice."""
+
+    def __init__(self, t0=1_700_000_000.0):
+        self._t = t0
+
+    def time(self):
+        return self._t
+
+    def monotonic(self):
+        return self._t
+
+    def advance(self, seconds):
+        self._t += seconds
+        return self._t
+
+
+class _Clock:
+    """Singleton delegable (CONFLUX-003). Producción: sistema. Tests:
+    `CLOCK.fake()` devuelve un FakeClock que gobierna todo el runtime;
+    `CLOCK.reset()` restaura. Delegar (no reasignar) hace que los
+    `from state import CLOCK` ya escritos vean el fake sin rebind."""
+
+    def __init__(self):
+        self._d = None                       # None -> sistema
+
+    def fake(self, t0=1_700_000_000.0):
+        self._d = FakeClock(t0)
+        return self._d
+
+    def set(self, clock):
+        self._d = clock
+        return clock
+
+    def reset(self):
+        self._d = None
+
+    def time(self):
+        return self._d.time() if self._d is not None else time.time()
+
+    def monotonic(self):
+        return self._d.monotonic() if self._d is not None else time.monotonic()
+
+
+CLOCK = _Clock()
+
+
+# ---- logging: nivel + rotación + redacción de secretos + correlation id ----
+
+_REQ_ID: contextvars.ContextVar = contextvars.ContextVar('req_id', default='')
+
+LOG_MAX_BYTES = 5 * 1024 * 1024          # 5 MiB por fichero
+LOG_BACKUPS = 5                           # 5 copias rotadas
+_LEVELS = {'DEBUG': logging.DEBUG, 'INFO': logging.INFO, 'WARNING': logging.WARNING,
+           'ERROR': logging.ERROR, 'CRITICAL': logging.CRITICAL}
+
+# claves de config cuyo valor NUNCA puede aparecer en logs
+_SECRET_KEYS = {'debrid_key', 'torznab_key', 'torzapi_key', 'mdblist_key',
+                'rpdb_key', 'opensubtitles_key', 'opensubtitles_pass',
+                'admin_token', 'newznab_key', 'sabnzbd_key', 'easynews_pass',
+                'nntp_pass', 'authkey', 'stremio_authkey'}
+_TOKENISH = re.compile(r'(?i)(authKey|api_key|apikey|token|passwd|password'
+                       r'|secret|bearer)[\s"\':=]+[A-Za-z0-9+/=_\-.]{8,}')
+
+
+def _scrub(text):
+    """Redacción central: secreto configurado -> ***, token-ish -> ***."""
+    s = str(text)
+    for k in _SECRET_KEYS:
+        v = CFG.get(k)                       # CFG existe tras load_config
+        if isinstance(v, str) and len(v) >= 6:
+            s = s.replace(v, '***')
+    return _TOKENISH.sub(lambda m: (m.group(1) + '=***') if m.group(1) else '***', s)
+
+
+class _RedactFilter(logging.Filter):
+    """Aplica _scrub al mensaje formateado de TODOS los handlers."""
+
+    def filter(self, record):
+        try:
+            record.msg = _scrub(record.getMessage())
+            record.args = ()
+        except Exception:                    # nunca bloquear un log
+            pass
+        return True
+
+
+def _log_level():
+    """Precedencia: CONFLUX_LOG_LEVEL env > config.json log_level > INFO.
+    (--log-level de CLI llama a set_log_level, que gana a todo.)"""
+    raw = (os.environ.get('CONFLUX_LOG_LEVEL') or '').strip().upper()
+    if raw in _LEVELS:
+        return _LEVELS[raw]
+    cfg = globals().get('CFG') or {}                # CFG nace tras _setup_logging()
+    raw = str(cfg.get('log_level') or '').strip().upper()
+    return _LEVELS.get(raw, logging.INFO)
+
+
+def set_log_level(name):
+    """Cambia el nivel del root logger en caliente (CLI --log-level)."""
+    lvl = _LEVELS.get(str(name).strip().upper())
+    if lvl is None:
+        raise ValueError(f'nivel de log inválido: {name!r} '
+                         f'(válidos: {", ".join(_LEVELS)})')
+    logging.getLogger().setLevel(lvl)
+    return lvl
+
+
+def apply_config_level():
+    """Tras load_config(): aplica env > config > INFO (si CLI no fijó nivel)."""
+    logging.getLogger().setLevel(_log_level())
+
+
+def _setup_logging(level=None):
+    handlers: list[logging.Handler] = []
+    if sys.stderr is not None:                    # consola si la hay (pythonw: None)
+        handlers.append(logging.StreamHandler())
+    try:
+        os.makedirs(os.path.dirname(_LOG_FILE) or '.', exist_ok=True)
+        handlers.append(logging.handlers.RotatingFileHandler(
+            _LOG_FILE, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS,
+            encoding='utf-8'))
+    except OSError:                               # log bloqueado: solo consola
+        pass
+    logging.basicConfig(level=level or _log_level(), format='%(message)s',
+                        handlers=handlers or [logging.NullHandler()])
+    root = logging.getLogger()
+    redact = _RedactFilter()
+    for h in handlers:
+        h.addFilter(redact)
+    return root
+
+
+_setup_logging()
 
 
 
@@ -143,7 +270,9 @@ _CFG_DEFAULTS = {'m3u_path': '', 'debrid_provider': '', 'debrid_key': '',
                  'nntp_ssl': True, 'nntp_connections': 5,
                  'scrapers': ['yts', 'eztv', 'nyaa', 'tpb'], 'torzapi_key': '',
                  'max_connections': 64,
-                 'sabnzbd_url': '', 'sabnzbd_key': '', 'scraper_rss': []}
+                 'sabnzbd_url': '', 'sabnzbd_key': '', 'scraper_rss': [],
+                 'log_level': '', 'config_version': 1,
+                 'stremio_authkey': '', 'authkey_scrape': True}
 
 CFG: dict[str, Any] = dict(_CFG_DEFAULTS)
 
@@ -193,11 +322,6 @@ def _atomic_json(path, obj):
     os.replace(tmp, path)
 
 
-def log_ev(ev, **kv):
-    """Un evento = una línea JSON — grep/journalctl -o json-pretty friendly."""
-    _log.info(json.dumps({'ev': ev, **kv}, separators=(',', ':')))
-
-
 def _pct(vals, q):
     if not vals:
         return 0
@@ -217,19 +341,19 @@ def _health(name, ok, err='', n=0):
     h = HEALTH.setdefault(name, {'ok': 0, 'fail': 0, 'last': 0, 'err': '', 'n': 0, 'streak': 0})
     h['ok' if ok else 'fail'] += 1
     h['streak'] = 0 if ok else h.get('streak', 0) + 1
-    h['last'], h['err'], h['n'] = time.time(), err, n
+    h['last'], h['err'], h['n'] = CLOCK.time(), err, n
 
 
 def _cset(cache, key, val):
     if len(cache) > 400:
         for k, _ in sorted(cache.items(), key=lambda kv: kv[1][0])[:100]:
             cache.pop(k, None)
-    cache[key] = (time.time(), val)
+    cache[key] = (CLOCK.time(), val)
 
 
 def _cget(cache, key):
     ent = cache.get(key)
-    return ent[1] if ent and time.time() - ent[0] < CACHE_TTL else None
+    return ent[1] if ent and CLOCK.time() - ent[0] < CACHE_TTL else None
 
 
 def _meta_title(stype, sid):
@@ -255,6 +379,27 @@ STALE_MAX = 24*3600   # techo del stale-if-error: upstream muerto >24h = vacío
 def _cstale(cache, key):
     """Último valor aunque caducado (max 24h): mejor dato viejo que 'Failed to fetch'."""
     ent = cache.get(key)
-    return ent[1] if ent and time.time() - ent[0] < STALE_MAX else None
+    return ent[1] if ent and CLOCK.time() - ent[0] < STALE_MAX else None
 
 _YEARS  = [str(y) for y in range(time.gmtime().tm_year, time.gmtime().tm_year - 12, -1)]
+
+
+def submit_ctx(pool, fn, *a, **kw):
+    """pool.submit propagando contextvars (correlation id) al hilo worker."""
+    ctx = contextvars.copy_context()
+    return pool.submit(ctx.run, lambda: fn(*a, **kw))
+
+
+def new_req_id():
+    """Id de correlación por request (8 hex); lo fija el handler HTTP."""
+    import secrets
+    _REQ_ID.set(secrets.token_hex(4))
+    return _REQ_ID.get()
+
+
+def log_ev(ev, **kv):
+    """Un evento = una línea JSON — grep/journalctl -o json-pretty friendly."""
+    rid = _REQ_ID.get()
+    if rid:
+        kv.setdefault('rid', rid)
+    _log.info(json.dumps({'ev': ev, **kv}, separators=(',', ':')))

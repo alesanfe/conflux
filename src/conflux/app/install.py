@@ -34,6 +34,7 @@ import importlib
 winreg = (importlib.import_module('winreg')
           if sys.platform == 'win32' else None)
 
+from conflux.core import state                     # noqa: E402
 from conflux.core.state import _log, _atomic_json   # noqa: E402
 
 PROXY = 'http://127.0.0.1:9700'
@@ -440,9 +441,23 @@ def uninstall(say=_log.info):
     say('install: desinstalado')
 
 
+def _apply_log_level(argv):
+    """--log-level=X | --log-level X (CLI > env > config > INFO)."""
+    for i, a in enumerate(argv):
+        lvl = a.split('=', 1)[1] if a.startswith('--log-level=') else (
+            argv[i + 1] if a == '--log-level' and i + 1 < len(argv) else None)
+        if lvl is not None:
+            try:
+                state.set_log_level(lvl)
+            except ValueError as e:
+                _log.warning('%s', e)
+            return
+
+
 def cli_entry(argv=None):
     """Decide el arranque del binario. Devuelve True si debe seguir a main()."""
     argv = list(sys.argv[1:] if argv is None else argv)
+    _apply_log_level(argv)
     if not getattr(sys, 'frozen', False):
         return 'uninstall' not in argv         # dev: sirve salvo uninstall
     if 'uninstall' in argv:

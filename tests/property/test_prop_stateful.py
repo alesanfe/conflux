@@ -52,6 +52,10 @@ class BreakerMachine(RuleBasedStateMachine):
         self.last_ts = 0.0
         self._p_time = patch.object(net, 'time', types.SimpleNamespace(
             time=lambda: self.clock[0], sleep=lambda _s: None))
+        # breaker ahora lee el reloj inyectable CLOCK (no time.time)
+        self._p_clock = patch.object(net, 'CLOCK', types.SimpleNamespace(
+            time=lambda: self.clock[0], monotonic=lambda: self.clock[0]))
+        self._p_clock.start()
         self._p_sess = patch.object(net, '_session', self._session)
         self._p_time.start()
         self._p_sess.start()
@@ -59,6 +63,7 @@ class BreakerMachine(RuleBasedStateMachine):
     def teardown(self):
         self._p_sess.stop()
         self._p_time.stop()
+        self._p_clock.stop()
         net._fails.clear()
         net._fails.update(self._saved)
 

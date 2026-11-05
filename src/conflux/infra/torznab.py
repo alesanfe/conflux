@@ -2,10 +2,9 @@
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import re
-import time
 import urllib.parse
 
-from conflux.core.state import CFG, _POOL, _health
+from conflux.core.state import CFG, CLOCK, _POOL, _health
 from conflux.infra.net import _session
 
 try:
@@ -37,7 +36,7 @@ _TZ_IDS: dict = {'ts': 0.0, 'ids': None}   # indexers habilitados en Prowlarr (c
 
 def _tz_prowlarr_ids(base, key):
     """Ids de indexers habilitados vía /api/v1/indexer (cache 600s; None = error)."""
-    now = time.time()
+    now = CLOCK.time()
     if now - _TZ_IDS['ts'] < 600:
         return _TZ_IDS['ids']
     ids = None

@@ -3,11 +3,10 @@
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import re
 import threading
-import time
 import urllib.parse
 from concurrent.futures import as_completed
 
-from conflux.core import cfg
+from conflux.core import cfg, state as _st
 from conflux.core.cfg import _eff_disabled_for, _es_pat, _pcfg, _strs
 from conflux.core.state import (
     _POOL,
@@ -58,7 +57,7 @@ def _collect_skip(i, stype, sid, dis):
     if r:
         return r
     cd = COOLDOWN.get(name)
-    if cd and time.time() < cd[0]:                                # cuota o fallos: saltar
+    if cd and _st.CLOCK.time() < cd[0]:                                # cuota o fallos: saltar
         return f'en espera ({cd[1]})'
     return None
 
@@ -78,7 +77,7 @@ def _collect_one(i, stype, sid, dis):
         return name, [], 0
     name, d, ss = _collect_fetch(i, stype, sid)
     if _quota_hit(ss):
-        COOLDOWN[name] = (time.time() + COOLDOWN_T, 'cuota')       # disyuntor 12h
+        COOLDOWN[name] = (_st.CLOCK.time() + COOLDOWN_T, 'cuota')       # disyuntor 12h
         _health(name, True, 'cuota agotada → espera 12h', 0)
         return name, [], 0
     _collect_health(name, d, ss)
@@ -89,7 +88,7 @@ def _collect_health(name, d, ss):
     usable = sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
     _health(name, d is not None, '' if d is not None else 'timeout/error', usable)
     if d is None and HEALTH[name]['streak'] >= FAIL_STREAK:        # racha de fallos: descanso
-        COOLDOWN[name] = (time.time() + FAIL_CD_T, 'fallos')
+        COOLDOWN[name] = (_st.CLOCK.time() + FAIL_CD_T, 'fallos')
 
 
 def _collect_fetch(i, stype, sid):
@@ -433,13 +432,13 @@ def _url_head(u):
     try:
         r = _session(urllib.parse.urlsplit(u).netloc).head(u, timeout=3, allow_redirects=True)
         if r.status_code < 400:
-            _URL_OK[u] = time.time()
+            _URL_OK[u] = _st.CLOCK.time()
             _URL_BAD.pop(u, None)
         else:
-            _URL_BAD[u] = (2, time.time())                 # 4xx/5xx: muerte segura
+            _URL_BAD[u] = (2, _st.CLOCK.time())                 # 4xx/5xx: muerte segura
     except Exception:                                    # noqa: BLE001 — timeout/SSL/cualquiera = strike
         st, _ = _URL_BAD.get(u, (0, 0))
-        _URL_BAD[u] = (st + 1, time.time())                # timeout: strike
+        _URL_BAD[u] = (st + 1, _st.CLOCK.time())                # timeout: strike
 
 
 def _url_prune():
@@ -454,7 +453,7 @@ def _url_health(streams):
     """Streams http: los confirmados muertos salen de la lista; los desconocidos
     se HEAD-encolan async (máx 15, 3s). Fallo transitorio (timeout) solo cuenta
     medio strike — 2 strikes o un 4xx/5xx confirman muerte."""
-    now = time.time()
+    now = _st.CLOCK.time()
     if len(_URL_BAD) + len(_URL_OK) > 2000:
         _url_prune()
     todo = _url_todo(streams, now)          # antes de filtrar: los muertos también
