@@ -41,6 +41,10 @@ python3 -m mypy                             # type-check (config en pyproject)
 # requirements.txt = lock con hashes (pip-compile desde requirements.in)
 # escrituras de ficheros de estado SIEMPRE via _atomic_json (tmp+rename):
 # config.json, .manifests-cache.json — un corte a mitad de write no corrompe
+# conflux.exe (PyInstaller, tag v*): self-install — se copia a
+# %LOCALAPPDATA%\Conflux, Run key HKCU autostart, registra addon en Stremio
+# tras /health (marca addon.ok); `conflux.exe uninstall|install|addon|serve`
+# (conflux/app/install.py + conflux/infra/stremio.py)
 # CI: matrix py3.11-3.13 + pip-audit + detect-secrets + SBOM + docker build
 # e2e es VCR: replay de tests/fixtures/e2e_responses.json.gz (395 urls).
 # Regenerar tras tocar routing: python3 scripts/record_e2e.py && gzip -9kf

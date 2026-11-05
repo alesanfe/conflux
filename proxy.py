@@ -53,4 +53,8 @@ __all__ = [
 
 
 if __name__ == '__main__':
-    main()
+    # exe frozen (Windows): install/uninstall/addon/self-install en 1er arranque.
+    # Dev (`python proxy.py`) y linux: cli_entry devuelve True sin tocar nada.
+    from conflux.app.install import cli_entry
+    if cli_entry():
+        main()
