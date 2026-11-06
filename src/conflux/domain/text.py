@@ -114,7 +114,8 @@ def _ef_lang(raw, text):
 def _ef_audio(text):
     au = list(dict.fromkeys(AUDIO_MAP.get(x.upper(), x.upper().title()) for x in RE_AUDIO.findall(text)))
     au.sort(key=lambda a: 1 if re.fullmatch(r'[257]\.1', a) else 0)    # marca antes que canales
-    return ' '.join(au[:3])
+    # canales adyacentes con '/' — '7.1 5.1' se lee '7.15.1' en la card
+    return re.sub(r'(?<=\d\.\d) (?=\d\.\d)', '/', ' '.join(au[:3]))
 
 
 def _ef_dur(bh, text):

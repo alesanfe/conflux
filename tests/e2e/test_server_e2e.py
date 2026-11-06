@@ -176,6 +176,21 @@ class ServerE2E(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn('sources', h)
 
+    def test_metrics_200_prometheus(self):
+        code, b = _get(self.port, '/metrics', raw=True)
+        self.assertEqual(code, 200)
+        self.assertIn(b'conflux_source_requests_total', b)
+
+    def test_health_live_200(self):
+        code, d = _get(self.port, '/health/live')
+        self.assertEqual(code, 200)
+        self.assertEqual(d.get('status'), 'alive')
+
+    def test_health_ready_200_estado_valido(self):
+        code, d = _get(self.port, '/health/ready')
+        self.assertEqual(code, 200)
+        self.assertIn(d.get('status'), ('ready', 'starting', 'degraded'))
+
     def test_admin_200_html(self):
         code, b = _get(self.port, '/admin', raw=True)
         self.assertEqual(code, 200)

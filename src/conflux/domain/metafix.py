@@ -1,5 +1,8 @@
 """Normalización y enriquecimiento de metas Stremio (poster/logo/awards/vídeos)."""
 # pylint: disable=broad-exception-caught,line-too-long
+import html as _html
+import re as _re
+
 import requests
 
 from conflux.core.cfg import _cfgget
@@ -13,6 +16,20 @@ from conflux.infra.wikidata import _wikidata
 
 _YT_AWARDS = [(100e6, 'Red Diamond'), (50e6, 'Ruby'), (10e6, 'Diamond'),
               (1e6, 'Gold'), (1e5, 'Silver')]
+
+_RE_TAG = _re.compile(r'<[^>]+>')
+_RE_BLOCK = _re.compile(r'<\s*(?:br|/p|/li|/div)\b[^>]*>', _re.IGNORECASE)
+
+
+def _fix_meta_html(m):
+    """stremio-web renderiza description como TEXTO: el HTML de upstreams
+    (AniList manda '<i>título</i><br>...') sale literal en la ficha.
+    Bloques -> espacio, resto de tags fuera, entidades decodificadas."""
+    d = m.get('description')
+    if not isinstance(d, str) or '<' not in d:
+        return
+    d = _html.unescape(_RE_TAG.sub('', _RE_BLOCK.sub(' ', d)))
+    m['description'] = _re.sub(r'\s{2,}', ' ', d.replace('\xa0', ' ')).strip()
 
 
 
@@ -152,6 +169,7 @@ def _fix_metas(d, deep=False):
     for m in ms:
         if not isinstance(m, dict):
             continue
+        _fix_meta_html(m)
         yt = m.get('yt_id')
         i = str(m.get('id') or '')
         if not yt and i.startswith('yt_id:'):

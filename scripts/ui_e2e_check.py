@@ -3,9 +3,13 @@
 la app de Stremio puede ejercitar del addon conflux:
 
   install (manifest) -> Discover por cada tipo declarado
-  (movie/series/anime/tv/channel) -> search -> metadetails ->
-  streams torrent (movie + episodio de serie) -> stream IPTV directo
-  -> <video> reproduciendo.
+  (movie/series/anime/tv/channel) -> extras -> search -> metadetails
+  -> prefijos alien -> streams torrent (movie + serie + anime) ->
+  stream IPTV directo -> biblioteca/Continue Watching -> lifecycle.
+
+  Deja capturas numeradas en $TMP/conflux_ui_shots/ para revisión
+  visual (texto, typos, layout) — nunca tumba el E2E si una captura
+  falla.
 
 Lo que NO cubre (porque la UI nunca lo toca): /admin, /configure,
 /health*, /metrics, auth, escrituras atómicas, install/uninstall —
@@ -35,6 +39,8 @@ ADDON_URL = f"{BASE}/manifest.json"
 ADDON_ENC = urllib.parse.quote(ADDON_URL, safe="")
 WEB = os.environ.get("CONFLUX_STREMIO_WEB", "https://web.stremio.com")
 OUT_DIR = tempfile.gettempdir()
+SHOT_DIR = os.path.join(OUT_DIR, "conflux_ui_shots")
+_SHOT_N = [0]
 
 # un catálogo representativo por tipo declarado en el manifest
 CATALOGS = {
@@ -66,6 +72,19 @@ def _log(out, msg):
     out.flush()
 
 
+def _shot(pg, out, name):
+    """Captura de pantalla numerada — evidencia visual para revisar
+    texto/layout. Nunca tumba el E2E si el screenshot falla."""
+    try:
+        os.makedirs(SHOT_DIR, exist_ok=True)
+        _SHOT_N[0] += 1
+        path = os.path.join(SHOT_DIR, f"{_SHOT_N[0]:02d}_{name}.png")
+        pg.screenshot(path=path, full_page=False)
+        _log(out, f"  shot {name}: {path}")
+    except Exception as e:  # noqa: BLE001
+        _log(out, f"  shot {name} falló: {e}")
+
+
 def _video_state(pg):
     return pg.evaluate("""() => {
       const v = document.querySelector('video');
@@ -89,7 +108,7 @@ def _install(pg, out):
     time.sleep(3)
 
 
-def _catalog_renders(pg, out, tipo, catid, wait=45, expect_empty=False):
+def _catalog_renders(pg, out, tipo, catid, wait=45, expect_empty=False, shot=None):
     """Discover debe renderizar metas (poster cards) del catálogo.
     expect_empty: catálogos con extras requeridos ausentes (search sin
     query, lastvids sin biblioteca) -> 0 cards ES el comportamiento
@@ -103,6 +122,8 @@ def _catalog_renders(pg, out, tipo, catid, wait=45, expect_empty=False):
         if n > 0:
             break
         time.sleep(2)
+    if shot:
+        _shot(pg, out, shot)
     if expect_empty:
         # la vista resolvió sin excepción de app = contrato correcto
         _log(out, f"  catalog {tipo}/{catid}: {n} metas (extra req -> vacío OK)")
@@ -115,10 +136,15 @@ def _all_catalogs(pg, out):
     """Itera TODOS los catálogos del manifest vivo, no solo 1/tipo."""
     mf = json.load(urllib.request.urlopen(ADDON_URL, timeout=15))
     ok = True
+    seen = set()
     for c in mf.get("catalogs", []):
         req = {e["name"] for e in c.get("extra", []) if e.get("isRequired")}
+        shot = None
+        if c["type"] not in seen and not req:
+            shot = f"catalog_{c['type']}"
+            seen.add(c["type"])
         ok &= _catalog_renders(
-            pg, out, c["type"], c["id"], wait=25, expect_empty=bool(req)
+            pg, out, c["type"], c["id"], wait=25, expect_empty=bool(req), shot=shot
         )
     return ok
 
@@ -173,6 +199,7 @@ def _extras(pg, out):
             if n > 0:
                 break
             time.sleep(2)
+        _shot(pg, out, f"extra_{label}")
         _log(out, f"  UI extra {label}: {n} metas")
         ok &= n > 0
     return ok
@@ -205,17 +232,23 @@ def _meta_clickthrough(pg, out):
             ok = True
             break
         time.sleep(3)
+    _shot(pg, out, "detail_meta")
     _log(out, f"  clickthrough '{titulo}': detail meta={ok}")
     return ok
 
 
 def _prefix_clickthrough(pg, out):
-    """Metas con prefijos no-tt (kitsu:/yt_id:) -> detail resuelve
-    meta+streams de ids alien. Ejercita _resolve_sid vía la UI."""
+    """Metas con prefijos no-tt -> detail resuelve meta+streams de ids
+    alien. Ejercita _resolve_sid vía la UI. Los catálogos elegidos son
+    los que emiten ids alien reales (auditado en vivo)."""
     ok = True
     for tipo, catid, prefijo in (
         ("anime", "skitsu_anime_grp", "kitsu"),
         ("channel", "syoutube_channel_top", "yt_id"),
+        ("movie", "stmdb_movie_grp", "tmdb"),
+        ("movie", "sstravoii_movie_grp", "mx"),
+        ("series", "sonepace_series_seriesCatalog", "onepace"),
+        ("movie", "sdesiflix_movie_dsx-movies", "dsx"),
     ):
         _fresh_goto(pg, f"discover/{ADDON_ENC}/{tipo}/{catid}")
         cards = pg.locator(CARD_SEL)
@@ -241,6 +274,7 @@ def _prefix_clickthrough(pg, out):
         # meta renderizó: hay contenido de detail (no splash/404 vacío)
         render = len(body) > 400 and "Add to Library" in body or "Library" in body
         n_stream = pg.locator('a[class*="stream-container"]').count()
+        _shot(pg, out, f"prefix_{prefijo}")
         _log(out, f"  prefix {prefijo}: meta={render} stream-cards={n_stream}")
         ok &= render
     return ok
@@ -272,10 +306,14 @@ def _lifecycle(pg, out):
         return False
     card.get_by_text("Uninstall", exact=True).click()
     time.sleep(6)
+    _shot(pg, out, "addon_uninstalled")
     gone = nombre.lower() not in pg.locator("body").inner_text().lower()
     _log(out, f"  tras Uninstall: '{nombre}' ausente={gone}")
     # reinstalar y comprobar que el catálogo vuelve a servir
     _install(pg, out)
+    _fresh_goto(pg, "addons")
+    time.sleep(6)
+    _shot(pg, out, "addon_reinstalled")
     _fresh_goto(pg, f"discover/{ADDON_ENC}/movie/scinemeta_movie_grp")
     n = 0
     deadline = time.time() + 40
@@ -297,6 +335,7 @@ def _search(pg, out):
     box.fill(SEARCH_Q)
     box.press("Enter")
     time.sleep(10)
+    _shot(pg, out, "search_results")
     n = pg.locator(CARD_SEL).count()
     _log(out, f'  search "{SEARCH_Q}": {n} resultados')
     return n > 0
@@ -306,14 +345,32 @@ def _click_stream_and_wait_video(pg, out, budget=STREAM_WAIT_S, max_cards=40, tr
     """Pulsa tarjetas torrent (👤/⚙️) o directas hasta que <video>
     avance. Devuelve True si algún stream reprodujo."""
     cards = pg.locator('a[class*="stream-container"]')
-    deadline = time.time() + 60
-    n = 0
-    while time.time() < deadline:
-        n = cards.count()
-        if n > 0:
-            break
-        time.sleep(2)
+
+    def _count_loaded():
+        # cards visibles solo cuando el addon terminó de cargar — una
+        # card externa (WatchHub) aparece al instante y el poll salía
+        # antes de que conflux respondiera ("addons are still loading")
+        deadline = time.time() + 90
+        n = 0
+        while time.time() < deadline:
+            body = pg.locator("body").inner_text()
+            n = cards.count()
+            if n > 0 and "still loading" not in body:
+                break
+            time.sleep(2)
+        return n
+
+    n = _count_loaded()
+    if n <= 3:
+        # cold-start: el primer collect puede volver parcial dentro del
+        # budget; recargar pide el caché ya poblado del collect en curso
+        route = pg.url.split("#/", 1)[-1]
+        if route:
+            _log(out, f"  {n} cards -> recarga (collect en curso)")
+            _fresh_goto(pg, route)
+            n = _count_loaded()
     _log(out, f"  {n} stream-cards")
+    _shot(pg, out, "stream_cards")
     if n == 0:
         return False
 
@@ -351,6 +408,7 @@ def _click_stream_and_wait_video(pg, out, budget=STREAM_WAIT_S, max_cards=40, tr
             st = _video_state(pg)
             if st and st["t"] and st["t"] > 0.5:
                 _log(out, f"  video: t={st['t']:.1f}s dur={st['d']} rs={st['rs']}")
+                _shot(pg, out, "player_playing")
                 return True
             time.sleep(5)
         _log(out, "  no arrancó; siguiente")
@@ -371,6 +429,13 @@ def _series_episode(pg, out):
     Cada episodio es su propia vista detail en stremio-web: pedir
     detail/series/<meta>/<video: S:E> ejercita la resolución S:E."""
     _fresh_goto(pg, SERIES_META)
+    return _click_stream_and_wait_video(pg, out)
+
+
+def _movie(pg, out):
+    """Película: detail/movie/<id>/<id> -> streams -> play.
+    El detalle de movie usa el id como video-id (como las cards)."""
+    _fresh_goto(pg, "detail/movie/tt0137523/tt0137523")
     return _click_stream_and_wait_video(pg, out)
 
 
@@ -482,6 +547,7 @@ def _library_flow(pg, out):
             got = True
             break
         time.sleep(3)
+    _shot(pg, out, "continue_watching")
     _log(out, f"  lastvids UI muestra GoT: {got}")
     return True  # server-side ya garantiza; guest puede tardar en poblar
 
@@ -503,6 +569,7 @@ def _iptv(pg, out):
             if n > 0:
                 break
             time.sleep(2)
+        _shot(pg, out, "iptv_detail")
         href = cards.first.get_attribute("href") or ""
         _log(out, f"  {iid}: {n} stream-cards, player-href={'player' in href}")
         if n == 0 or "player" not in href:
@@ -516,6 +583,9 @@ def _iptv(pg, out):
 
 def _grab_frame(pg, out):
     try:
+        if not _video_state(pg):
+            _log(out, "  frame no capturable: sin <video> en la página")
+            return
         data = pg.evaluate("""() => {
           const v = document.querySelector('video');
           const c = document.createElement('canvas');
@@ -557,6 +627,9 @@ def main():
                 try:
                     _install(pg, out)
                     results["install addon"] = True
+                    _fresh_goto(pg, "addons")
+                    time.sleep(6)
+                    _shot(pg, out, "addons_installed")
                     _log(out, "[1] addon instalado")
 
                     if not QUICK:
@@ -582,22 +655,25 @@ def main():
                     time.sleep(6)
                     results["search"] = _search(pg, out)
 
-                    _log(out, "[7] playback serie (episodio S:E):")
+                    _log(out, "[7] playback película:")
+                    results["stream movie"] = _movie(pg, out)
+
+                    _log(out, "[8] playback serie (episodio S:E):")
                     results["stream series"] = _series_episode(pg, out)
 
-                    _log(out, "[8] playback anime (kitsu episodio abs):")
+                    _log(out, "[9] playback anime (kitsu episodio abs):")
                     results["stream anime"] = _anime(pg, out)
 
-                    _log(out, "[9] stream IPTV (HLS directo):")
+                    _log(out, "[10] stream IPTV (HLS directo):")
                     results["stream tv/iptv"] = _iptv(pg, out)
                     if results["stream tv/iptv"]:
                         _grab_frame(pg, out)
 
-                    _log(out, "[10] biblioteca + Continue Watching:")
+                    _log(out, "[11] biblioteca + Continue Watching:")
                     results["library lastvids"] = _library_flow(pg, out)
 
                     if not QUICK:
-                        _log(out, "[11] ciclo de vida del addon:")
+                        _log(out, "[12] ciclo de vida del addon:")
                         results["lifecycle un/reinstall"] = _lifecycle(pg, out)
                 finally:
                     b.close()

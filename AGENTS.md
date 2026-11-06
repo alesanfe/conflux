@@ -73,7 +73,7 @@ Repo (raíz del checkout — en Windows `C:\Users\alex0\conflux`):
 - `src/conflux/`     paquete por capas (imports absolutos `from conflux.* import`)
 - `proxy.py`         entry + fachada compat (inserta src/ en sys.path)
 - `tests/`           unit/ integration/ security/ e2e/ + `fixtures/` (datos reales)
-- `scripts/`         check.sh, setup.sh (--env restaura backup), setup_win.ps1 (Windows), apply_env.py (.env→config), install_addon.py, env_backup.sh, record_e2e.py, stremio-proxy.service, soak.py (carga sostenida acotada, `--light` cortés; fuga = reposo-vs-reposo PrivateMemorySize64, no pico), playback_check.py (infoHash→stremio-server :11470→bytes vídeo), ui_playback_check.py (Playwright→web.stremio.com real: instala addon → stream → `<video>` avanzando; requiere `pip install playwright && playwright install chromium` + runtime en :11470), ui_e2e_check.py (cobertura UI completa: install → TODOS los 36 catálogos → extras genre/year/skip → click-through meta → prefijos kitsu/yt_id → búsqueda → episodio serie → anime kitsu → IPTV → biblioteca/lastvids → uninstall/reinstall; `UI_E2E_QUICK=1` solo 5 catálogos-tipo; cards=`a[class*="meta-item-link"]` ruta `#/detail/`; goto entre hash-routes necesita `about:blank` o el DOM queda obsoleto; addon se llama "Streams Unificados" — tomar `name` del manifest; IPTV https-only por mixed-content y entrega≠decodificación — canales con códecs no-web dan 'code 83' también en desktop), install_soak_task.ps1 (soak diario en Task Scheduler — multi-hora en la máquina de producción)
+- `scripts/`         check.sh, setup.sh (--env restaura backup), setup_win.ps1 (Windows), apply_env.py (.env→config), install_addon.py, env_backup.sh, record_e2e.py, stremio-proxy.service, soak.py (carga sostenida acotada, `--light` cortés; fuga = reposo-vs-reposo PrivateMemorySize64, no pico), playback_check.py (infoHash→stremio-server :11470→bytes vídeo), ui_playback_check.py (Playwright→web.stremio.com real: instala addon → stream → `<video>` avanzando; requiere `pip install playwright && playwright install chromium` + runtime en :11470), ui_e2e_check.py (cobertura UI completa: install → TODOS los 36 catálogos → extras genre/year/skip → click-through meta → prefijos kitsu/yt_id/tmdb/mx/onepace/dsx → búsqueda → playback movie+serie+anime → IPTV → biblioteca/lastvids → uninstall/reinstall; `UI_E2E_QUICK=1` solo 5 catálogos-tipo; capturas numeradas en `%TEMP%\conflux_ui_shots\` para revisión visual; cards=`a[class*="meta-item-link"]` ruta `#/detail/`; goto entre hash-routes necesita `about:blank` o el DOM queda obsoleto; esperar a que desaparezca "addons are still loading" antes de contar stream-cards — las externas (WatchHub) salen al instante; addon se llama "Streams Unificados" — tomar `name` del manifest; IPTV https-only por mixed-content y entrega≠decodificación — canales con códecs no-web dan 'code 83' también en desktop), install_soak_task.ps1 (soak diario en Task Scheduler — multi-hora en la máquina de producción)
 - `docs/`            openapi.yaml
 - `pyproject.toml`   metadata PEP 621 + deps + config herramientas
 - `requirements.in`/`requirements.txt`  deps directas → lock con hashes (pip-compile)
@@ -149,7 +149,9 @@ requeridos, cuenta necesaria, contenido nuevo real o rate-limit — diagnosticar
 id no declarado → "No addons were requested" sin tocar el proxy. Declarar
 exactamente la unión de prefijos/tipos que sirven los datos reales (auditar metas,
 no manifests upstream). Al añadir fuentes con ids propios (`mx:`, `_onepace:`),
-añadir su prefijo.
+añadir su prefijo. **Auditar también los ids de las metas emitidas por catálogo**:
+`dsx:`/`mf*` servían meta+streams pero sin prefijo declarado la ficha era
+inabrible desde la UI (matching = `id.startsWith(prefix)` — `mf` cubre `mf1941277`).
 
 **R4 · Skip blando ≠ éxito — medir esperado vs real.**
 `prefijo/tipo no soportado`, `manifest sin stream` son skips legítimos (salen en

@@ -286,6 +286,10 @@ class TestEfSeedsAudio(unittest.TestCase):
     def test_canales_despues_de_marca(self):
         self.assertEqual(self.T._ef_audio('x 5.1 DTS'), 'DTS 5.1')
 
+    def test_canales_adyacentes_con_barra(self):
+        # '7.1 5.1' se leía '7.15.1' en la card (hallazgo visual)
+        self.assertEqual(self.T._ef_audio('x Atmos 7.1 5.1'), 'Atmos 7.1/5.1')
+
     def test_tope_3(self):
         out = self.T._ef_audio('x Atmos TrueHD DTS-HD DTS FLAC')
         self.assertEqual(len(out.split()), 3)

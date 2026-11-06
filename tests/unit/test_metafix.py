@@ -264,3 +264,29 @@ class TestFixMetasDeep(unittest.TestCase):
             out = mf._fix_metas(d, deep=True)
         self.assertIs(out, d)
         self.assertIn('background', d['meta'])
+
+
+class TestFixMetaHtml(unittest.TestCase):
+    """stremio-web renderiza description como texto: el HTML de AniList
+    salía literal (<i>...</i> visible en la ficha — hallazgo visual)."""
+
+    def test_strip_tags_y_entidades(self):
+        m = {'description': 'x <i>Título</i><br>Pepe &amp; Ana&nbsp;<b>y</b>'}
+        mf._fix_meta_html(m)
+        self.assertEqual(m['description'], 'x Título Pepe & Ana y')
+
+    def test_sin_html_no_toca(self):
+        m = {'description': '3 < 4 y texto plano'}
+        mf._fix_meta_html(m)
+        self.assertEqual(m['description'], '3 < 4 y texto plano')
+
+    def test_sin_descripcion_no_rompe(self):
+        mf._fix_meta_html({})
+        mf._fix_meta_html({'description': None})
+        mf._fix_meta_html({'description': 42})
+
+    def test_fix_metas_limpia_desc_de_cualquier_meta(self):
+        d = {'metas': [{'id': 'tt1', 'description': '<i>a</i>'},
+                       {'id': 'anilist:2', 'description': '<b>b</b>'}]}
+        mf._fix_metas(d)
+        self.assertEqual([x['description'] for x in d['metas']], ['a', 'b'])
