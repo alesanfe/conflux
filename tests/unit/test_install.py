@@ -267,6 +267,39 @@ class TestUninstall(_TmpCase):
         stremio.remove.assert_called_once()
         popen.assert_called_once()       # borrado diferido del propio exe
 
+    def test_uninstall_idempotente_segunda_vez(self):
+        """uninstall sobre un sistema ya desinstalado: no-op limpio (CONFLUX-046)."""
+        exe, la, appdata = _frozen(self.tmp, self.mon)
+        dest = os.path.join(str(la), 'Conflux')     # nada instalado
+        wr = _FakeWinreg()
+        self.mon.setattr(install, 'winreg', wr)
+        self.mon.setattr(install, '_run', mock.Mock(
+            return_value=mock.Mock(stdout=b'')))
+        popen = mock.Mock()
+        self.mon.setattr(install.subprocess, 'Popen', popen)
+        with mock.patch.object(_stremio, 'remove',
+                               mock.Mock(return_value=('x', 'ok'))):
+            install.uninstall(say=lambda *a, **k: None)   # no lanza
+        self.assertFalse(os.path.exists(dest))
+
+    def test_install_dos_veces_conserva_config(self):
+        """re-instalar encima (upgrade) nunca pisa la config del usuario."""
+        exe, la, appdata = _frozen(self.tmp, self.mon)
+        dest = os.path.join(str(la), 'Conflux')
+        os.makedirs(dest)
+        cfg_p = os.path.join(dest, 'config.json')
+        with open(cfg_p, 'w') as f:
+            f.write('{"admin_token":"keep-me"}')
+        self.mon.setattr(install, 'winreg', _FakeWinreg())
+        self.mon.setattr(install, '_run', mock.Mock(
+            return_value=mock.Mock(stdout=b'')))
+        self.mon.setattr(install.subprocess, 'Popen', mock.Mock())
+        self.mon.setattr(install, 'register_addon_bg', mock.Mock())
+        for _ in range(2):                              # install×2 = mismo resultado
+            install.install_self()
+        with open(cfg_p) as f:
+            self.assertIn('keep-me', f.read())
+
 
 class TestCliEntry(_TmpCase):
     def test_dev_sin_frozen_siempre_sirve(self):

@@ -81,3 +81,14 @@ class AppContext:
     @property
     def closed(self):
         return self._closed
+
+
+def default_context():
+    """Composition root: envuelve los contenedores REALES de
+    `conflux.core.state` en un AppContext — los objetos compartidos por el
+    runtime no dejan de ser globales de módulo, pero ahora tienen dueño:
+    el contexto por defecto. Cualquier consumidor puede pedir
+    `AppContext()` aislado (tests) o `default_context()` (producción)
+    sin re-escribir imports."""
+    from conflux.core import state as st      # import tardío: ctx -> state -> (sin ctx)
+    return st.CTX

@@ -134,22 +134,32 @@ def apply_config_level():
 
 
 def _setup_logging(level=None):
-    handlers: list[logging.Handler] = []
-    if sys.stderr is not None:                    # consola si la hay (pythonw: None)
-        handlers.append(logging.StreamHandler())
-    try:
-        os.makedirs(os.path.dirname(_LOG_FILE) or '.', exist_ok=True)
-        handlers.append(logging.handlers.RotatingFileHandler(
-            _LOG_FILE, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS,
-            encoding='utf-8'))
-    except OSError:                               # log bloqueado: solo consola
-        pass
-    logging.basicConfig(level=level or _log_level(), format='%(message)s',
-                        handlers=handlers or [logging.NullHandler()])
+    """Handlers propios marcados `_conflux` — idempotente y robusto aunque otro
+    framework (pytest, embedders) ya haya configurado el root logger: no
+    dependemos de basicConfig, que es no-op si root ya tiene handlers."""
     root = logging.getLogger()
-    redact = _RedactFilter()
-    for h in handlers:
-        h.addFilter(redact)
+    if not any(getattr(h, '_conflux', False) for h in root.handlers):
+        handlers: list[logging.Handler] = []
+        if sys.stderr is not None:                # consola si la hay (pythonw: None)
+            handlers.append(logging.StreamHandler())
+        try:
+            os.makedirs(os.path.dirname(_LOG_FILE) or '.', exist_ok=True)
+            handlers.append(logging.handlers.RotatingFileHandler(
+                _LOG_FILE, maxBytes=LOG_MAX_BYTES, backupCount=LOG_BACKUPS,
+                encoding='utf-8'))
+        except OSError:                           # log bloqueado: solo consola
+            pass
+        if not handlers:
+            handlers = [logging.NullHandler()]
+        redact = _RedactFilter()
+        for h in handlers:
+            h._conflux = True                     # type: ignore[attr-defined]
+            h.addFilter(redact)
+            h.setFormatter(logging.Formatter('%(message)s'))
+            root.addHandler(h)
+        if not root.handlers:
+            logging.basicConfig(format='%(message)s')
+    root.setLevel(level or _log_level())
     return root
 
 

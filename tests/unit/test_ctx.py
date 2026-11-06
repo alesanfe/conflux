@@ -80,6 +80,10 @@ class TestCtxIsolation(unittest.TestCase):
 class TestDefaultCtx(unittest.TestCase):
     """El CTX por defecto comparte objetos con los nombres de módulo (in-situ)."""
 
+    def test_default_context_is_ctx(self):
+        from conflux.core import ctx as ctxmod
+        self.assertIs(ctxmod.default_context(), st.CTX)
+
     def test_ctx_binds_module_state(self):
         self.assertIs(st.CTX.sources.sources, st.SOURCES)
         self.assertIs(st.CTX.sources.manifests, st.manifests)

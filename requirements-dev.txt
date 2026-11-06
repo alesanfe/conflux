@@ -20,3 +20,6 @@ freezegun==1.5.5
 schemathesis==4.31.1
 import-linter==2.7
 zizmor==1.31.1
+pytest==9.2.0
+pytest-xdist==3.8.0
+pytest-randomly==5.0.0

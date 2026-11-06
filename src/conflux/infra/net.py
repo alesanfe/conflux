@@ -71,7 +71,8 @@ def fetch(url, timeout=7):
                 if len(body) > 6_000_000:
                     return None           # respuesta gigante: descartar
                 _fails.pop(host, None)                           # éxito: strikes a cero
-                return json.loads(body)
+                d = json.loads(body)
+                return d if isinstance(d, (dict, list)) else None  # contrato: doc/compuesto
             finally:
                 r.close()
         except Exception:                                    # noqa: BLE001 — cualquier fallo de red/parseo = strike del host

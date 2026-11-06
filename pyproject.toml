@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "conflux"
-version = "1.0.3"
+version = "1.0.4"
 description = "Proxy local que unifica streams, catálogos y metas de addons Stremio"
 readme = "README.md"
 license = { text = "MIT" }

@@ -441,7 +441,11 @@ def uninstall(say=_log.info):
         return
     keep = {os.path.basename(_dest_exe())} \
         if _norm(sys.executable) == _norm(_dest_exe()) else set()
-    for f in os.listdir(_dest_dir()):
+    try:                                       # idempotente: ya desinstalado = no-op
+        entries = os.listdir(_dest_dir())
+    except OSError:
+        entries = []
+    for f in entries:
         if f not in keep:
             _unlink(os.path.join(_dest_dir(), f))
     if keep:                                   # borrado diferido del propio exe
