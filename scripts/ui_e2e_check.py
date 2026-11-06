@@ -290,6 +290,9 @@ def _prefix_clickthrough(pg, out):
         render = len(body) > 400 and "Add to Library" in body or "Library" in body
         n_stream = pg.locator('a[class*="stream-container"]').count()
         _shot(pg, out, f"prefix_{prefijo}")
+        # stream-cards es informativo, no aserción: auditado en vivo,
+        # yt_id (vídeos van por el addon de YouTube), onepace (meta-
+        # marcador) y mf ("No streams are live") sirven 0 por diseño
         _log(out, f"  prefix {prefijo}: meta={render} stream-cards={n_stream}")
         ok &= render
     return ok
@@ -482,16 +485,31 @@ def _fresh_goto(pg, hashroute):
 def _series_episode(pg, out):
     """Serie: detalle del episodio -> streams -> play.
     Cada episodio es su propia vista detail en stremio-web: pedir
-    detail/series/<meta>/<video: S:E> ejercita la resolución S:E."""
-    _fresh_goto(pg, SERIES_META)
-    return _click_stream_and_wait_video(pg, out)
+    detail/series/<meta>/<video: S:E> ejercita la resolución S:E.
+    Fallback de título: los torrents de un episodio concreto mueren
+    (varianza upstream) — igual que _anime, probar otro."""
+    for route in (
+        SERIES_META,  # GoT S1E1
+        "detail/series/tt0903747/tt0903747%3A1%3A1",  # Breaking Bad S1E1
+        "detail/series/tt0386676/tt0386676%3A1%3A1",  # The Office S1E1
+    ):
+        _fresh_goto(pg, route)
+        if _click_stream_and_wait_video(pg, out):
+            return True
+        _log(out, f"  {route.split('/')[-2]} sin playback; siguiente título")
+    return False
 
 
 def _movie(pg, out):
     """Película: detail/movie/<id>/<id> -> streams -> play.
-    El detalle de movie usa el id como video-id (como las cards)."""
-    _fresh_goto(pg, "detail/movie/tt0137523/tt0137523")
-    return _click_stream_and_wait_video(pg, out)
+    El detalle de movie usa el id como video-id (como las cards).
+    Fallback de título — misma razón que _anime/_series."""
+    for tid in ("tt0137523", "tt0111161", "tt0468569"):  # Fight Club, Shawshank, Dark Knight
+        _fresh_goto(pg, f"detail/movie/{tid}/{tid}")
+        if _click_stream_and_wait_video(pg, out):
+            return True
+        _log(out, f"  {tid} sin playback; siguiente título")
+    return False
 
 
 def _live_channels(out, limit=3):
