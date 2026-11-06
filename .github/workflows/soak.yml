@@ -33,9 +33,11 @@ jobs:
         run: |
           python proxy.py > soak-srv.log 2>&1 &
           echo $! > srv.pid
-          for i in $(seq 1 30); do
-            curl -sf http://127.0.0.1:9700/health/live && break || sleep 1
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9700/health/live > /dev/null; then break; fi
+            sleep 1
           done
+          curl -sf http://127.0.0.1:9700/health/live > /dev/null
       - name: soak 45min x6 workers (light)
         run: python scripts/soak.py 45 6 --light | tee soak-report.txt
       - name: postmortem si falla

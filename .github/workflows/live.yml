@@ -37,9 +37,11 @@ jobs:
         run: |
           python proxy.py > canary-srv.log 2>&1 &
           echo $! > srv.pid
-          for i in $(seq 1 30); do
-            curl -sf http://127.0.0.1:9700/health/live >/dev/null && break || sleep 1
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9700/health/live > /dev/null; then break; fi
+            sleep 1
           done
+          curl -sf http://127.0.0.1:9700/health/live > /dev/null
           sleep 5   # deja que el refresco de fuentes aterrice
           curl -s http://127.0.0.1:9700/health | python -c "
           import json, sys, time
@@ -47,7 +49,7 @@ jobs:
           print(json.dumps({'ts': time.strftime('%Y-%m-%dT%H:%M:%SZ',
                 time.gmtime()), 'sources': d}, indent=1))
           " > canary-health.json || echo '{"error":"health no respondio"}' > canary-health.json
-          kill $(cat srv.pid) 2>/dev/null || true
+          kill "$(cat srv.pid)" 2>/dev/null || true
       - uses: actions/upload-artifact@bbbca2ddaa9fe9aa640b1b0b1e7b37e1cc3e31de  # v7
         if: always()
         with:
