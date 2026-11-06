@@ -26,10 +26,14 @@ def _fix_meta_html(m):
     (AniList manda '<i>título</i><br>...') sale literal en la ficha.
     Bloques -> espacio, resto de tags fuera, entidades decodificadas."""
     d = m.get('description')
-    if not isinstance(d, str) or '<' not in d:
+    if not isinstance(d, str):
         return
-    d = _html.unescape(_RE_TAG.sub('', _RE_BLOCK.sub(' ', d)))
-    m['description'] = _re.sub(r'\s{2,}', ' ', d.replace('\xa0', ' ')).strip()
+    if '<' in d:
+        d = _html.unescape(_RE_TAG.sub('', _RE_BLOCK.sub(' ', d))).replace('\xa0', ' ')
+    ls = [ln for ln in d.split('\n') if ln.strip()]
+    if len(ls) > 1 and all(_re.match(r'^\S{1,15}:', ln) for ln in ls):
+        d = ' · '.join(ls)    # 'Country: CR\nCategories: x' renderiza en una línea
+    m['description'] = _re.sub(r'\s{2,}', ' ', d).strip()
 
 
 

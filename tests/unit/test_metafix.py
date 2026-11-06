@@ -285,6 +285,18 @@ class TestFixMetaHtml(unittest.TestCase):
         mf._fix_meta_html({'description': None})
         mf._fix_meta_html({'description': 42})
 
+    def test_campos_multilinea_a_inline(self):
+        # IPTV upstream: 'Country: CR\nCategories: x' — el cliente colapsa
+        # el \n y queda 'CR Categories' corrido -> unir con ' · '
+        m = {'description': 'Country: CR\nCategories: entertainment'}
+        mf._fix_meta_html(m)
+        self.assertEqual(m['description'], 'Country: CR · Categories: entertainment')
+
+    def test_prosa_multilinea_no_es_campo(self):
+        m = {'description': 'Primera frase normal\nsegunda línea de prosa.'}
+        mf._fix_meta_html(m)
+        self.assertEqual(m['description'], 'Primera frase normal\nsegunda línea de prosa.')
+
     def test_fix_metas_limpia_desc_de_cualquier_meta(self):
         d = {'metas': [{'id': 'tt1', 'description': '<i>a</i>'},
                        {'id': 'anilist:2', 'description': '<b>b</b>'}]}
