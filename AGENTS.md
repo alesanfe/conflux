@@ -73,7 +73,7 @@ Repo (raíz del checkout — en Windows `C:\Users\alex0\conflux`):
 - `src/conflux/`     paquete por capas (imports absolutos `from conflux.* import`)
 - `proxy.py`         entry + fachada compat (inserta src/ en sys.path)
 - `tests/`           unit/ integration/ security/ e2e/ + `fixtures/` (datos reales)
-- `scripts/`         check.sh, setup.sh (--env restaura backup), setup_win.ps1 (Windows), apply_env.py (.env→config), install_addon.py, env_backup.sh, record_e2e.py, stremio-proxy.service, soak.py (carga sostenida acotada, `--light` cortés con upstreams), playback_check.py (infoHash→stremio-server :11470→bytes vídeo = playback real)
+- `scripts/`         check.sh, setup.sh (--env restaura backup), setup_win.ps1 (Windows), apply_env.py (.env→config), install_addon.py, env_backup.sh, record_e2e.py, stremio-proxy.service, soak.py (carga sostenida acotada, `--light` cortés; fuga = reposo-vs-reposo PrivateMemorySize64, no pico), playback_check.py (infoHash→stremio-server :11470→bytes vídeo), ui_playback_check.py (Playwright→web.stremio.com real: instala addon → stream → `<video>` avanzando; requiere `pip install playwright && playwright install chromium` + runtime en :11470), install_soak_task.ps1 (soak diario en Task Scheduler — multi-hora en la máquina de producción)
 - `docs/`            openapi.yaml
 - `pyproject.toml`   metadata PEP 621 + deps + config herramientas
 - `requirements.in`/`requirements.txt`  deps directas → lock con hashes (pip-compile)

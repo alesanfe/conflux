@@ -1,6 +1,7 @@
 """Tareas de background: prefetch de catálogos y refresco periódico de manifests."""
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import sys
 import threading
 import time
 from contextlib import suppress
@@ -32,6 +33,20 @@ def _prefetch_catalogs():
 
 
 
+def _mem_trim():
+    """Devuelve memoria al SO tras los picos de collect: los buffers de
+    upstreams (M3U/EPG de decenas de MB) dejan arenas reservadas que
+    Python no suelta por sí solo — gc cierra ciclos y malloc_trim pide a
+    libc que descomita las páginas libres. En Windows gc.collect() basta
+    para que el heap ucrt pueda decomitar segmentos."""
+    import ctypes
+    import gc
+    gc.collect()
+    if sys.platform.startswith('linux'):
+        with suppress(Exception):
+            ctypes.CDLL('libc.so.6').malloc_trim(0)
+
+
 def _refresher():
     while True:
         time.sleep(1800)
@@ -43,3 +58,7 @@ def _refresher():
             epg_kick()                            # EPG fresco sin esperar petición
         except Exception as e:
             log_ev('epg_err', err=repr(e)[:100])
+        try:
+            _mem_trim()                           # piso de memoria bajo control
+        except Exception as e:
+            log_ev('memtrim_err', err=repr(e)[:100])

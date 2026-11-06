@@ -6,8 +6,14 @@ name: soak
 # upstreams reales; con --light son ~1/12 del tráfico).
 on:
   workflow_dispatch:
+    inputs:
+      minutes:
+        description: 'duración del soak en minutos (GitHub cap ~330)'
+        required: false
+        default: '45'
   schedule:
-    - cron: '0 4 * * 0'         # domingo 04:00 UTC
+    - cron: '0 4 * * 0'         # semanal: domingo 04:00 UTC (45min)
+    - cron: '0 3 1 * *'         # mensual: día 1 a las 03:00 UTC (4h, cap 6h)
 
 permissions:
   contents: read
@@ -19,7 +25,10 @@ concurrency:
 jobs:
   soak:
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 320   # dentro del cap de 6h de runners GitHub-hosted
+    env:
+      # mensual programado -> 240min; dispatch -> input; semanal -> 45
+      SOAK_MIN: ${{ github.event_name == 'schedule' && (github.event.schedule == '0 3 1 * *' && '240' || '45') || github.event.inputs.minutes || '45' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
@@ -38,13 +47,13 @@ jobs:
             sleep 1
           done
           curl -sf http://127.0.0.1:9700/health/live > /dev/null
-      - name: soak 45min x6 workers (light)
+      - name: soak ${{ env.SOAK_MIN }}min x6 workers (light)
         # cap 6GB: el pico RSS bajo 6 workers ronda ~4GB por churn de
         # buffers (Python no devuelve arenas); el cap sigue cazando un
         # crecimiento desbocado real.
         env:
           CONFLUX_SOAK_RSS_CAP: '6144'
-        run: python scripts/soak.py 45 6 --light | tee soak-report.txt
+        run: python scripts/soak.py "$SOAK_MIN" 6 --light | tee soak-report.txt
       - name: postmortem si falla
         if: failure()
         run: tail -200 soak-srv.log
