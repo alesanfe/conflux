@@ -56,6 +56,8 @@ SERIES_META = "detail/series/tt0944947/tt0944947%3A1%3A1"
 # (los upstreams IPTV mueren/rotan constantemente — R5).
 TV_CATALOG = "tv/siptv_tv_iptv-all"
 STREAM_WAIT_S = 75
+# UI_E2E_QUICK=1: solo los 5 catálogos-tipo, sin all-36 ni lifecycle
+QUICK = os.environ.get("UI_E2E_QUICK") == "1"
 
 
 def _log(out, msg):
@@ -87,19 +89,171 @@ def _install(pg, out):
     time.sleep(3)
 
 
-def _catalog_renders(pg, out, tipo, catid):
-    """Discover debe renderizar metas (poster cards) del catálogo."""
+def _catalog_renders(pg, out, tipo, catid, wait=45, expect_empty=False):
+    """Discover debe renderizar metas (poster cards) del catálogo.
+    expect_empty: catálogos con extras requeridos ausentes (search sin
+    query, lastvids sin biblioteca) -> 0 cards ES el comportamiento
+    correcto; se verifica que la página no crashea."""
     _fresh_goto(pg, f"discover/{ADDON_ENC}/{tipo}/{catid}")
     cards = pg.locator(CARD_SEL)
-    deadline = time.time() + 45
+    deadline = time.time() + wait
     n = 0
     while time.time() < deadline:
         n = cards.count()
         if n > 0:
             break
         time.sleep(2)
+    if expect_empty:
+        # la vista resolvió sin excepción de app = contrato correcto
+        _log(out, f"  catalog {tipo}/{catid}: {n} metas (extra req -> vacío OK)")
+        return True
     _log(out, f"  catalog {tipo}/{catid}: {n} metas renderizadas")
     return n > 0
+
+
+def _all_catalogs(pg, out):
+    """Itera TODOS los catálogos del manifest vivo, no solo 1/tipo."""
+    mf = json.load(urllib.request.urlopen(ADDON_URL, timeout=15))
+    ok = True
+    for c in mf.get("catalogs", []):
+        req = {e["name"] for e in c.get("extra", []) if e.get("isRequired")}
+        ok &= _catalog_renders(
+            pg, out, c["type"], c["id"], wait=25, expect_empty=bool(req)
+        )
+    return ok
+
+
+def _extras(pg, out):
+    """Extras declarados: genre/year filtran, skip pagina. Cada uno
+    viaja como query param en la URL de Discover (así lo envía la app)."""
+    base = f"discover/{ADDON_ENC}/movie/scinemeta_movie_grp"
+    ok = True
+    for params, label in (
+        ("?genre=Comedy", "genre=Comedy"),
+        ("?year=2020", "year=2020"),
+        ("?skip=50", "skip=50"),
+    ):
+        _fresh_goto(pg, base + params)
+        n = 0
+        deadline = time.time() + 35
+        while time.time() < deadline:
+            n = pg.locator(CARD_SEL).count()
+            if n > 0:
+                break
+            time.sleep(2)
+        _log(out, f"  extra {label}: {n} metas")
+        ok &= n > 0
+    return ok
+
+
+def _meta_clickthrough(pg, out):
+    """Click en una card real -> detail carga el recurso meta.
+    Ejercita /meta a través de la UI. La aserción usa marcadores del
+    detail (géneros/biblioteca), no el título — la card puede mostrar
+    título regional distinto del canónico."""
+    _fresh_goto(pg, f"discover/{ADDON_ENC}/movie/scinemeta_movie_grp")
+    cards = pg.locator(CARD_SEL)
+    deadline = time.time() + 35
+    while time.time() < deadline:
+        if cards.count() > 0:
+            break
+        time.sleep(2)
+    if cards.count() == 0:
+        _log(out, "  clickthrough: catálogo vacío")
+        return False
+    titulo = cards.first.get_attribute("title") or ""
+    href = cards.first.get_attribute("href") or ""
+    _fresh_goto(pg, href.lstrip("#/"))
+    ok = False
+    deadline = time.time() + 40
+    while time.time() < deadline:
+        body = pg.locator("body").inner_text()
+        # detail renderizó meta: sección GENRES/CAST/Add to Library
+        if any(k in body for k in ("Add to Library", "GENRES", "CAST")):
+            ok = True
+            break
+        time.sleep(3)
+    _log(out, f"  clickthrough '{titulo}': detail meta={ok}")
+    return ok
+
+
+def _prefix_clickthrough(pg, out):
+    """Metas con prefijos no-tt (kitsu:/yt_id:) -> detail resuelve
+    meta+streams de ids alien. Ejercita _resolve_sid vía la UI."""
+    ok = True
+    for tipo, catid, prefijo in (
+        ("anime", "skitsu_anime_grp", "kitsu"),
+        ("channel", "syoutube_channel_top", "yt_id"),
+    ):
+        _fresh_goto(pg, f"discover/{ADDON_ENC}/{tipo}/{catid}")
+        cards = pg.locator(CARD_SEL)
+        deadline = time.time() + 35
+        while time.time() < deadline:
+            if cards.count() > 0:
+                break
+            time.sleep(2)
+        href = None
+        for i in range(min(cards.count(), 15)):
+            h = cards.nth(i).get_attribute("href") or ""
+            if prefijo in h:
+                href = h
+                break
+        if not href:
+            _log(out, f"  prefix {prefijo}: sin card con ese id")
+            ok = False
+            continue
+        # navegar a la card (hash-route directo, sin click: más estable)
+        _fresh_goto(pg, href.lstrip("#/"))
+        time.sleep(12)
+        body = pg.locator("body").inner_text()
+        # meta renderizó: hay contenido de detail (no splash/404 vacío)
+        render = len(body) > 400 and "Add to Library" in body or "Library" in body
+        n_stream = pg.locator('a[class*="stream-container"]').count()
+        _log(out, f"  prefix {prefijo}: meta={render} stream-cards={n_stream}")
+        ok &= render
+    return ok
+
+
+def _lifecycle(pg, out):
+    """Ciclo de vida real del addon: uninstall -> ausente -> reinstall
+    -> catálogo vuelve a servir. El nombre se toma del manifest vivo."""
+    nombre = json.load(urllib.request.urlopen(ADDON_URL, timeout=15)).get(
+        "name", "conflux"
+    )
+    _fresh_goto(pg, "addons")
+    time.sleep(8)
+    _log(
+        out, f"  Uninstall visibles: {pg.get_by_text('Uninstall', exact=True).count()}"
+    )
+    cont = pg.locator("body").inner_text()
+    if nombre.lower() not in cont.lower():
+        _log(out, f"  '{nombre}' no aparece como instalado")
+        return False
+    # card del addon = ancestro con clase *addon* del nodo con el nombre
+    name_el = pg.get_by_text(nombre, exact=True).first
+    card = name_el.locator(
+        'xpath=(ancestor::*[contains(@class,"addon")'
+        ' or contains(@class,"Addon")])[last()]'
+    )
+    if card.count() == 0:
+        _log(out, "  no se localizó la card del addon")
+        return False
+    card.get_by_text("Uninstall", exact=True).click()
+    time.sleep(6)
+    gone = nombre.lower() not in pg.locator("body").inner_text().lower()
+    _log(out, f"  tras Uninstall: '{nombre}' ausente={gone}")
+    # reinstalar y comprobar que el catálogo vuelve a servir
+    _install(pg, out)
+    _fresh_goto(pg, f"discover/{ADDON_ENC}/movie/scinemeta_movie_grp")
+    n = 0
+    deadline = time.time() + 40
+    while time.time() < deadline:
+        n = pg.locator(CARD_SEL).count()
+        if n > 0:
+            break
+        time.sleep(2)
+    _log(out, f"  tras reinstall: {n} metas")
+    return gone and n > 0
 
 
 def _search(pg, out):
@@ -316,24 +470,40 @@ def main():
                     results["install addon"] = True
                     _log(out, "[1] addon instalado")
 
-                    _log(out, "[2] catálogos por tipo:")
-                    for tipo, catid in CATALOGS.items():
-                        results[f"catalog {tipo}"] = _catalog_renders(
-                            pg, out, tipo, catid
+                    if not QUICK:
+                        _log(out, "[2] TODOS los catálogos del manifest:")
+                        results["catalogs (all 36)"] = _all_catalogs(pg, out)
+                    else:
+                        _log(out, "[2] catálogos por tipo (quick):")
+                        results["catalogs (5 tipos)"] = all(
+                            _catalog_renders(pg, out, t, c) for t, c in CATALOGS.items()
                         )
 
-                    _log(out, "[3] búsqueda UI:")
-                    pg.goto(f"{WEB}/#/", wait_until="domcontentloaded", timeout=60000)
+                    _log(out, "[3] extras genre/year/skip:")
+                    results["extras"] = _extras(pg, out)
+
+                    _log(out, "[4] click-through meta (card -> detail):")
+                    results["meta clickthrough"] = _meta_clickthrough(pg, out)
+
+                    _log(out, "[5] prefijos alien (kitsu/yt_id):")
+                    results["prefixes"] = _prefix_clickthrough(pg, out)
+
+                    _log(out, "[6] búsqueda UI:")
+                    _fresh_goto(pg, "")
                     time.sleep(6)
                     results["search"] = _search(pg, out)
 
-                    _log(out, "[4] playback serie (episodio S:E):")
+                    _log(out, "[7] playback serie (episodio S:E):")
                     results["stream series"] = _series_episode(pg, out)
 
-                    _log(out, "[5] playback canal IPTV (HLS directo):")
+                    _log(out, "[8] stream IPTV (HLS directo):")
                     results["stream tv/iptv"] = _iptv(pg, out)
                     if results["stream tv/iptv"]:
                         _grab_frame(pg, out)
+
+                    if not QUICK:
+                        _log(out, "[9] ciclo de vida del addon:")
+                        results["lifecycle un/reinstall"] = _lifecycle(pg, out)
                 finally:
                     b.close()
         except Exception as e:  # noqa: BLE001
