@@ -77,7 +77,7 @@ jobs:
         shell: bash
         run: |
           pip install cyclonedx-bom==4.6.1
-          cyclonedx-py requirements -i requirements.txt -of json \
+          cyclonedx-py requirements requirements.txt --of json \
             -o "dist/${{ matrix.asset }}.sbom.json"
       - name: firma keyless del checksum (cosign/Sigstore)
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532  # v4.1.3
