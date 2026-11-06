@@ -42,6 +42,8 @@ class TestPathMatrix(unittest.TestCase):
         self._roundtrip(os.path.join(*['n' * 20] * 5))
 
     @unittest.skipIf(sys.platform == 'win32', 'chmod de dir no aplica en win')
+    @unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0,
+                     'root ignora los bits de permiso')
     def test_directorio_solo_lectura_no_corrompe(self):
         d = os.path.join(self.base, 'ro')
         os.makedirs(d)

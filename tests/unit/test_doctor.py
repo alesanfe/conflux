@@ -213,6 +213,7 @@ class TestCfgCheck(unittest.TestCase):
             f = os.path.join(d, 'config.json')
             with open(f, 'w') as fh:
                 json.dump({'a': 1}, fh)
+            os.chmod(f, 0o600)   # POSIX: el check exige perms 600
             with mock.patch.object(doctor, '_ROOT', d):
                 lvl, msg = doctor._cfg_check()
         self.assertEqual(lvl, 'ok')

@@ -670,6 +670,7 @@ class TestPosixKillEdge(_TmpCase):
         self.assertTrue(any(s != install.signal.SIGTERM for s in calls))
 
 
+@unittest.skipUnless(sys.platform == 'win32', 'kill_proxy vía netstat/taskkill')
 class TestWinKillEdge(_TmpCase):
     def test_netstat_falla_say_y_taskkill_im(self):
         exe, _la, _ad = _frozen(self.tmp, self.mon)
