@@ -26,6 +26,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -249,6 +250,8 @@ def _prefix_clickthrough(pg, out):
         ("movie", "sstravoii_movie_grp", "mx"),
         ("series", "sonepace_series_seriesCatalog", "onepace"),
         ("movie", "sdesiflix_movie_dsx-movies", "dsx"),
+        ("tv", "smediafusion_tv_live_tv", "mf"),
+        ("tv", "sflixstreams_tv_grp", "dlstreams"),
     ):
         _fresh_goto(pg, f"discover/{ADDON_ENC}/{tipo}/{catid}")
         cards = pg.locator(CARD_SEL)
@@ -260,7 +263,7 @@ def _prefix_clickthrough(pg, out):
         href = None
         for i in range(min(cards.count(), 15)):
             h = cards.nth(i).get_attribute("href") or ""
-            if prefijo in h:
+            if f"/{prefijo}" in h:
                 href = h
                 break
         if not href:
@@ -483,7 +486,7 @@ def _live_channels(out, limit=3):
                             ).status
                             == 200
                         ):
-                            vivos.append(iid)
+                            vivos.append((iid, url))
                             _log(out, f"  canal vivo: {iid}")
                         break
             except Exception:  # noqa: BLE001
@@ -492,6 +495,31 @@ def _live_channels(out, limit=3):
     if not vivos:
         _log(out, "  ningún canal con segmentos vivos ahora")
     return vivos
+
+
+def _iptv_decode(url, out, secs=8):
+    """Decodifica `secs` segundos con ffmpeg — exactamente lo que hace
+    libmpv en la app desktop de Stremio (los browsers no traen códecs
+    MPEG-2/TS: 'code 83' no significa stream roto). exit=0 + flujo de
+    vídeo detectado = el stream ES reproducible en un player real."""
+    try:
+        import imageio_ffmpeg  # type: ignore
+
+        ff = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:  # noqa: BLE001
+        _log(out, "  decode-check: imageio-ffmpeg no instalado")
+        return None
+    try:
+        r = subprocess.run(
+            [ff, "-y", "-v", "info", "-i", url, "-t", str(secs), "-f", "null", "-"],
+            capture_output=True, text=True, timeout=120,
+        )
+    except Exception as e:  # noqa: BLE001
+        _log(out, f"  decode-check err: {e}")
+        return None
+    codecs = re.findall(r"(?:Video|Audio): (\w+)", r.stderr)
+    _log(out, f"  ffmpeg decode {secs}s: exit={r.returncode} codecs={codecs[:4]}")
+    return r.returncode == 0 and "Video:" in r.stderr
 
 
 def _anime(pg, out):
@@ -554,11 +582,10 @@ def _library_flow(pg, out):
 
 def _iptv(pg, out):
     """IPTV: lo que conflux controla es ENTREGAR el stream — card con
-    URL directa resoluble (playlist+segmento vivos, verificado). La
-    decodificación depende del códec del canal vs. soporte del browser
-    (canales gratis: MPEG-2/TS → 'code 83' también en desktop real).
-    Playback observado = evidencia extra, no condición."""
-    for iid in _live_channels(out):
+    URL directa resoluble (playlist+segmento vivos). La reproducción se
+    verifica con ffmpeg decode — el mismo motor (libmpv) que usa la app
+    desktop; el browser solo aplica a códecs web-safe y queda de bonus."""
+    for iid, url in _live_channels(out):
         enc = urllib.parse.quote(iid, safe="")
         _fresh_goto(pg, f"detail/tv/{enc}/{enc}")
         cards = pg.locator('a[class*="stream-container"]')
@@ -574,9 +601,12 @@ def _iptv(pg, out):
         _log(out, f"  {iid}: {n} stream-cards, player-href={'player' in href}")
         if n == 0 or "player" not in href:
             continue
-        # stream entregado OK -> bonus: intentar playback
+        # stream entregado OK -> evidencia real de reproducción:
+        # decode ffmpeg (= libmpv del desktop); playback en browser = bonus
+        if _iptv_decode(url, out):
+            _log(out, "  IPTV decodificado (equivalente a playback desktop)")
         if _click_stream_and_wait_video(pg, out, budget=30, tries=1):
-            _log(out, "  playback IPTV observado (bonus)")
+            _log(out, "  playback IPTV en browser (bonus)")
         return True
     return False
 

@@ -23,3 +23,9 @@ zizmor==1.31.1
 pytest==9.2.0
 pytest-xdist==3.8.0
 pytest-randomly==5.0.0
+
+# UI e2e real (scripts/ui_e2e_check.py, ui_playback_check.py):
+# playwright conduce web.stremio.com; imageio-ffmpeg aporta el binario
+# ffmpeg para el decode-check IPTV (equivale a libmpv del desktop)
+playwright==1.63.0
+imageio-ffmpeg==0.5.1

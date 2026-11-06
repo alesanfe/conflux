@@ -49,6 +49,23 @@ jobs:
           print(json.dumps({'ts': time.strftime('%Y-%m-%dT%H:%M:%SZ',
                 time.gmtime()), 'sources': d}, indent=1))
           " > canary-health.json || echo '{"error":"health no respondio"}' > canary-health.json
+          # varianza accionable, no solo grabada: warning por fuente
+          # degradada (streak>=3 fallos seguidos) y FALLO del job si
+          # >50% degradadas — patrón de outage upstream, no de un proveedor.
+          python -c "
+          import json, sys
+          d = json.load(open('canary-health.json'))
+          src = d.get('sources', {})
+          if 'sources' in src and isinstance(src['sources'], dict):
+              src = src['sources']              # snapshot anida /health entero
+          bad = sorted(n for n, h in src.items() if (h or {}).get('streak', 0) >= 3)
+          print(f'fuentes={len(src)} degradadas={len(bad)} {bad}')
+          for n in bad:
+              print(f'::warning::{n}: streak de fallos >=3 (degradada/caida)')
+          if src and len(bad) / len(src) > 0.5:
+              print('::error::>50% de fuentes degradadas — outage upstream')
+              sys.exit(1)
+          "
           kill "$(cat srv.pid)" 2>/dev/null || true
       - uses: actions/upload-artifact@bbbca2ddaa9fe9aa640b1b0b1e7b37e1cc3e31de  # v7
         if: always()
