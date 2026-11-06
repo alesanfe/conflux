@@ -124,14 +124,45 @@ def _all_catalogs(pg, out):
 
 
 def _extras(pg, out):
-    """Extras declarados: genre/year filtran, skip pagina. Cada uno
-    viaja como query param en la URL de Discover (así lo envía la app)."""
-    base = f"discover/{ADDON_ENC}/movie/scinemeta_movie_grp"
+    """Extras declarados con OPCIONES VÁLIDAS del manifest + verificación
+    semántica server-side (que el filtro filtre de verdad, no solo
+    n>0 — el picker declarado ignorado es un bug real ya encontrado)
+    + render en Discover."""
+    cat = "scinemeta_movie_grp"
+    burl = f"{BASE}/catalog/movie/{cat}"
+    # semántica server-side primero
+    def metas(extra):
+        url = f"{burl}/{extra}.json" if extra else f"{burl}.json"
+        return json.load(urllib.request.urlopen(url, timeout=30)).get("metas", [])
+
     ok = True
+    try:
+        g = metas(urllib.parse.quote("genre=Popular · Comedy"))
+        n_com = sum(1 for m in g[:10] if "Comedy" in (m.get("genres") or []))
+        _log(out, f"  genre=Popular·Comedy: {n_com}/10 primeras son Comedy")
+        ok &= n_com >= 6
+        y = metas("year=2020")
+        n_yr = sum(
+            1
+            for m in y[:10]
+            if str(m.get("year") or m.get("releaseInfo") or "")[:4] in ("2020", "2021")
+        )
+        _log(out, f"  year=2020: {n_yr}/10 primeras son ~2020")
+        ok &= n_yr >= 6
+        base_ids = {m["id"] for m in metas("")}
+        s = metas("skip=50")
+        n_new = sum(1 for m in s if m["id"] not in base_ids)
+        _log(out, f"  skip=50: {n_new}/{len(s)} ids fuera de la pág. base")
+        ok &= bool(s) and n_new >= len(s) // 2
+    except Exception as e:  # noqa: BLE001
+        _log(out, f"  extras server-side falló: {e}")
+        ok = False
+    # y que renderiza en la UI
+    base = f"discover/{ADDON_ENC}/movie/{cat}"
     for params, label in (
-        ("?genre=Comedy", "genre=Comedy"),
-        ("?year=2020", "year=2020"),
-        ("?skip=50", "skip=50"),
+        (f"?genre={urllib.parse.quote('Popular · Comedy')}", "genre"),
+        ("?year=2020", "year"),
+        ("?skip=50", "skip"),
     ):
         _fresh_goto(pg, base + params)
         n = 0
@@ -141,7 +172,7 @@ def _extras(pg, out):
             if n > 0:
                 break
             time.sleep(2)
-        _log(out, f"  extra {label}: {n} metas")
+        _log(out, f"  UI extra {label}: {n} metas")
         ok &= n > 0
     return ok
 
