@@ -9,6 +9,13 @@ HOME_T="$(mktemp -d)"
 export HOME="$HOME_T" USERPROFILE="$HOME_T" XDG_DATA_HOME="$HOME_T/.xdg" \
        XDG_CONFIG_HOME="$HOME_T/.config" APPDATA="$HOME_T/.appdata" \
        LOCALAPPDATA="$HOME_T/.localappdata"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    # el exe es nativo: necesita rutas Windows, no MSYS (/tmp/...)
+    WT="$(cygpath -w "$HOME_T")"
+    export USERPROFILE="$WT" APPDATA="$WT\\.appdata" \
+           LOCALAPPDATA="$WT\\.localappdata" ;;
+esac
 LOG="$HOME_T/smoke.log"
 
 die() { echo "SMOKE FAIL: $*"; echo "--- log ---"; cat "$LOG" 2>/dev/null; exit 1; }
@@ -16,8 +23,9 @@ die() { echo "SMOKE FAIL: $*"; echo "--- log ---"; cat "$LOG" 2>/dev/null; exit 
 echo "bin: $BIN"
 echo "home: $HOME_T"
 
-# 1) instala+arranca (el binario se auto-instala y relanza; este proceso sale)
-"$BIN" >"$LOG" 2>&1 || true
+# 1) instala+arranca (el binario se auto-instala y relanza; este proceso sale.
+#    timeout por si el launcher no retorna — un crash no debe colgar el job)
+timeout 90 "$BIN" >"$LOG" 2>&1 || true
 
 # 2) espera /health (manifests en frío tarda — 150s de margen)
 OK=""
@@ -36,9 +44,18 @@ curl -sf http://127.0.0.1:9700/health/live >/dev/null || die "/health/live"
 curl -sf http://127.0.0.1:9700/manifest.json | grep -q '"id"' \
   || die "/manifest.json inválido"
 
-# 3) desinstalación (mata el servicio y limpia autostart+dir)
-"$BIN" uninstall >>"$LOG" 2>&1 || die "uninstall devolvió error"
-sleep 3
+# 3) desinstalación (mata el servicio y limpia autostart+dir).
+#    En Windows el borrado del propio exe es diferido (cmd ping+rmdir) y puede
+#    tumbar el proceso en pleno exit → exit code no fiable; el gate son los
+#    checks posteriores (puerto, procesos, directorio).
+timeout 60 "$BIN" uninstall >>"$LOG" 2>&1 || true
+
+# windows: el borrado del dir es diferido (~5s ping+rmdir); esperar a que cierre
+for _ in $(seq 1 20); do
+  curl -sf http://127.0.0.1:9700/health >/dev/null 2>&1 || break
+  sleep 1
+done
+sleep 6
 
 # 4) nada sigue sirviendo
 if curl -sf http://127.0.0.1:9700/health >/dev/null 2>&1; then
@@ -58,7 +75,7 @@ fi
 case "$(uname -s)" in
   Linux)   D="$HOME_T/.xdg/conflux" ;;
   Darwin)  D="$HOME_T/Library/Application Support/Conflux" ;;
-  *)       D="$HOME_T/.localappdata/Conflux" ;;
+  *)       D="$(cygpath "$LOCALAPPDATA")/Conflux" ;;
 esac
 [ -d "$D" ] && die "directorio de datos no eliminado: $D"
 

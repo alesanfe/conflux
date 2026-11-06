@@ -393,7 +393,11 @@ def install_self():
     """Copia el exe a %LOCALAPPDATA%\\Conflux, fija autostart y relanza.
     Devuelve True si ESTE proceso debe seguir sirviendo."""
     dest = _dest_exe()
-    os.makedirs(_dest_dir(), exist_ok=True)
+    try:
+        os.makedirs(_dest_dir(), exist_ok=True)
+    except OSError as e:                       # destino inescribible: servir en
+        _log.warning('install: destino no escribible (%s) — sirviendo en sitio', e)
+        return True                            # el lugar, sin autostart
     # la config del usuario viaja con la primera instalación; en upgrades
     # se respeta la existente junto al destino
     for name in ('config.json', 'sources.json'):
@@ -412,8 +416,11 @@ def install_self():
         shutil.copy2(sys.executable, dest)
         if sys.platform != 'win32':
             os.chmod(dest, 0o755)      # nosec B103
-    _set_autostart(dest)
-    _log.info('install: autostart -> %s', dest)
+    try:
+        _set_autostart(dest)
+        _log.info('install: autostart -> %s', dest)
+    except OSError as e:                       # registro/plist bloqueado:
+        _log.warning('install: autostart falló (%s)', e)   # sigue sirviendo
     if _norm(sys.executable) != _norm(dest):
         _spawn([dest])
         return False                          # sirve la copia instalada
@@ -451,6 +458,8 @@ def uninstall(say=_log.info):
     if keep:                                   # borrado diferido del propio exe
         _spawn(['cmd', '/c',
                 f'ping -n 3 127.0.0.1 >nul & rmdir /s /q "{_dest_dir()}"'])
+    else:                                      # uninstall desde otro exe:
+        shutil.rmtree(_dest_dir(), ignore_errors=True)   # paridad posix
     say('install: desinstalado')
 
 
