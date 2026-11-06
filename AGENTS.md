@@ -73,7 +73,7 @@ Repo (raíz del checkout — en Windows `C:\Users\alex0\conflux`):
 - `src/conflux/`     paquete por capas (imports absolutos `from conflux.* import`)
 - `proxy.py`         entry + fachada compat (inserta src/ en sys.path)
 - `tests/`           unit/ integration/ security/ e2e/ + `fixtures/` (datos reales)
-- `scripts/`         check.sh, setup.sh (--env restaura backup), setup_win.ps1 (Windows), apply_env.py (.env→config), install_addon.py, env_backup.sh, record_e2e.py, stremio-proxy.service, soak.py (carga sostenida acotada, `--light` cortés; fuga = reposo-vs-reposo PrivateMemorySize64, no pico), playback_check.py (infoHash→stremio-server :11470→bytes vídeo), ui_playback_check.py (Playwright→web.stremio.com real: instala addon → stream → `<video>` avanzando; requiere `pip install playwright && playwright install chromium` + runtime en :11470), ui_e2e_check.py (cobertura UI completa: install → TODOS los 36 catálogos → extras genre/year/skip → click-through meta → prefijos kitsu/yt_id → búsqueda → episodio serie → IPTV → uninstall/reinstall; `UI_E2E_QUICK=1` solo 5 catálogos-tipo; cards=`a[class*="meta-item-link"]` ruta `#/detail/`; goto entre hash-routes necesita `about:blank` o el DOM queda obsoleto; addon se llama "Streams Unificados" — tomar `name` del manifest; IPTV https-only por mixed-content y entrega≠decodificación — canales con códecs no-web dan 'code 83' también en desktop), install_soak_task.ps1 (soak diario en Task Scheduler — multi-hora en la máquina de producción)
+- `scripts/`         check.sh, setup.sh (--env restaura backup), setup_win.ps1 (Windows), apply_env.py (.env→config), install_addon.py, env_backup.sh, record_e2e.py, stremio-proxy.service, soak.py (carga sostenida acotada, `--light` cortés; fuga = reposo-vs-reposo PrivateMemorySize64, no pico), playback_check.py (infoHash→stremio-server :11470→bytes vídeo), ui_playback_check.py (Playwright→web.stremio.com real: instala addon → stream → `<video>` avanzando; requiere `pip install playwright && playwright install chromium` + runtime en :11470), ui_e2e_check.py (cobertura UI completa: install → TODOS los 36 catálogos → extras genre/year/skip → click-through meta → prefijos kitsu/yt_id → búsqueda → episodio serie → anime kitsu → IPTV → biblioteca/lastvids → uninstall/reinstall; `UI_E2E_QUICK=1` solo 5 catálogos-tipo; cards=`a[class*="meta-item-link"]` ruta `#/detail/`; goto entre hash-routes necesita `about:blank` o el DOM queda obsoleto; addon se llama "Streams Unificados" — tomar `name` del manifest; IPTV https-only por mixed-content y entrega≠decodificación — canales con códecs no-web dan 'code 83' también en desktop), install_soak_task.ps1 (soak diario en Task Scheduler — multi-hora en la máquina de producción)
 - `docs/`            openapi.yaml
 - `pyproject.toml`   metadata PEP 621 + deps + config herramientas
 - `requirements.in`/`requirements.txt`  deps directas → lock con hashes (pip-compile)
@@ -278,8 +278,9 @@ codificar la tupla discriminadora `(fuente, tipo, id)` — el cid es
   el catálogo `calendar-videos` upstream sigue filtrándose como no-navegable
   (`extraRequired` no servible). Continue Watching (`lastVideosIds`) se queda.
 - `scinemeta_series_lastvids`: Continue Watching — `lastVideosIds` requerido;
-  la app envía los ids de la biblioteca, `_cat_xlate_ids` traduce no-tt→tt y
-  se reenvía a Cinemeta `last-videos`. Los catálogos upstream de feed
+  la app envía los ids de la biblioteca, `_cat_xlate_ids` traduce no-tt→tt Y
+  PELA el sufijo `:S:E` (Cinemeta last-videos no resuelve `tt:S:E` → null;
+  solo acepta el id de serie) deduplicando por serie antes de reenviar. Los catálogos upstream de feed
   (`last-videos`, `calendar-videos`, `kitsu-anime-last-videos`) NUNCA se emiten
   como listas navegables: sin ids caen al mismo feed por defecto (duplicado
   entre sí y ruido en el picker) y como opción de `_GRP` no pueden recibir los
