@@ -114,8 +114,31 @@ def _save_cfg():
             elif v or isinstance(v, (list, bool)):
                 out[k] = v                             # bool: stream_prefetch=False debe persistir
         _atomic_json(_CFG_FILE, out)
+        try:                                           # POSIX: la cfg lleva secretos -> 0600
+            os.chmod(_CFG_FILE, 0o600)
+        except OSError:
+            pass
     except OSError:
         pass
+
+
+def ensure_admin_token():
+    """admin_token vacío -> genera 256 bits y persiste (una vez: el siguiente
+    arranque lo lee de config.json). Nunca se loguea — solo su ubicación."""
+    if CFG.get('admin_token'):
+        return False
+    import secrets
+    CFG['admin_token'] = secrets.token_urlsafe(32)         # 256 bits de entropía
+    _save_cfg()
+    _log.info('admin_token generado en %s (no se muestra)', _CFG_FILE)
+    return True
+
+
+def rotate_admin_token():
+    """Rota el token admin — el anterior queda invalidado al instante."""
+    import secrets
+    CFG['admin_token'] = secrets.token_urlsafe(32)
+    _save_cfg()
 
 
 RE_ES = re.compile(r'\b(es)\b', re.IGNORECASE)

@@ -19,6 +19,16 @@ Descarga de [Releases](../../releases) el de tu plataforma y ejecútalo —
 copia a su carpeta de datos, registra el autostart (Run key / LaunchAgent /
 systemd user), arranca en `:9700` y registra el addon en Stremio. Comandos:
 `conflux install|uninstall|addon|serve` (`uninstall` lo desmonta todo).
+Otros comandos: `conflux status [--json]` (resumen operativo), `conflux
+doctor [--json]` (diagnóstico con códigos de salida 0-5), `conflux
+rotate-admin-token` (rota el token de administración), `--log-level=NIVEL`
+(DEBUG…CRITICAL; también `CONFLUX_LOG_LEVEL` o `log_level` en config.json).
+
+`admin_token` se genera solo (256 bits) en el primer arranque y queda en
+`config.json` — protege `/admin`, `/configure` y `POST /reload`. El `authKey`
+de Stremio se descubre en este orden: `CONFLUX_STREMIO_AUTHKEY` →
+`stremio_authkey` en config → keyring → scraping acotado del perfil local
+(desactivable con `authkey_scrape: false` o `CONFLUX_STREMIO_SCRAPE=0`).
 
 **Todo en uno** (Ubuntu + flatpak Stremio):
 

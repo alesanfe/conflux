@@ -31,7 +31,13 @@ DB_GLOB = os.path.expanduser(
     '~/.var/app/com.stremio.Stremio/data/stremio/storage/'
     '**/LocalStorage/localstorage.sqlite3')
 # 'authKey' en leveldb: clave + relleno binario + "valor" (base64-ish)
-_KEY_RE = re.compile(rb'uthKey.{0,15}?"([A-Za-z0-9+/=_\-]{20,})"', re.S)
+_KEY_RE = re.compile(rb'uthKey.{0,15}?"([A-Za-z0-9+/=_\-]{20,200})"', re.S)
+_VALID_RE = re.compile(r'^[A-Za-z0-9+/=_\-]{20,200}$')
+# Límites del scraping local (mínimo privilegio, nada de barridos sin cota):
+_MAX_FILE_BYTES = 64 * 1024 * 1024    # un .log/.ldb de leveldb no pasa de ~4 MiB
+_MAX_FILES = 40                        # por directorio, solo los más recientes
+_SCRAPE_BUDGET_S = 5.0                 # tiempo total máximo de escaneo
+_MAX_DB_CANDIDATES = 20                # sqlite: candidatas a inspeccionar
 
 
 # ---------- localización del authKey ----------
@@ -62,33 +68,58 @@ def _leveldb_dirs():
     return [d for d in out if os.path.isdir(d)]
 
 
+def _valid_key(k):
+    return bool(k) and bool(_VALID_RE.match(k))
+
+
 def _authkey_leveldb():
-    files = []
+    """Scraping acotado: solo leveldb conocido, sin symlinks, N ficheros
+    recientes por dir, tope de bytes y presupuesto de tiempo total."""
+    from conflux.core.state import CLOCK
+    t0, files = CLOCK.time(), []
     for d in _leveldb_dirs():
-        files += (glob.glob(os.path.join(d, '*.log'))
-                  + glob.glob(os.path.join(d, '*.ldb')))
-    for f in sorted(files, key=os.path.getmtime, reverse=True):
         try:
-            with open(f, 'rb') as fh:
-                hits = _KEY_RE.findall(fh.read())
+            fs = [f for f in (glob.glob(os.path.join(d, '*.log'))
+                              + glob.glob(os.path.join(d, '*.ldb')))
+                  if not os.path.islink(f)]
+            fs.sort(key=os.path.getmtime, reverse=True)
+            files += fs[:_MAX_FILES]
         except OSError:
             continue
-        if hits:
-            return hits[-1].decode()
+    for f in sorted(files, key=lambda p: os.path.getmtime(p), reverse=True):
+        if CLOCK.time() - t0 > _SCRAPE_BUDGET_S:
+            break
+        try:
+            if os.path.getsize(f) > _MAX_FILE_BYTES:
+                continue
+            with open(f, 'rb') as fh:
+                hits = _KEY_RE.findall(fh.read(_MAX_FILE_BYTES + 1))
+        except OSError:
+            continue
+        for h in reversed(hits):        # el último match es el más reciente
+            k = h.decode('ascii', 'ignore')
+            if _valid_key(k):
+                return k
     return None
 
 
 def find_db():
-    for p in sorted(glob.glob(DB_GLOB, recursive=True),
-                    key=os.path.getmtime, reverse=True):
+    cands = sorted(glob.glob(DB_GLOB, recursive=True),
+                   key=os.path.getmtime, reverse=True)[:_MAX_DB_CANDIDATES]
+    for p in cands:
+        c = None
         try:
             c = sqlite3.connect(f'file:{p}?mode=ro', uri=True)
             if c.execute("SELECT 1 FROM ItemTable WHERE key='profile'").fetchone():
-                c.close()
                 return p
-            c.close()
         except sqlite3.Error:
             pass
+        finally:
+            if c is not None:
+                try:
+                    c.close()
+                except sqlite3.Error:
+                    pass
     return None
 
 
@@ -107,13 +138,69 @@ def _authkey_sqlite():
     if not db:
         return None
     try:
-        return (_profile_sqlite(db).get('auth') or {}).get('key')
+        k = (_profile_sqlite(db).get('auth') or {}).get('key')
+        return k if _valid_key(k) else None
     except Exception:
         return None
 
 
+# ---------- CredentialProvider chain ----------
+
+def _key_env():
+    return os.environ.get('CONFLUX_STREMIO_AUTHKEY') or None
+
+
+def _key_cfg():
+    try:
+        from conflux.core.cfg import _cfgget
+        return _cfgget('stremio_authkey') or None
+    except Exception:
+        return None
+
+
+def _key_keyring():
+    try:
+        import keyring  # pylint: disable=import-error  # opcional
+        return keyring.get_password('conflux', 'stremio_authkey')
+    except Exception:
+        return None
+
+
+def _scrape_enabled():
+    """El scraping de ficheros locales puede desactivarse:
+    config `authkey_scrape: false` o env CONFLUX_STREMIO_SCRAPE=0."""
+    try:
+        from conflux.core.cfg import _cfgget
+        if not _cfgget('authkey_scrape', True):
+            return False
+    except Exception:
+        pass
+    return os.environ.get('CONFLUX_STREMIO_SCRAPE', '1').lower() \
+        not in ('0', 'false', 'no', 'off')
+
+
+# (nombre, atributo) — resueltos en llamada para que tests/parches lleguen.
+_PROVIDERS = (('env', '_key_env'), ('config', '_key_cfg'),
+              ('keyring', '_key_keyring'),
+              ('leveldb', '_authkey_leveldb'), ('sqlite', '_authkey_sqlite'))
+
+
+def find_auth():
+    """Devuelve (authKey, proveedor). Orden: explícito > seguro > scraping."""
+    for name, attr in _PROVIDERS:
+        if name in ('leveldb', 'sqlite') and not _scrape_enabled():
+            continue
+        try:
+            k = globals()[attr]()
+        except Exception:
+            continue
+        if _valid_key(k):
+            return k, name
+    return None, None
+
+
 def find_authkey():
-    return _authkey_leveldb() or _authkey_sqlite()
+    return find_auth()[0]
 
 
 # ---------- api.strem.io ----------
@@ -139,9 +226,16 @@ def _api_set(key, addons):
 
 # ---------- alto nivel ----------
 
+def _safe_err(e, key):
+    """Mensaje de error sin credencial: el servidor podría hacer eco del
+    payload (incluido authKey) en su propio texto de error."""
+    s = str(e)
+    return s.replace(key, '***') if key else s
+
+
 def install_remote(manifest_url=PROXY_MANIFEST):
     """Devuelve (estado, detalle): installed | already | manual | error."""
-    key = find_authkey()
+    key, prov = find_auth()
     if not key:
         return 'manual', 'sin authKey — Stremio sin abrir o sin sesión'
     try:
@@ -158,13 +252,13 @@ def install_remote(manifest_url=PROXY_MANIFEST):
                 return 'updated', f'manifest refrescado ({len(addons)} addons)'
         addons.append(desc)
         _api_set(key, addons)
-        return 'installed', f'{len(addons)} addons (remoto)'
+        return 'installed', f'{len(addons)} addons (remoto, {prov})'
     except Exception as e:
-        return 'error', str(e)
+        return 'error', _safe_err(e, key)
 
 
 def remove_remote(manifest_url=PROXY_MANIFEST):
-    key = find_authkey()
+    key, _prov = find_auth()
     if not key:
         return 'manual', 'sin authKey'
     try:
@@ -175,7 +269,7 @@ def remove_remote(manifest_url=PROXY_MANIFEST):
         _api_set(key, new)
         return 'removed', f'{len(new)} addons'
     except Exception as e:
-        return 'error', str(e)
+        return 'error', _safe_err(e, key)
 
 
 def _sqlite_update(fn):

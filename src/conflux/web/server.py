@@ -327,6 +327,13 @@ class H(BaseHTTPRequestHandler):
         """Router POST: /login, /configure, /reload."""
         new_req_id()
         p = self.path.split('?', 1)[0]
+        if self.headers.get('Transfer-Encoding'):                # smuggling: CL único y acotado
+            return self.reply({'err': 'transfer-encoding not supported',
+                               'code': 'CFX-HTTP-001'}, 400)
+        ct = (self.headers.get('Content-Type') or '').split(';')[0].strip().lower()
+        if ct not in ('', 'application/x-www-form-urlencoded'):  # solo forms urlencoded
+            return self.reply({'err': 'unsupported content-type',
+                               'code': 'CFX-HTTP-002'}, 415)
         if p == '/login':                                        # fuera del gate: es el gate
             return self._login()
         if p in ('/reload', '/configure') and not self._authd():
@@ -480,6 +487,8 @@ class _Srv(ThreadingHTTPServer):
 
 def main():
     """Arranque: manifests cacheados si hay -> refresh bg; si no, fetch en vivo."""
+    from conflux.core.cfg import ensure_admin_token
+    ensure_admin_token()              # admin siempre con token (256b) desde el 1er arranque
     cached = _load_manifests_cache()
     if cached:
         manifests[:] = cached

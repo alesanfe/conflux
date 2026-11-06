@@ -346,9 +346,11 @@ def _marker():
 def register_addon(force=False):
     """Registra el addon en Stremio tras /health; marca addon.ok al éxito.
     Sin force respeta la marca (un addon borrado a mano no se re-añade)."""
+    from conflux.app.doctor import set_addon_state
     from conflux.infra import stremio          # import perezoso: red/leveldb
     if not force and os.path.exists(_marker()):
         return
+    set_addon_state('registering')
     for _ in range(40):
         try:
             if urllib.request.urlopen(f'{PROXY}/health', timeout=2):   # nosec B310
@@ -357,12 +359,16 @@ def register_addon(force=False):
             time.sleep(.5)
     else:
         _log.info('install: proxy sin responder — addon no registrado')
+        set_addon_state('remote_unreachable', last_error='proxy sin responder',
+                        attempts=40)
         return
     st, msg = stremio.install(f'{PROXY}/manifest.json')
     _log.info('install: addon %s (%s)', st, msg)
     if st in ('installed', 'updated', 'already'):
         _atomic_json(_marker(), {'ok': True})
+        set_addon_state('registered')
     elif st == 'manual':                     # sin authKey: guía deep-link
+        set_addon_state('authentication_failed', last_error='sin authKey')
         deep = f'stremio://{PROXY.split("//", 1)[1]}/manifest.json'
         try:
             if sys.platform == 'win32':
@@ -373,6 +379,9 @@ def register_addon(force=False):
                 _spawn(['xdg-open', deep])
         except OSError:
             pass
+    else:                                    # error: reintento en próximo arranque
+        set_addon_state('retry_pending' if st == 'error' else 'failed',
+                        last_error=str(msg)[:200])
 
 
 def register_addon_bg(force=False):
@@ -458,6 +467,16 @@ def cli_entry(argv=None):
     """Decide el arranque del binario. Devuelve True si debe seguir a main()."""
     argv = list(sys.argv[1:] if argv is None else argv)
     _apply_log_level(argv)
+    if 'rotate-admin-token' in argv:
+        from conflux.core.cfg import rotate_admin_token
+        rotate_admin_token()
+        _log.info('admin_token rotado (ver config.json — no se muestra)')
+        print('admin_token rotado (ver config.json — no se muestra)')
+        return False
+    for cmd in ('doctor', 'status'):
+        if cmd in argv:
+            from conflux.app.doctor import cli_diagnose
+            raise SystemExit(cli_diagnose(argv))
     if not getattr(sys, 'frozen', False):
         return 'uninstall' not in argv         # dev: sirve salvo uninstall
     if 'uninstall' in argv:

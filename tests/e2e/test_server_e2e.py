@@ -124,6 +124,9 @@ class ServerE2E(unittest.TestCase):
         cfg._CFG_FILE = cls._tmp_cfg
         if os.path.exists(cls._tmp_cfg):
             os.unlink(cls._tmp_cfg)
+        # el config.json real del repo puede traer admin_token (auto-generado
+        # en el 1er arranque): la suite e2e verifica el gate por separado
+        srv.CFG['admin_token'] = ''
         cls._undo = []
         if _LIVE:
             cached = srv._load_manifests_cache()
