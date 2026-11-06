@@ -40,6 +40,22 @@ ROUTES = [
     '/metrics',
 ]
 
+# variante cortés con los upstreams: las rutas caras (collects de stream /
+# subtitles hacen fan-out a ~30 fuentes reales) van con peso mucho menor —
+# la carga sostenida cae sobre el pipeline local, que es lo que el soak mide.
+ROUTES_LIGHT = [
+    '/manifest.json', '/manifest.json',
+    '/health', '/health', '/health/live', '/health/ready',
+    '/catalog/movie/scinemeta_movie_top.json',
+    '/catalog/series/scinemeta_series_top.json',
+    '/meta/movie/tt0137523.json',
+    '/meta/series/tt0944947.json',
+    '/stream/movie/tt0137523.json',          # ~1/12 del tráfico total
+    '/stream/series/tt0944947%3A1%3A1.json',
+    '/metrics', '/metrics',
+    '/subtitles/movie/tt0137523.json',
+]
+
 _stats = {'reqs': 0, 'errs': 0, 'lat': [], 'codes': {}}
 _lock = threading.Lock()
 _stop = threading.Event()
@@ -55,10 +71,10 @@ def _get(path, timeout=20):
         return None, (time.monotonic() - t0) * 1000, e
 
 
-def _worker():
+def _worker(routes):
     i = 0
     while not _stop.is_set():
-        path = ROUTES[i % len(ROUTES)]
+        path = routes[i % len(routes)]
         i += 1
         code, ms, err = _get(path)
         with _lock:
@@ -120,7 +136,10 @@ def _proc_stats():
 def main():
     minutes = float(sys.argv[1]) if len(sys.argv) > 1 else 5.0
     workers = int(sys.argv[2]) if len(sys.argv) > 2 else 8
-    print(f'soak: {minutes} min x{workers} workers -> {BASE}')
+    light = '--light' in sys.argv or os.environ.get('CONFLUX_SOAK_LIGHT')
+    routes = ROUTES_LIGHT if light else ROUTES
+    print(f'soak: {minutes} min x{workers} workers -> {BASE}'
+          + (' [light]' if light else ''))
 
     code, err = _probe('/health/live')
     if code != 200:
@@ -131,7 +150,8 @@ def main():
     warm_end = time.monotonic() + min(30, minutes * 12)
     ths = []
     for _ in range(workers):
-        threading.Thread(target=_worker, daemon=True).start()
+        threading.Thread(target=_worker, args=(routes,),
+                         daemon=True).start()
 
     fails = []
     while time.monotonic() < t_end:
