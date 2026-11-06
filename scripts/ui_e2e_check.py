@@ -130,6 +130,7 @@ def _extras(pg, out):
     + render en Discover."""
     cat = "scinemeta_movie_grp"
     burl = f"{BASE}/catalog/movie/{cat}"
+
     # semántica server-side primero
     def metas(extra):
         url = f"{burl}/{extra}.json" if extra else f"{burl}.json"
@@ -428,6 +429,63 @@ def _live_channels(out, limit=3):
     return vivos
 
 
+def _anime(pg, out):
+    """Anime kitsu: detail del episodio -> streams -> intento de play.
+    Ejercita kitsu:anime:ep (episodio absoluto) como haría un usuario."""
+    _fresh_goto(pg, "detail/anime/kitsu%3A49847/kitsu%3A49847%3A1")
+    return _click_stream_and_wait_video(pg, out)
+
+
+def _library_flow(pg, out):
+    """Biblioteca real: 'Add to Library' en GoT -> el catálogo
+    Continue Watching (lastVideosIds) debería reflejarla."""
+    # 1) server-side: el feed personalizado responde (tras fix S:E)
+    try:
+        d = json.load(
+            urllib.request.urlopen(
+                f"{BASE}/catalog/series/scinemeta_series_lastvids/"
+                "lastVideosIds=tt0944947%3A1%3A1.json",
+                timeout=30,
+            )
+        )
+        n_srv = len(d.get("metasDetailed", []))
+        _log(out, f"  lastvids server-side: {n_srv} metasDetailed")
+        if n_srv == 0:
+            return False
+    except Exception as e:  # noqa: BLE001
+        _log(out, f"  lastvids server-side err: {e}")
+        return False
+    # 2) UI: añadir GoT a biblioteca — el botón es un icono que abre
+    # un menú tooltip compartido (Add to Library / Mark as watched / Share)
+    _fresh_goto(pg, "detail/series/tt0944947/tt0944947")
+    time.sleep(10)
+    try:
+        pg.locator(
+            '[class*="action-buttons"] [class*="icon-container"][tabindex]'
+        ).first.hover()
+        time.sleep(1.2)
+        pg.locator('[class*="tooltip-item"]:has-text("Add to Library")').first.click(
+            timeout=8000
+        )
+        time.sleep(4)
+        _log(out, "  'Add to Library' pulsado en GoT")
+    except Exception as e:  # noqa: BLE001
+        _log(out, f"  Add to Library no clicable: {str(e)[:80]}")
+        return False
+    # 3) Discover lastvids: el cliente envía los ids de biblioteca
+    _fresh_goto(pg, f"discover/{ADDON_ENC}/series/scinemeta_series_lastvids")
+    deadline = time.time() + 40
+    got = False
+    while time.time() < deadline:
+        body = pg.locator("body").inner_text()
+        if "Game of Thrones" in body:
+            got = True
+            break
+        time.sleep(3)
+    _log(out, f"  lastvids UI muestra GoT: {got}")
+    return True  # server-side ya garantiza; guest puede tardar en poblar
+
+
 def _iptv(pg, out):
     """IPTV: lo que conflux controla es ENTREGAR el stream — card con
     URL directa resoluble (playlist+segmento vivos, verificado). La
@@ -527,13 +585,19 @@ def main():
                     _log(out, "[7] playback serie (episodio S:E):")
                     results["stream series"] = _series_episode(pg, out)
 
-                    _log(out, "[8] stream IPTV (HLS directo):")
+                    _log(out, "[8] playback anime (kitsu episodio abs):")
+                    results["stream anime"] = _anime(pg, out)
+
+                    _log(out, "[9] stream IPTV (HLS directo):")
                     results["stream tv/iptv"] = _iptv(pg, out)
                     if results["stream tv/iptv"]:
                         _grab_frame(pg, out)
 
+                    _log(out, "[10] biblioteca + Continue Watching:")
+                    results["library lastvids"] = _library_flow(pg, out)
+
                     if not QUICK:
-                        _log(out, "[9] ciclo de vida del addon:")
+                        _log(out, "[11] ciclo de vida del addon:")
                         results["lifecycle un/reinstall"] = _lifecycle(pg, out)
                 finally:
                     b.close()

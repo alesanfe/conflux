@@ -2,6 +2,7 @@
 
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import re
 import time
 import urllib.parse
 from concurrent.futures import as_completed
@@ -187,12 +188,20 @@ def _cat_synth(cid, utype, extra, key):
 
 
 def _cat_xlate_ids(utype, extra):
-    """ids no-tt -> tt p/ Cinemeta (Continue Watching: ids de biblioteca)."""
+    """ids no-tt -> tt p/ Cinemeta (Continue Watching: ids de biblioteca).
+    Cinemeta last-videos no resuelve video-ids `tt:S:E` (devuelve null):
+    hay que pelar el sufijo de episodio tras resolver el tt."""
     kv = dict(urllib.parse.parse_qsl(extra))
     for k in ("lastVideosIds",):
         if k in kv:
             ids = kv[k].split(",")[:100]  # optionsLimit:100 — fan-out acotado
-            kv[k] = ",".join(_POOL.map(lambda i: _resolve_sid(utype, i.strip()), ids))
+
+            def _vid2meta(i):
+                m = _resolve_sid(utype, i.strip())
+                return re.sub(r":\d+:\d+$", "", m)  # serie, no episodio
+
+            # dedup tras pelar: varios episodios -> una sola serie
+            kv[k] = ",".join(dict.fromkeys(_POOL.map(_vid2meta, ids)))
     return urllib.parse.urlencode(
         kv, safe=","
     )  # comas literales: sin ellas upstream ve 1 id mutilado

@@ -464,10 +464,24 @@ class TestXlateIdsMas(unittest.TestCase):
         self.assertEqual(len(ids), 100)
 
     def test_lastvideosids_tambien(self):
-        with patch.object(C, "_resolve_sid", side_effect=lambda u, i: "tt9") as rs:
+        with patch.object(
+            C, "_resolve_sid", side_effect=lambda u, i: f"tt{i[-1]}"
+        ) as rs:
             out = C._cat_xlate_ids("series", "lastVideosIds=kitsu:1,kitsu:2")
         self.assertEqual(rs.call_count, 2)
-        self.assertIn("lastVideosIds=tt9%2Ctt9", out.replace(",", "%2C"))
+        self.assertIn("lastVideosIds=tt1%2Ctt2", out.replace(",", "%2C"))
+
+    def test_lastvideosids_pela_episodio(self):
+        """Cinemeta last-videos no resuelve tt:S:E (null) -> pelar a id
+        de serie y deduplicar episodios de la misma."""
+        with patch.object(C, "_resolve_sid", side_effect=lambda u, i: i):
+            out = C._cat_xlate_ids(
+                "series", "lastVideosIds=tt0944947:1:1,tt0944947:3:2,tt0137523"
+            )
+        ids = dict(__import__("urllib.parse", fromlist=["parse_qsl"]).parse_qsl(out))[
+            "lastVideosIds"
+        ].split(",")
+        self.assertEqual(ids, ["tt0944947", "tt0137523"])
 
 
 class TestCatResolve(unittest.TestCase):
