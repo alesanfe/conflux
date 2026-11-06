@@ -143,6 +143,10 @@ Upstreams declaran catálogos vacíos, metas que dan 404, tipos falsos (anime co
 vivo; clasificar por contenido (`_ANIME_CAT`); verificar imágenes por HTTP, no por
 presencia del campo. `metas:[]` ≠ roto: puede ser upstream muerto, params
 requeridos, cuenta necesaria, contenido nuevo real o rate-limit — diagnosticar antes de quitar.
+Posters 404 (metahub sin cobertura): `_posters_view` en metafix sustituye a la
+salida por el placeholder imgur — sobre COPIA, el caché conserva la url; los
+desconocidos se HEAD-verifican async (`_POSTER_BAD/OK/PEND`, misma semántica
+que `_URL_BAD`). Las respuestas sintéticas (búsqueda) también pasan por la vista.
 
 **R3 · El manifest es contrato — Stremio filtra en cliente.**
 `types`/`idPrefixes`/`resources` se evalúan del lado cliente ANTES de pedir nada:

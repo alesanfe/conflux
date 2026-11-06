@@ -2,11 +2,12 @@
 # pylint: disable=broad-exception-caught,line-too-long
 import html as _html
 import re as _re
+import urllib.parse as _urlparse
 
 import requests
 
 from conflux.core.cfg import _cfgget
-from conflux.core.state import _POOL
+from conflux.core.state import CLOCK as _CLOCK, _POOL, _POOL_BG
 from conflux.infra.net import _session
 from conflux.infra.wikidata import _wikidata
 
@@ -19,6 +20,84 @@ _YT_AWARDS = [(100e6, 'Red Diamond'), (50e6, 'Ruby'), (10e6, 'Diamond'),
 
 _RE_TAG = _re.compile(r'<[^>]+>')
 _RE_BLOCK = _re.compile(r'<\s*(?:br|/p|/li|/div)\b[^>]*>', _re.IGNORECASE)
+
+
+# ---- posters muertos (R2): metahub 404 en títulos sin cobertura — el cliente
+# muestra su glyph gris de "sin imagen"; mejor un placeholder uniforme ----
+_POSTER_BAD: dict = {}        # url -> (strikes, ts) — mismo contrato que _URL_BAD
+_POSTER_OK: dict = {}         # url -> ts
+_POSTER_PEND: set = set()     # urls con HEAD en vuelo (dedupe + cap de ráfaga)
+_POSTER_FB = 'https://i.imgur.com/tTCuczU.png'   # el placeholder de los m3u
+
+
+def _poster_head(u):
+    """HEAD async: <400 -> ok; 4xx/5xx -> muerto; resto -> 1 strike."""
+    try:
+        r = _session(_urlparse.urlsplit(u).netloc).head(u, timeout=3, allow_redirects=True)
+        if r.status_code < 400:
+            _POSTER_OK[u] = _CLOCK.time()
+            _POSTER_BAD.pop(u, None)
+        else:
+            _POSTER_BAD[u] = (2, _CLOCK.time())
+    except Exception:                                    # noqa: BLE001
+        st, _ = _POSTER_BAD.get(u, (0, 0))
+        _POSTER_BAD[u] = (st + 1, _CLOCK.time())
+    _POSTER_PEND.discard(u)
+
+
+def _poster_probe(m):
+    """Poster desconocido -> HEAD encolado (fire-and-forget, no muta el meta:
+    la primera carga puede salir rota, las siguientes ven el veredicto)."""
+    p = m.get('poster')
+    if not isinstance(p, str) or not p.startswith('http'):
+        return
+    now = _CLOCK.time()
+    if len(_POSTER_BAD) + len(_POSTER_OK) > 2000:        # misma cota que streams
+        for u in sorted(_POSTER_BAD, key=lambda u: _POSTER_BAD[u][1])[:len(_POSTER_BAD) // 2]:
+            _POSTER_BAD.pop(u, None)
+        for u in sorted(_POSTER_OK, key=lambda u: _POSTER_OK[u])[:len(_POSTER_OK) // 2]:
+            _POSTER_OK.pop(u, None)
+    st, ts = _POSTER_BAD.get(p, (0, 0))
+    if (now - ts > 1800 and now - _POSTER_OK.get(p, 0) > 1800
+            and len(_POSTER_PEND) < 32 and p not in _POSTER_PEND):
+        _POSTER_PEND.add(p)
+        try:
+            _POOL_BG.submit(_poster_head, p)
+        except Exception:                                # noqa: BLE001 — pool cerrado
+            _POSTER_PEND.discard(p)
+
+
+def _posters_view(d):
+    """Vista de emisión: posters confirmados muertos -> placeholder sobre
+    COPIA del meta — el objeto cacheado conserva la url original (si resucita
+    a los 30min el caché no queda condenado). En cola también los desconocidos
+    de respuestas cacheadas."""
+    if not isinstance(d, dict):
+        return d
+    now = _CLOCK.time()
+    dead = set()
+    ms = (list(d.get('metas') or []) + list(d.get('metasDetailed') or [])
+          + ([d['meta']] if isinstance(d.get('meta'), dict) else []))
+    for m in ms:
+        if not isinstance(m, dict):
+            continue
+        _poster_probe(m)
+        p = m.get('poster')
+        st, ts = _POSTER_BAD.get(p, (0, 0)) if isinstance(p, str) else (0, 0)
+        if st >= 2 and now - ts < 1800:
+            dead.add(p)
+    if not dead:
+        return d
+    out = dict(d)
+    for k in ('meta', 'metas', 'metasDetailed'):
+        v = d.get(k)
+        if isinstance(v, dict) and v.get('poster') in dead:
+            out[k] = dict(v, poster=_POSTER_FB)
+        elif isinstance(v, list):
+            out[k] = [dict(m, poster=_POSTER_FB)
+                      if isinstance(m, dict) and m.get('poster') in dead else m
+                      for m in v]
+    return out
 
 
 def _fix_meta_html(m):
@@ -174,6 +253,7 @@ def _fix_metas(d, deep=False):
         if not isinstance(m, dict):
             continue
         _fix_meta_html(m)
+        _poster_probe(m)
         yt = m.get('yt_id')
         i = str(m.get('id') or '')
         if not yt and i.startswith('yt_id:'):

@@ -443,6 +443,9 @@ class TestSourcesJsonModule(unittest.TestCase):
                 "print('WARN:', 'ignorado' in buf.getvalue())")
             env = dict(os.environ)
             env['CONFLUX_LOG'] = os.path.join(d, 't.log')
+            # el hijo escribe utf-8: sus bytes decodifican sin error tanto en
+            # utf-8 como en cp1252 (padre con -X utf8 o con locale ANSI)
+            env['PYTHONIOENCODING'] = 'utf-8'
             r = subprocess.run([sys.executable, '-c', code],
                                capture_output=True, text=True, timeout=60,
                                env=env)

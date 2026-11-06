@@ -43,13 +43,17 @@ AUDIO_MAP = {'ATMOS':'Atmos','DOLBY ATMOS':'Atmos','TRUEHD':'TrueHD','DDP5.1':'D
 
 INDEXER_MAP = {'NYAA':'NyaaSi','NYAASI':'NyaaSi','RUTRACKER':'Rutracker','WOLFMAX4K':'Wolfmax4k',
  'FRAMESTOR':'FraMeSToR','YTS':'YTS','1337X':'1337x','EZTV':'EZTV','RARBG':'RARBG',
- 'THEPIRATEBAY':'ThePirateBay','TPB':'ThePirateBay','TGX':'TGx','TORRENTGALAXY':'TGx',
+ 'THEPIRATEBAY':'TPB','TPB':'TPB','TGX':'TGx','TORRENTGALAXY':'TGx',
  'KICKASS':'KickAss','HORRIBLESUBS':'HorribleSubs','ERAI-RAWS':'Erai-raws','BITSEARCH':'BitSearch',
  'PIXELDRAIN':'Pixeldrain','FASTPLAY':'FastPlay','ASTRA':'Astra','SPIDER':'Spider','FILEMOOD':'filemood',
  'RUTOR':'RuTor','MEGUSTA':'MeGusta','NTB':'NTb','FGT':'FGT','EVO':'EVO','PSA':'PSA','ION10':'ION10',
  'XNT':'XNT','DDR':'DDR','SUCCESSFULCRAB':'SuccessfulCrab','SMURF':'SMURF','VXT':'VxT'}
 
 SRCT_ORD = ['BDREMUX','REMUX','BLURAY','WEB-DL','WEBRIP','BDRIP','BRRIP','HDTV','DVDRIP','DVD','CAM','HDCAM','TS','SCR']
+
+# La columna de stream-card del cliente corta ~25 chars: etiquetas cortas
+# para que 'REMUX'/'BD' no salgan mutilados ('REMU','BDREMU' parecen typos).
+_SRCT_DISP = {'BDREMUX': 'REMUX', 'BLURAY': 'BD', 'DVDRIP': 'DVD', 'HDCAM': 'CAM'}
 
 HDR_ORD  = ['HDR10+','DV','HDR10','HLG','HDR']
 
@@ -222,9 +226,13 @@ def _display_t1(f):
 
 
 def _display_t2(f, short, idx):
-    t2 = [f'⚙️ {short}/{idx}' if idx.lower() != short.lower() else f'⚙️ {short}']
+    # rip-type delante del indexer: si la columna estrecha recorta, corta
+    # 'Torrentio/1337…' (aún legible) y no 'REMU'/'BDREMU' (parecen typos).
+    t2 = [f'⚙️ {short}']
     if f['srctype']:
-        t2.append(f['srctype'])
+        t2.append(_SRCT_DISP.get(f['srctype'], f['srctype']))
+    if idx.lower() != short.lower():
+        t2.append(idx)
     if f['es']:
         t2.append('ES')
     if f['dur']:

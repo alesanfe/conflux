@@ -8,7 +8,7 @@ from concurrent.futures import as_completed
 from conflux.app.stream import _eff_disabled_for, _ensure_collect
 from conflux.core.cfg import _cfgget
 from conflux.core.state import _POOL, SOURCES, _cget, _cset, _cstale, _meta_c, manifests
-from conflux.domain.metafix import _fix_metas, _rpdb
+from conflux.domain.metafix import _fix_metas, _posters_view, _rpdb
 from conflux.domain.sources import res_of, res_types
 from conflux.infra.net import fetch
 
@@ -58,7 +58,7 @@ def handle_meta(stype, mid):
     key = (stype, mid)
     hit = _cget(_meta_c, key)
     if hit is not None:
-        return _rpdb(hit)                                # rpdb es por perfil: fuera del caché
+        return _rpdb(_posters_view(hit))                 # rpdb es por perfil: fuera del caché
     # prefetch: en pelis el stream-id coincide con el meta-id — al abrir la
     # ficha ya se recolecta en background y el stream sale al instante.
     # stream_prefetch=False -> opt-out (privacidad/banda): no consulta fuentes
@@ -72,5 +72,5 @@ def handle_meta(stype, mid):
         if d is not None:
             _fix_metas(d, deep=True)
             _cset(_meta_c, key, d)                    # caché limpio: rpdb es por perfil
-            return _rpdb(d)                           # no-destructivo -> hay que usarlo
+            return _rpdb(_posters_view(d))            # no-destructivo -> hay que usarlo
     return _cstale(_meta_c, key) or {'meta': {}}

@@ -22,7 +22,7 @@ from conflux.core.state import (
 from conflux.domain.lists import _list_metas, _m3u_metas
 from conflux.infra.epg import epg_metas
 from conflux.domain.manifest import _GRP, _LEGACY, _SYNTH, _UTYPE, _YR_OPTS
-from conflux.domain.metafix import _fix_metas, _rpdb
+from conflux.domain.metafix import _fix_metas, _posters_view, _rpdb
 from conflux.domain.sources import _PREFIX_SRC, _resolve_sid
 from conflux.domain.text import _id_prefix
 from conflux.infra.net import fetch
@@ -321,7 +321,7 @@ def _cat_serve(cid, key, d, empty0, req_g, req_only_g, extra):
     _fix_metas(d)
     if not empty:
         _cset(_cat_c, key, d)  # vacío: no cachear (reintenta)
-    return _rpdb(d)  # no-destructivo -> hay que usarlo
+    return _rpdb(_posters_view(d))  # no-destructivo -> hay que usarlo
 
 
 def handle_catalog(stype, cid, extra):
@@ -332,13 +332,13 @@ def handle_catalog(stype, cid, extra):
     req_only_g = req_g is not None and set(req_kv) == {"genre"}  # sin más filtros
     hit = _cget(_cat_c, key)
     if hit is not None:
-        return _rpdb(hit)  # rpdb es por perfil: fuera del caché
+        return _rpdb(_posters_view(hit))  # rpdb es por perfil: fuera del caché
     try:
         resolved = _cat_resolve(cid, stype, extra, key)
     except (ValueError, StopIteration, IndexError):
         return {"metas": []}
     if isinstance(resolved, dict):  # sintético respondió directo
-        return _rpdb(resolved)
+        return _rpdb(_posters_view(resolved))
     base, utype, real, extra = resolved
     extra = _cat_fix_extra(base, utype, real, extra)
     tail = f"/{urllib.parse.quote(extra, safe='=&,:')}" if extra else ""

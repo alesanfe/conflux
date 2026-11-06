@@ -297,6 +297,99 @@ class TestFixMetaHtml(unittest.TestCase):
         mf._fix_meta_html(m)
         self.assertEqual(m['description'], 'Primera frase normal\nsegunda línea de prosa.')
 
+
+class TestPosterDead(unittest.TestCase):
+    """Poster 404 de upstream (metahub sin cobertura) -> placeholder en la
+    vista; el desconocido se HEAD-verifica async en vez de bloquear."""
+
+    def setUp(self):
+        self._b, self._o, self._p = (dict(mf._POSTER_BAD), dict(mf._POSTER_OK),
+                                   set(mf._POSTER_PEND))
+        mf._POSTER_BAD.clear(); mf._POSTER_OK.clear(); mf._POSTER_PEND.clear()
+
+    def tearDown(self):
+        mf._POSTER_BAD.clear(); mf._POSTER_BAD.update(self._b)
+        mf._POSTER_OK.clear(); mf._POSTER_OK.update(self._o)
+        mf._POSTER_PEND.clear(); mf._POSTER_PEND.update(self._p)
+
+    def test_vista_sustituye_sin_mutar_cache(self):
+        m = {'poster': 'http://x/dead.jpg', 'name': 'x'}
+        mf._POSTER_BAD['http://x/dead.jpg'] = (2, mf._CLOCK.time())
+        d = {'metas': [m]}
+        out = mf._posters_view(d)
+        self.assertEqual(out['metas'][0]['poster'], mf._POSTER_FB)
+        self.assertEqual(m['poster'], 'http://x/dead.jpg')   # original intacto
+
+    def test_vista_meta_singular(self):
+        mf._POSTER_BAD['http://x/dead.jpg'] = (2, mf._CLOCK.time())
+        out = mf._posters_view({'meta': {'poster': 'http://x/dead.jpg'}})
+        self.assertEqual(out['meta']['poster'], mf._POSTER_FB)
+
+    def test_vista_metas_detailed(self):
+        mf._POSTER_BAD['http://x/d.jpg'] = (2, mf._CLOCK.time())
+        out = mf._posters_view({'metasDetailed': [{'poster': 'http://x/d.jpg'},
+                                                  {'poster': 'http://x/ok.jpg'}]})
+        self.assertEqual(out['metasDetailed'][0]['poster'], mf._POSTER_FB)
+        self.assertEqual(out['metasDetailed'][1]['poster'], 'http://x/ok.jpg')
+
+    def test_sin_muertos_devuelve_el_mismo_objeto(self):
+        d = {'metas': [{'poster': 'http://x/ok.jpg'}]}
+        mf._POSTER_OK['http://x/ok.jpg'] = mf._CLOCK.time()
+        self.assertIs(mf._posters_view(d), d)
+
+    def test_strike_simple_no_sustituye(self):
+        mf._POSTER_BAD['http://x/flaky.jpg'] = (1, mf._CLOCK.time())
+        out = mf._posters_view({'metas': [{'poster': 'http://x/flaky.jpg'}]})
+        self.assertEqual(out['metas'][0]['poster'], 'http://x/flaky.jpg')
+
+    def test_veredicto_viejo_reverifica_no_sustituye(self):
+        mf._POSTER_BAD['http://x/old.jpg'] = (2, mf._CLOCK.time() - 1801)
+        with patch.object(mf, '_POOL_BG') as bg:
+            out = mf._posters_view({'metas': [{'poster': 'http://x/old.jpg'}]})
+            bg.submit.assert_called_once()
+        self.assertEqual(out['metas'][0]['poster'], 'http://x/old.jpg')
+
+    def test_desconocido_encola_head(self):
+        with patch.object(mf, '_POOL_BG') as bg:
+            mf._poster_probe({'poster': 'http://x/new.jpg'})
+            bg.submit.assert_called_once()
+        self.assertIn('http://x/new.jpg', mf._POSTER_PEND)
+
+    def test_ok_reciente_no_reverifica(self):
+        mf._POSTER_OK['http://x/fine.jpg'] = mf._CLOCK.time()
+        with patch.object(mf, '_POOL_BG') as bg:
+            mf._poster_probe({'poster': 'http://x/fine.jpg'})
+            bg.submit.assert_not_called()
+
+    def test_head_404_marca_muerto(self):
+        s, _ = fake_session({'status': 404})
+        with patch.object(mf, '_session', return_value=s):
+            mf._poster_head('http://x/dead.jpg')
+        self.assertEqual(mf._POSTER_BAD['http://x/dead.jpg'][0], 2)
+
+    def test_head_200_marca_ok(self):
+        s, _ = fake_session({'status': 200})
+        with patch.object(mf, '_session', return_value=s):
+            mf._poster_head('http://x/live.jpg')
+        self.assertIn('http://x/live.jpg', mf._POSTER_OK)
+
+    def test_head_timeout_es_strike(self):
+        s, _ = fake_session(Exception('boom'))
+        with patch.object(mf, '_session', return_value=s):
+            mf._poster_head('http://x/t.jpg')
+        self.assertEqual(mf._POSTER_BAD['http://x/t.jpg'][0], 1)
+
+    def test_sin_poster_no_rompe(self):
+        mf._poster_probe({})
+        mf._poster_probe({'poster': None})
+        mf._poster_probe({'poster': 'relative/path'})
+        mf._poster_probe({'poster': 'data:image/png;base64,x'})
+
+    def test_vista_items_no_dict_no_rompe(self):
+        d = {'metas': ['no-dict', 42, {'poster': 'http://x/ok.jpg'}]}
+        with patch.object(mf, '_POOL_BG'):
+            self.assertIs(mf._posters_view(d), d)
+
     def test_fix_metas_limpia_desc_de_cualquier_meta(self):
         d = {'metas': [{'id': 'tt1', 'description': '<i>a</i>'},
                        {'id': 'anilist:2', 'description': '<b>b</b>'}]}
