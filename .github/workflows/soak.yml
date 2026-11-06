@@ -39,6 +39,11 @@ jobs:
           done
           curl -sf http://127.0.0.1:9700/health/live > /dev/null
       - name: soak 45min x6 workers (light)
+        # cap 6GB: el pico RSS bajo 6 workers ronda ~4GB por churn de
+        # buffers (Python no devuelve arenas); el cap sigue cazando un
+        # crecimiento desbocado real.
+        env:
+          CONFLUX_SOAK_RSS_CAP: '6144'
         run: python scripts/soak.py 45 6 --light | tee soak-report.txt
       - name: postmortem si falla
         if: failure()

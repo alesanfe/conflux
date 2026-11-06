@@ -39,6 +39,17 @@ a los 60 s; streak ≥3 = fuente en cooldown (reintenta sola a los 15 min).
 Rotan solos (5×2 MiB por defecto). Ubicación: `conflux status` → `log`.
 Nivel: `--log-level=WARNING`, `CONFLUX_LOG_LEVEL` o `log_level` en config.
 
+## Uso de memoria alto / picos bajo carga
+Comportamiento conocido, no una fuga: las rutas pesadas (`/stream`,
+`/subtitles`) hacen fan-out a ~30 upstreams y cada respuesta se bufferiza
+entera (M3U/EPG de decenas de MB). Con concurrencia sostenida el pico de
+memoria comprometida ronda varios GB; Python no devuelve arenas al SO,
+así que el pico queda como piso. En uso real (1 usuario, 1-3 peticiones
+concurrentes) la huella es muy inferior. Síntoma de presión real:
+sondas `/health/live` con timeouts repetidos en ráfaga (>3 seguidos) —
+el soak (`scripts/soak.py`) mide reposo-vs-reposo para distinguir
+retención de churn transitorio. Techo de guarda: `CONFLUX_SOAK_RSS_CAP`.
+
 ## Desinstalación incompleta
 `conflux uninstall` reintenta kill, autostart y desregistro. Restos:
 `%LOCALAPPDATA%\Conflux` / `~/.local/share/conflux`, clave Run `Conflux`,
