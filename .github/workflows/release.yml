@@ -36,6 +36,7 @@ jobs:
           - {os: ubuntu-latest, asset: conflux-linux, flags: ''}
           - {os: macos-latest, asset: conflux-macos, flags: ''}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
@@ -49,9 +50,47 @@ jobs:
           # windows ya sale como conflux.exe; posix sale como 'conflux'
           [ -f dist/conflux ] && mv dist/conflux "dist/${{ matrix.asset }}" || true
           ls -l dist/
+      - name: checksum del artefacto
+        shell: bash
+        run: sha256sum "dist/${{ matrix.asset }}" | tee "dist/${{ matrix.asset }}.sha256"
+      - name: smoke test del binario (instala → health → uninstall → limpio)
+        shell: bash
+        timeout-minutes: 6
+        run: bash scripts/smoke_binary.sh "dist/${{ matrix.asset }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        if: failure()
+        with:
+          name: smoke-log-${{ matrix.asset }}
+          path: '**/smoke.log'
+          if-no-files-found: ignore
+      - name: SBOM CycloneDX del binario
+        shell: bash
+        run: |
+          pip install cyclonedx-bom==4.6.1
+          cyclonedx-py requirements -i requirements.txt -of json \
+            -o "dist/${{ matrix.asset }}.sbom.json"
+      - name: firma keyless del checksum (cosign/Sigstore)
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532  # v4.1.3
+      - name: firma y verificación del artefacto
+        shell: bash
+        run: |
+          # firma el digest del artefacto PROBADO (smoke) → firma=provenance del mismo digest
+          cosign sign-blob --yes \
+            --bundle "dist/${{ matrix.asset }}.sha256.sigstore.json" \
+            "dist/${{ matrix.asset }}.sha256"
+          # verifica antes de publicar: la release no sube una firma inválida
+          cosign verify-blob \
+            --bundle "dist/${{ matrix.asset }}.sha256.sigstore.json" \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "dist/${{ matrix.asset }}.sha256"
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
         with:
           subject-path: dist/${{ matrix.asset }}
       - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # v3
         with:
-          files: dist/${{ matrix.asset }}
+          files: |
+            dist/${{ matrix.asset }}
+            dist/${{ matrix.asset }}.sha256
+            dist/${{ matrix.asset }}.sha256.sigstore.json
+            dist/${{ matrix.asset }}.sbom.json

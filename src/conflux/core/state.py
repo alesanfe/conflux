@@ -314,12 +314,23 @@ _rts: dict = {}            # ruta -> deque(ultimas 512 latencias) — histograma
 _SERVED: dict = {}            # fuente -> {'n': streams aportados, 'res': {res: n}} — quién aporta de verdad
 
 def _atomic_json(path, obj):
-    """Escribe JSON de forma atómica (tmp+rename): un corte a mitad de write
-    no corrompe el fichero — clave para config.json y el caché de manifests."""
+    """Escribe JSON de forma atómica y durable (CONFLUX-043): tmp en el mismo
+    filesystem + flush+fsync + os.replace + fsync del directorio. Un corte en
+    cualquier punto deja el fichero anterior intacto en disco."""
     tmp = f'{path}.tmp'
     with open(tmp, 'w', encoding='utf-8') as fh:
         json.dump(obj, fh)
+        fh.flush()
+        os.fsync(fh.fileno())
     os.replace(tmp, path)
+    try:                                   # dirsync: el rename también sobrevive
+        dfd = os.open(os.path.dirname(path) or '.', os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    except OSError:                        # fsync de dir no existe en win32/algunos fs
+        pass
 
 
 def _pct(vals, q):
@@ -403,3 +414,30 @@ def log_ev(ev, **kv):
     if rid:
         kv.setdefault('rid', rid)
     _log.info(json.dumps({'ev': ev, **kv}, separators=(',', ':')))
+
+
+# ---- AppContext (CONFLUX-001): el estado mutable agrupado e inyectable ----
+# Los nombres de módulo son referencias a los contenedores del contexto por
+# defecto (composition root): la mutación in-situ sigue siendo la misma, y un
+# contexto aislado en tests no comparte nada con éste.
+from conflux.core.ctx import AppContext            # noqa: E402
+
+CTX = AppContext()
+CTX.sources.sources = SOURCES
+CTX.sources.manifests = manifests
+CTX.sources.disabled = _DISABLED
+CTX.failures.health = HEALTH
+CTX.breakers.fails = _fails
+CTX.breakers.cooldown = COOLDOWN
+CTX.breakers.dead_opt = _DEAD_OPT
+CTX.metrics.rtime = _rtime
+CTX.metrics.rts = _rts
+CTX.metrics.served = _SERVED
+CTX.cfg = CFG
+CTX.caches['stream'] = _cache
+CTX.caches['meta'] = _meta_c
+CTX.caches['catalog'] = _cat_c
+CTX.sessions = _SESS
+CTX.sessions_lock = _sess_lock
+CTX.register_pool(_POOL)
+CTX.register_pool(_POOL_BG)

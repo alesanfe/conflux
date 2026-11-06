@@ -7,8 +7,11 @@ en Linux iba como systemd user `stremio-proxy`).
 ## Comandos
 
 ```bash
-python3 -m unittest discover -s tests -t .  # 667 tests (~39s): unit+integration+security+contract+property+resilience+regression+performance+e2e
-python3 -m unittest discover -s tests/unit -t .       # solo unit (~1s)
+python3 -m unittest discover -s tests -t .  # ~1364 tests (~70s): unit+integration+security+contract+property+resilience+regression+performance+e2e
+python3 -m unittest discover -s tests/unit -t .       # solo unit (~5s)
+scripts/stress_seeds.py --seeds N           # suite barajada por seed (expone orden→flakes)
+conflux.exe doctor [--json]                 # diagnóstico: config/puerto/addon/authkey/breakers
+conflux.exe status                          # resumen: versión, fuentes degradadas, breakers
 python3 scripts/test_times.py [N] [dir] [--all]      # timer+memoria+outcome por test, p50/p95/p99,
                                                      # agregado por paquete; --mem ranking memoria
 python3 scripts/test_times.py --save base.json       # baseline; --compare base.json = regresiones

@@ -1,0 +1,44 @@
+name: stress
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'   # domingo 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  seeds:
+    strategy:
+      fail-fast: false
+      matrix:
+        batch: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.in -r requirements-dev.txt
+      - name: suite barajada (5 seeds × batch → 20 seeds/semana)
+        env:
+          BATCH: ${{ matrix.batch }}
+          SEED_BASE: ${{ github.run_id }}
+        run: |
+          python - <<'EOF'
+          import os, random, subprocess, sys
+          rng = random.Random(f"{os.environ['SEED_BASE']}-{os.environ['BATCH']}")
+          for _ in range(5):
+              seed = rng.randrange(1 << 31)
+              r = subprocess.run(
+                  [sys.executable, 'scripts/stress_seeds.py',
+                   '--seed', str(seed)], check=False)
+              if r.returncode:
+                  sys.exit(1)
+          EOF

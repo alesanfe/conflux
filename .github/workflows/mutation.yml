@@ -1,0 +1,61 @@
+name: mutation
+
+on:
+  schedule:
+    - cron: '0 5 * * 1'   # lunes 05:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutmut:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.in -r requirements-dev.txt
+      - name: scope mutmut a lógica sensible (config)
+        run: |
+          # sobreescribe only_mutate → validación de config (auth-related)
+          python - <<'EOF'
+          import re, pathlib
+          p = pathlib.Path('pyproject.toml')
+          t = p.read_text()
+          t = re.sub(r'only_mutate = \[[^\]]*\]',
+                     'only_mutate = ["src/conflux/core/cfg.py"]', t)
+          t = re.sub(r'pytest_add_cli_args_test_selection = \[[^\]]*\]',
+                     'pytest_add_cli_args_test_selection = '
+                     '["tests/unit/test_cfg.py", "tests/unit/test_ctx.py"]', t)
+          p.write_text(t)
+          EOF
+      - name: mutmut run
+        run: mutmut run --max-children 4 || true   # exit≠0 con supervivientes; el gate es el score
+      - name: gate de mutation score (>=65% inicial)
+        run: |
+          mutmut junitxml > mutmut-results.xml || true
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET, sys
+          r = ET.parse('mutmut-results.xml').getroot()
+          total = killed = 0
+          for tc in r.iter('testcase'):
+              total += 1
+              if not list(tc.iter('failure')) and not list(tc.iter('error')):
+                  killed += 1
+          score = (100.0*killed/total) if total else 0.0
+          print(f'mutation score: {killed}/{total} = {score:.1f}%')
+          sys.exit(0 if score >= 65.0 else 1)
+          EOF
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        if: always()
+        with:
+          name: mutmut-results
+          path: mutmut-results.xml
+          if-no-files-found: ignore

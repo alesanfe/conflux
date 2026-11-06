@@ -44,6 +44,21 @@ def _coerce(k, v):
 
 _CFG_ENV_REF: dict = {}        # k -> (var, resuelto): 'env:X' re-emite la ref al guardar
 
+_CONFIG_VERSION = 1            # schema actual — bump + migración al cambiar shape
+
+
+def _check_version(raw):
+    """config_version futuro -> config de una build más nueva: se rechaza el
+    archivo (defaults) en vez de interpretar mal sus campos."""
+    v = raw.get('config_version', 1)
+    if not isinstance(v, int) or v < 1:
+        return False
+    if v > _CONFIG_VERSION:
+        _log.warning('config_version %d > %d (build nueva?) — defaults',
+                     v, _CONFIG_VERSION)
+        return False
+    return True
+
 
 def load_config():
     """Carga config.json sobre defaults; re-deriva _DISABLED y RE_ES."""
@@ -51,6 +66,8 @@ def load_config():
     CFG.update(_CFG_DEFAULTS)                  # reset: borrar el archivo = defaults
     try:
         raw = json.load(_open(_CFG_FILE))
+        if not _check_version(raw):
+            raw = {}
         unk = sorted(k for k in raw if k not in _CFG_DEFAULTS)
         if unk:                                       # observabilidad: keys huérfanas/stale
             _log.info('config.json: claves desconocidas ignoradas: %s', ', '.join(unk))
