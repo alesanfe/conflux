@@ -18,6 +18,12 @@ case "$(uname -s)" in
 esac
 LOG="$HOME_T/smoke.log"
 
+# timeout portable: los runners macOS no traen coreutils
+_to() {
+  local t="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then timeout "$t" "$@"; else "$@"; fi
+}
+
 die() { echo "SMOKE FAIL: $*"; echo "--- log ---"; cat "$LOG" 2>/dev/null; exit 1; }
 
 echo "bin: $BIN"
@@ -25,7 +31,7 @@ echo "home: $HOME_T"
 
 # 1) instala+arranca (el binario se auto-instala y relanza; este proceso sale.
 #    timeout por si el launcher no retorna — un crash no debe colgar el job)
-timeout 90 "$BIN" >"$LOG" 2>&1 || true
+_to 90 "$BIN" >"$LOG" 2>&1 || true
 
 # 2) espera /health (manifests en frío tarda — 150s de margen)
 OK=""
@@ -48,7 +54,7 @@ curl -sf http://127.0.0.1:9700/manifest.json | grep -q '"id"' \
 #    En Windows el borrado del propio exe es diferido (cmd ping+rmdir) y puede
 #    tumbar el proceso en pleno exit → exit code no fiable; el gate son los
 #    checks posteriores (puerto, procesos, directorio).
-timeout 60 "$BIN" uninstall >>"$LOG" 2>&1 || true
+_to 60 "$BIN" uninstall >>"$LOG" 2>&1 || true
 
 # windows: el borrado del dir es diferido (~5s ping+rmdir); esperar a que cierre
 for _ in $(seq 1 20); do
