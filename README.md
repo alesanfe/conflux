@@ -253,4 +253,6 @@ sincronización remota del perfil, semántica de ids, etc.).
 Para reportar una vulnerabilidad usa
 [GitHub Security Advisories](https://github.com/alesanfe/conflux/security/advisories/new)
 — **no abras un issue público**. Política completa en `SECURITY.md`;
-modelo de amenazas en `docs/threat-model.md`.
+modelo de amenazas en `docs/threat-model.md`, cadena de suministro en
+`docs/supply-chain.md` (SLSA L3, verificación de firmas/SBOM), operación en
+`docs/runbook.md` y decisiones en `docs/adr/`.
