@@ -52,6 +52,31 @@ class TestCatalogFlow(unittest.TestCase):
         finally:
             restore()
 
+    def test_poster_muerto_se_sirve_placeholder_sin_ensuciar_cache(self):
+        """Wiring handle_catalog -> _posters_view: el cliente recibe el
+        fallback para posters 404, pero el objeto cacheado conserva la url
+        original (resurrección posible a los 30min)."""
+        import conflux.domain.metafix as mf
+        dead = 'https://images.metahub.space/poster/small/tt9/img'
+        old = (dict(mf._POSTER_BAD), dict(mf._POSTER_OK))
+        mf._POSTER_BAD.clear(); mf._POSTER_BAD[dead] = (2, st.CLOCK.time())
+        restore = patch_fetch(lambda *a, **k: {'metas': [
+            {'id': 'tt9', 'poster': dead}, {'id': 'tt8', 'poster': 'http://ok/1'}]})
+        try:
+            from unittest.mock import patch
+            with patch.object(mf, '_POOL_BG'):
+                d1 = C.handle_catalog('movie', 'scinemeta_movie_top', None)
+                d2 = C.handle_catalog('movie', 'scinemeta_movie_top', None)  # cache hit
+            self.assertEqual(d1['metas'][0]['poster'], mf._POSTER_FB)
+            self.assertEqual(d2['metas'][0]['poster'], mf._POSTER_FB)
+            self.assertEqual(d1['metas'][1]['poster'], 'http://ok/1')
+            key = ('movie', 'scinemeta_movie_top', None)
+            self.assertEqual(C._cat_c[key][1]['metas'][0]['poster'], dead)
+        finally:
+            restore()
+            mf._POSTER_BAD.clear(); mf._POSTER_BAD.update(old[0])
+            mf._POSTER_OK.clear(); mf._POSTER_OK.update(old[1])
+
 
 if __name__ == '__main__':
     unittest.main()

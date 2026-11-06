@@ -395,3 +395,16 @@ class TestPosterDead(unittest.TestCase):
                        {'id': 'anilist:2', 'description': '<b>b</b>'}]}
         mf._fix_metas(d)
         self.assertEqual([x['description'] for x in d['metas']], ['a', 'b'])
+
+    def test_metas_detailed_tambien_se_fijan(self):
+        # lastvids devuelve metasDetailed: su desc también lleva HTML de upstream
+        d = {'metasDetailed': [{'id': 'tt1', 'description': '<i>c</i>'}]}
+        mf._fix_metas(d)
+        self.assertEqual(d['metasDetailed'][0]['description'], 'c')
+
+    def test_metas_detailed_con_metas_ambas_se_fijan(self):
+        d = {'metas': [{'id': 'tt1', 'description': '<i>a</i>'}],
+             'metasDetailed': [{'id': 'tt2', 'description': '<i>b</i>'}]}
+        mf._fix_metas(d)
+        self.assertEqual(d['metas'][0]['description'], 'a')
+        self.assertEqual(d['metasDetailed'][0]['description'], 'b')

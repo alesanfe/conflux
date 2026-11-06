@@ -248,7 +248,8 @@ def _fix_metas(d, deep=False):
     deep=True (detalle): + Wikidata (país, web, social, año), awards por subs, logo, vídeos muertos."""
     if not isinstance(d, dict):
         return d
-    ms = d.get('metas') or ([d['meta']] if isinstance(d.get('meta'), dict) else [])
+    ms = (list(d.get('metas') or []) + list(d.get('metasDetailed') or [])
+          + ([d['meta']] if isinstance(d.get('meta'), dict) else []))
     for m in ms:
         if not isinstance(m, dict):
             continue
