@@ -387,37 +387,58 @@ def _click_stream_and_wait_video(pg, out, budget=STREAM_WAIT_S, max_cards=40, tr
         m = re.search(r"👤\s*(\d+)", t)
         return int(m.group(1)) if m else -1
 
+    def _size_gb(i):
+        try:
+            t = cards.nth(i).inner_text() or ""
+        except Exception:  # noqa: BLE001
+            return 999
+        m = re.search(r"💾\s*([\d.]+)", t)
+        return float(m.group(1)) if m else 999
+
     orden = sorted(range(min(n, max_cards)), key=_seeds, reverse=True)
     tried = 0
-    for i in orden:
-        if tried >= tries:
-            break
-        el = cards.nth(i)
-        try:
-            txt = el.inner_text()
-        except Exception:  # noqa: BLE001
-            continue
-        # torrent: 👤+⚙️ | directo/IPTV: ▶️ o http | saltar subs externas
-        if not any(k in txt for k in ("👤", "⚙️", "▶", "http")):
-            continue
-        try:
-            el.click(timeout=4000)
-        except Exception:
-            continue
-        tried += 1
-        _log(out, f"  stream #{tried}: {txt[:80].replace(chr(10), ' | ')}")
-        deadline = time.time() + budget
-        while time.time() < deadline:
-            st = _video_state(pg)
-            if st and st["t"] and st["t"] > 0.5:
-                _log(out, f"  video: t={st['t']:.1f}s dur={st['d']} rs={st['rs']}")
-                _shot(pg, out, "player_playing")
-                return True
-            time.sleep(5)
-        _log(out, "  no arrancó; siguiente")
-        pg.go_back()
-        time.sleep(4)
-    return False
+
+    def _attempt(orden, limit, small_only=False):
+        nonlocal tried
+        for i in orden:
+            if tried >= limit:
+                break
+            el = cards.nth(i)
+            try:
+                txt = el.inner_text()
+            except Exception:  # noqa: BLE001
+                continue
+            # torrent: 👤+⚙️ | directo/IPTV: ▶️ o http | saltar subs externas
+            if not any(k in txt for k in ("👤", "⚙️", "▶", "http")):
+                continue
+            if small_only and _size_gb(i) > 15:
+                continue   # REMUX 30GB: buffer lento; el usuario probaría otro
+            try:
+                el.click(timeout=4000)
+            except Exception:
+                continue
+            tried += 1
+            _log(out, f"  stream #{tried}: {txt[:80].replace(chr(10), ' | ')}")
+            deadline = time.time() + budget
+            while time.time() < deadline:
+                st = _video_state(pg)
+                if st and st["t"] and st["t"] > 0.5:
+                    _log(out, f"  video: t={st['t']:.1f}s dur={st['d']} rs={st['rs']}")
+                    _shot(pg, out, "player_playing")
+                    return True
+                time.sleep(5)
+            _log(out, "  no arrancó; siguiente")
+            pg.go_back()
+            time.sleep(4)
+        return False
+
+    if _attempt(orden, tries):
+        return True
+    # segundo pase: los top-seeds no arrancaron (varianza torrent);
+    # prioriza archivos <15GB — buffer mucho más rápido
+    _log(out, "  segundo pase: <15GB primero")
+    tried = 0
+    return _attempt(sorted(orden, key=_size_gb), tries + 2, small_only=True)
 
 
 def _fresh_goto(pg, hashroute):

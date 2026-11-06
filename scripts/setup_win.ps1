@@ -1,4 +1,4 @@
-# setup_win.ps1 — monta el entorno completo de conflux en una máquina Windows.
+﻿# setup_win.ps1 — monta el entorno completo de conflux en una máquina Windows.
 # Uso:  powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1
 #       .\scripts\setup_win.ps1 -NoAddon            (solo el proxy, sin tocar Stremio)
 #       .\scripts\setup_win.ps1 -Env backup.tar.gz  (restaura config/sources del backup)

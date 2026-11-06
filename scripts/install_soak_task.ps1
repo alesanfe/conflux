@@ -1,4 +1,4 @@
-# install_soak_task.ps1 — registra un soak diario de conflux como tarea
+﻿# install_soak_task.ps1 — registra un soak diario de conflux como tarea
 # programada de Windows. La máquina del usuario ES el entorno de
 # producción de un proxy local: un soak multi-hora aquí mide
 # estabilidad donde realmente corre el servicio (los runners de CI

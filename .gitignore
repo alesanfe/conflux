@@ -44,3 +44,4 @@ history.jsonl
 dist/
 build/
 *.spec
+soak-logs/
