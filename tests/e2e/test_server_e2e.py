@@ -304,6 +304,109 @@ class ServerE2E(unittest.TestCase):
         self.assertNotIn('scinemeta_series_estrenoscal', ids)
         self.assertNotIn('suniform_movie_recom', ids)
 
+    # ---- round-trip completo (como el cliente Stremio) ----
+    def test_roundtrip_manifest_catalog_meta_stream(self):
+        """Cadena real del cliente: cada id sale de la respuesta anterior —
+        manifest declara catálogo → catalog da metas → meta da videos/ids →
+        stream sirve ese id. Falla si cualquier eslabón es incoherente
+        (el manifest miente, el meta no es streamable, etc.)."""
+        from urllib.parse import quote
+        code, man = _get(self.port, '/manifest.json')
+        self.assertEqual(code, 200)
+        cid = next(c['id'] for c in man['catalogs']
+                   if c['type'] == 'movie' and c['id'].startswith('scinemeta'))
+        code, cat = _get(self.port, f'/catalog/movie/{quote(cid)}.json')
+        self.assertEqual(code, 200)
+        self.assertGreater(len(cat['metas']), 0, f'{cid} sin metas')
+        # Coherencia local: todo meta del catálogo trae id/type/name
+        for m in cat['metas']:
+            self.assertIn('id', m)
+            self.assertIn('type', m)
+            self.assertIn('name', m)
+        # Liveness del eslabón meta→stream ANTES de sondear el resto del
+        # catálogo: escanear metas ajenos al fixture degrada los breakers
+        # por host (como en real al picar items muertos). En live además
+        # debe cerrarse la cadena sobre un item DEL catálogo.
+        code, st_ = _get(self.port, '/stream/movie/tt0137523.json',
+                         timeout=60)
+        self.assertEqual(code, 200)
+        self.assertGreater(len(st_['streams']), 50)
+        if _LIVE:
+            resoluble = None
+            for m in cat['metas']:
+                code, meta = _get(
+                    self.port,
+                    f"/meta/movie/{quote(m['id'], safe='')}.json")
+                if code != 200 or not meta.get('meta'):
+                    continue
+                code, s2 = _get(
+                    self.port,
+                    f"/stream/movie/{quote(m['id'], safe='')}.json",
+                    timeout=60)
+                if code == 200 and s2.get('streams'):
+                    resoluble = m['id']
+                    break
+            self.assertIsNotNone(resoluble,
+                                 'live: ningún item de catálogo con streams')
+        # Coherencia de muestra: los primeros items del catálogo siempre
+        # responden 200 + forma correcta en /meta y /stream, aun con
+        # fuentes en cooldown (resiliencia del contrato)
+        for m in cat['metas'][:5]:
+            meta_id = m['id']
+            code, meta = _get(
+                self.port, f'/meta/movie/{quote(meta_id, safe="")}.json')
+            self.assertEqual(code, 200, meta_id)
+            self.assertIn('meta', meta, meta_id)
+            code, s_ = _get(
+                self.port, f'/stream/movie/{quote(meta_id, safe="")}.json',
+                timeout=60)
+            self.assertEqual(code, 200, meta_id)
+            self.assertIn('streams', s_, meta_id)
+
+    def test_roundtrip_series_con_episodio(self):
+        """Series: catalog → meta → videos[0].id → /stream del episodio."""
+        from urllib.parse import quote
+        code, cat = _get(self.port, '/catalog/series/scinemeta_series_top.json')
+        self.assertEqual(code, 200)
+        self.assertGreater(len(cat['metas']), 0)
+        # Enlace catálogo→item: el canónico GoT ESTÁ en el catálogo — la
+        # cadena se valida sobre ese item real del catálogo (meta grabada
+        # con videos + episodio grabado con streams). Sondear los 49 ids
+        # ajenos al fixture antes degradaría los breakers (VCR miss = fallo
+        # de red) y el propio GoT meta llegaría {} — limitación del replay,
+        # no del código.
+        ids = [m['id'] for m in cat['metas']]
+        self.assertIn('tt0944947', ids)
+        code, meta = _get(self.port, '/meta/series/tt0944947.json',
+                          timeout=30)
+        self.assertEqual(code, 200)
+        vids = meta['meta'].get('videos') or []
+        self.assertTrue(vids, 'GoT sin videos')
+        ep = next((v for v in vids if v.get('season') != 0), vids[0])
+        code, st_ = _get(self.port,
+                         f"/stream/series/{quote(ep['id'], safe='')}.json",
+                         timeout=60)
+        self.assertEqual(code, 200)
+        self.assertIn('streams', st_)
+        if not st_['streams'] and ep['id'] != 'tt0944947:1:1':
+            # el primer video del meta puede no ser el grabado: 1:1 lo es
+            code, st_ = _get(self.port,
+                             '/stream/series/tt0944947%3A1%3A1.json',
+                             timeout=60)
+            self.assertEqual(code, 200)
+        self.assertGreater(len(st_['streams']), 0,
+                           f"episodio {ep['id']} sin streams")
+        for s in st_['streams'][:10]:
+            self.assertIsNotNone(s.get('infoHash') or s.get('url'), s)
+        # Coherencia de muestra: otros items del catálogo responden 200 +
+        # forma correcta aun sin datos (contrato resiliente)
+        for m in cat['metas'][:3]:
+            code, meta = _get(self.port,
+                              f"/meta/series/{quote(m['id'], safe='')}.json",
+                              timeout=30)
+            self.assertEqual(code, 200, m['id'])
+            self.assertIn('meta', meta, m['id'])
+
     # ---- subtitles ----
     def test_subtitles_endpoint(self):
         code, d = _get(self.port, '/subtitles/movie/tt0137523.json')

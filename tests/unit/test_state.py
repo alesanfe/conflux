@@ -1,5 +1,6 @@
 # pylint: disable=missing-docstring,protected-access,import-outside-toplevel,multiple-statements,unused-argument,invalid-name,redefined-outer-name,expression-not-assigned,too-many-public-methods,duplicate-code,non-ascii-name,wrong-import-position
 """Unit tests conflux.core.state — cachés, health, mutación in situ."""
+import os
 import time
 import unittest
 
@@ -264,6 +265,201 @@ class TestAtomicJson(unittest.TestCase):
             st._atomic_json(p, {'a': 2})
             with open(p, encoding='utf-8') as fh:
                 self.assertEqual(json.load(fh), {'a': 2})
+
+    def test_dirsync_oserror_tragado(self):
+        """fsync de dir no soportado (algunos fs/win32) -> se ignora."""
+        import os
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'c.json')
+            with mock.patch.object(st.os, 'open',
+                                   side_effect=OSError('no fsync dir')):
+                st._atomic_json(p, {'a': 1})       # no propaga
+            self.assertTrue(os.path.exists(p))
+
+
+class TestClock(unittest.TestCase):
+    def tearDown(self):
+        st.CLOCK.reset()
+
+    def test_fake_advance_y_monotonic(self):
+        fc = st.CLOCK.fake(100.0)
+        self.assertEqual(fc.time(), 100.0)
+        self.assertEqual(fc.monotonic(), 100.0)
+        fc.advance(5)
+        self.assertEqual(fc.time(), 105.0)
+        self.assertEqual(st.CLOCK.time(), 105.0)
+        self.assertEqual(st.CLOCK.monotonic(), 105.0)
+
+    def test_reset_vuelve_a_real(self):
+        st.CLOCK.fake(0.0)
+        st.CLOCK.reset()
+        self.assertGreater(st.CLOCK.time(), 1_000_000)
+        self.assertGreater(st.CLOCK.monotonic(), 0)
+
+    def test_set_clock_custom(self):
+        fake = st.FakeClock(7.0)
+        st.CLOCK.set(fake)
+        self.assertIs(st.CLOCK._d, fake)
+        self.assertEqual(st.CLOCK.time(), 7.0)
+
+
+class TestRedactFilter(unittest.TestCase):
+    def test_excepcion_no_bloquea(self):
+        """getMessage que explota -> filter devuelve True igualmente."""
+        import logging
+        from unittest import mock
+        rec = logging.LogRecord('n', logging.INFO, 'p', 1, 'm', (), None)
+        with mock.patch.object(rec, 'getMessage',
+                               side_effect=RuntimeError('boom')):
+            self.assertTrue(st._RedactFilter().filter(rec))
+
+
+class TestLogLevel(unittest.TestCase):
+    def test_cfg_log_level_fallback(self):
+        import logging
+        _, undo = _cfg_swap({'log_level': 'debug'})
+        try:
+            env = dict(os.environ)
+            os.environ.pop('CONFLUX_LOG_LEVEL', None)
+            try:
+                self.assertEqual(st._log_level(), logging.DEBUG)
+            finally:
+                os.environ.clear()
+                os.environ.update(env)
+        finally:
+            undo()
+
+    def test_env_gana_a_cfg(self):
+        import logging
+        _, undo = _cfg_swap({'log_level': 'debug'})
+        try:
+            env = dict(os.environ)
+            os.environ['CONFLUX_LOG_LEVEL'] = 'WARNING'
+            try:
+                self.assertEqual(st._log_level(), logging.WARNING)
+            finally:
+                os.environ.clear()
+                os.environ.update(env)
+        finally:
+            undo()
+
+    def test_set_log_level_valido_e_invalido(self):
+        import logging
+        root = logging.getLogger()
+        old = root.level
+        try:
+            self.assertEqual(st.set_log_level('debug'), logging.DEBUG)
+            self.assertEqual(root.level, logging.DEBUG)
+            with self.assertRaises(ValueError):
+                st.set_log_level('INEXISTENTE')
+        finally:
+            root.setLevel(old)
+
+
+class TestSetupLogging(unittest.TestCase):
+    def _sin_handlers_conflux(self):
+        import logging
+        root = logging.getLogger()
+        saved = list(root.handlers)
+        root.handlers = [h for h in root.handlers
+                         if not getattr(h, '_conflux', False)]
+        return root, saved
+
+    def test_idempotente_no_duplica(self):
+        import logging
+        root = logging.getLogger()
+        n = sum(1 for h in root.handlers if getattr(h, '_conflux', False))
+        st._setup_logging()
+        n2 = sum(1 for h in root.handlers if getattr(h, '_conflux', False))
+        self.assertEqual(n, n2)                  # ya había: no añade
+
+    def test_stderr_none_y_logfile_roto_nulllhandler(self):
+        import logging
+        from unittest import mock
+        root, saved = self._sin_handlers_conflux()
+        try:
+            with mock.patch.object(st.sys, 'stderr', None), \
+                 mock.patch.object(st.os, 'makedirs',
+                                   side_effect=OSError('ro')):
+                st._setup_logging()
+            nuevos = [h for h in root.handlers
+                      if getattr(h, '_conflux', False)]
+            self.assertTrue(any(isinstance(h, logging.NullHandler)
+                                for h in nuevos))
+        finally:
+            for h in list(root.handlers):
+                if getattr(h, '_conflux', False) and h not in saved:
+                    root.removeHandler(h)
+            for h in saved:
+                if h not in root.handlers:
+                    root.addHandler(h)
+
+
+class TestSubmitCtxYReqId(unittest.TestCase):
+    def test_submit_ctx_propaga_req_id(self):
+        import concurrent.futures as cf
+        st.new_req_id()
+        rid = st._REQ_ID.get()
+        with cf.ThreadPoolExecutor(1) as pool:
+            fut = st.submit_ctx(pool, lambda: st._REQ_ID.get())
+            self.assertEqual(fut.result(), rid)
+
+    def test_new_req_id_8_hex(self):
+        rid = st.new_req_id()
+        self.assertEqual(len(rid), 8)
+        int(rid, 16)
+
+
+class TestSourcesJsonModule(unittest.TestCase):
+    """sources.json corrupto al importar -> warning + lista embebida.
+
+    El path es código module-level: solo corre de verdad en un import
+    fresco — subproceso con sys.frozen apuntando a un dir con el json roto."""
+
+    def test_sources_corrupto_avisa_y_usa_embebida(self):
+        import os
+        import subprocess
+        import sys
+        import tempfile
+        root = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'sources.json'), 'w') as fh:
+                fh.write('{roto')
+            exe = os.path.join(d, 'conflux.exe')
+            with open(exe, 'wb') as fh:
+                fh.write(b'x')
+            code = (
+                "import sys; sys.frozen=True; "
+                f"sys.executable={exe!r}; "
+                f"sys.path.insert(0, {os.path.join(root, 'src')!r}); "
+                "import logging, io; "
+                "buf=io.StringIO(); "
+                "h=logging.StreamHandler(buf); logging.getLogger().addHandler(h); "
+                "import conflux.core.state as st; "
+                "print('SOURCES:', len(st.SOURCES)); "
+                "print('WARN:', 'ignorado' in buf.getvalue())")
+            env = dict(os.environ)
+            env['CONFLUX_LOG'] = os.path.join(d, 't.log')
+            r = subprocess.run([sys.executable, '-c', code],
+                               capture_output=True, text=True, timeout=60,
+                               env=env)
+        self.assertEqual(r.returncode, 0, r.stderr[-800:])
+        self.assertIn('SOURCES: 0' if False else 'SOURCES:', r.stdout)
+        self.assertIn('WARN: True', r.stdout)
+        self.assertNotIn('SOURCES: 0', r.stdout)
+
+
+def _cfg_swap(kv):
+    import conflux.core.state as _st
+    old = dict(_st.CFG)
+    _st.CFG.update(kv)
+    def restore():
+        _st.CFG.clear()
+        _st.CFG.update(old)
+    return old, restore
 
 
 if __name__ == '__main__':

@@ -105,7 +105,10 @@ class _Monkey:
         os.environ[name] = val
 
     def undo(self):
-        for obj, name, old, existed in self._undo:
+        # LIFO: un doble patch del mismo attr debe restaurar el original,
+        # no el valor intermedio (test_manual_deeplink_posix parchea
+        # _spawn dos veces — undo FIFO dejaba _spawn=lambda muerta).
+        for obj, name, old, existed in reversed(self._undo):
             if obj is os.environ:
                 if old is None:
                     os.environ.pop(name, None)
@@ -510,6 +513,460 @@ class TestPosixInstallUninstall(_TmpCase):
         self.mon.setattr(install, 'install_self', ins)
         self.assertFalse(install.cli_entry([]))
         ins.assert_called_once()
+
+
+class TestSpawnRun(_TmpCase):
+    def test_spawn_posix_nueva_sesion(self):
+        _frozen_posix(self.tmp, self.mon, 'linux')
+        popen = mock.Mock()
+        self.mon.setattr(install.subprocess, 'Popen', popen)
+        install._spawn(['/x/conflux'])
+        self.assertTrue(popen.call_args[1].get('start_new_session'))
+
+    def test_run_ejecuta_subprocess(self):
+        _frozen_posix(self.tmp, self.mon, 'linux')
+        fake = mock.Mock(returncode=0)
+        self.mon.setattr(install.subprocess, 'run',
+                         mock.Mock(return_value=fake))
+        r = install._run(['whatever'], timeout=7)
+        self.assertIs(r, fake)
+        kw = install.subprocess.run.call_args[1]
+        self.assertTrue(kw['capture_output'])
+        self.assertEqual(kw['timeout'], 7)
+        self.assertFalse(kw['check'])
+
+
+class TestProcPids(_TmpCase):
+    """_proc_pids: /proc/net/tcp parse + /proc/<pid>/fd readlink."""
+
+    def _fake_proc(self, monkey):
+        import builtins
+        tcp = ('  sl  local_address rem_address   st tx_queue rx_queue '
+               'tr tm->when retrnsmt   uid  timeout inode\n'
+               '   0: 0100007F:2588 00000000:0000 0A 00:00 00:00 00 0 '
+               '0 12345\n')
+        real_open = open
+
+        def fopen(p, *a, **k):
+            if p in ('/proc/net/tcp', '/proc/net/tcp6'):
+                import io
+                return io.StringIO(tcp)
+            return real_open(p, *a, **k)
+
+        monkey.setattr(builtins, 'open', fopen)
+        monkey.setattr(install.os, 'listdir', lambda p:
+                       ['999'] if p == '/proc' else ['3'])
+        monkey.setattr(install.os, 'readlink',
+                       lambda p: 'socket:[12345]')
+
+    def test_encuentra_pid_por_socket(self):
+        _frozen_posix(self.tmp, self.mon, 'linux')
+        self._fake_proc(self.mon)
+        self.assertEqual(install._proc_pids(0x2588), {999})
+
+    def test_tab_oserror_sin_inodes(self):
+        import builtins
+        _frozen_posix(self.tmp, self.mon, 'linux')
+        self.mon.setattr(builtins, 'open',
+                         mock.Mock(side_effect=OSError('no proc')))
+        self.assertEqual(install._proc_pids(), set())
+
+    def test_lineas_no_listen_ignoradas(self):
+        """Filas cortas/estado!=0A/puerto distinto no cuentan (141->139)."""
+        import builtins
+        _frozen_posix(self.tmp, self.mon, 'linux')
+        tcp = ('  sl  local_address rem_address   st\n'
+               '   0: 0100007F:2588 00000000:0000 01 x\n'   # st=01 no listen
+               '   1: 0100007F:9999 00000000:0000 0A x\n'   # puerto != 0x2588
+               '   2: 0100007F:2588 00000000:0000 0A x x x x x x x 999\n')
+        real_open = open
+        def fopen(p, *a, **k):
+            if 'tcp' in p:
+                import io
+                return io.StringIO(tcp)
+            return real_open(p, *a, **k)
+        self.mon.setattr(builtins, 'open', fopen)
+        self.mon.setattr(install.os, 'listdir', lambda p: [] if p == '/proc'
+                         else [])
+        self.assertEqual(install._proc_pids(0x2588), set())   # inode 999 sin pid
+
+    def test_fd_listdir_oserror_continua(self):
+        """Un /proc/<pid>/fd ilegible no tumba el escaneo (150)."""
+        import builtins
+        _frozen_posix(self.tmp, self.mon, 'linux')
+        tcp = ('  sl  local_address rem_address   st x x x x x x x inode\n'
+               '   0: 0100007F:2588 00000000:0000 0A x x x x x x x 555\n')
+        real_open = open
+        def fopen(p, *a, **k):
+            if 'tcp' in p:
+                import io
+                return io.StringIO(tcp)
+            return real_open(p, *a, **k)
+        self.mon.setattr(builtins, 'open', fopen)
+        self.mon.setattr(install.os, 'listdir', mock.Mock(
+            side_effect=lambda p: ['1', 'abc'] if p == '/proc'
+            else (_ for _ in ()).throw(OSError('perm'))))
+        self.assertEqual(install._proc_pids(0x2588), set())
+
+    def test_fd_readlink_oserror_y_no_socket(self):
+        """fds no-socket o readlink roto se saltan (153->152, 157-158)."""
+        import builtins
+        _frozen_posix(self.tmp, self.mon, 'linux')
+        tcp = ('  sl  local_address rem_address   st x x x x x x x inode\n'
+               '   0: 0100007F:2588 00000000:0000 0A x x x x x x x 555\n')
+        real_open = open
+        def fopen(p, *a, **k):
+            if 'tcp' in p:
+                import io
+                return io.StringIO(tcp)
+            return real_open(p, *a, **k)
+        self.mon.setattr(builtins, 'open', fopen)
+        self.mon.setattr(install.os, 'listdir',
+                         lambda p: ['7'] if p == '/proc' else ['0', '1'])
+        def rl(p):
+            if p.endswith('/fd/0'):
+                return 'pipe:[99]'                    # no socket -> skip
+            raise OSError('fd cerrado')
+        self.mon.setattr(install.os, 'readlink', rl)
+        self.assertEqual(install._proc_pids(0x2588), set())
+
+
+class TestPosixKillEdge(_TmpCase):
+    def test_lsof_falla_say(self):
+        _frozen_posix(self.tmp, self.mon, 'darwin')
+        self.mon.setattr(install, '_run', mock.Mock(
+            side_effect=OSError('no lsof')))
+        says = []
+        self.assertEqual(install._posix_pids(
+            lambda *a, **k: says.append(a)), set())
+        self.assertTrue(any('lsof' in str(s) for s in says))
+
+    def test_sigkill_oserror_tragado(self):
+        self.mon.setattr(install.os, 'kill',
+                         mock.Mock(side_effect=OSError('gone')))
+        install._sigkill(1234)                  # no propaga
+
+    def test_kill_sigterm_oserror_continua(self):
+        _frozen_posix(self.tmp, self.mon, 'linux')
+        self.mon.setattr(install, '_posix_pids', lambda say: {777})
+        calls = []
+        def fake_kill(pid, sig):
+            calls.append(sig)
+            raise OSError('gone')
+        self.mon.setattr(install.os, 'kill', fake_kill)
+        self.mon.setattr(install.time, 'sleep', lambda s: None)
+        n = install.kill_proxy(say=lambda *a, **k: None)
+        self.assertEqual(n, 1)
+
+    def test_kill_sigterm_insuficiente_escala_sigkill(self):
+        _frozen_posix(self.tmp, self.mon, 'linux')
+        self.mon.setattr(install, '_posix_pids', lambda say: {777})
+        calls = []
+        self.mon.setattr(install.os, 'kill',
+                         lambda pid, sig: calls.append(sig))
+        self.mon.setattr(install.time, 'sleep', lambda s: None)
+        install.kill_proxy(say=lambda *a, **k: None)
+        self.assertIn(install.signal.SIGTERM, calls)
+        self.assertTrue(any(s != install.signal.SIGTERM for s in calls))
+
+
+class TestWinKillEdge(_TmpCase):
+    def test_netstat_falla_say_y_taskkill_im(self):
+        exe, _la, _ad = _frozen(self.tmp, self.mon)
+        runs = []
+        def fake_run(cmd, timeout=15):
+            runs.append(cmd)
+            if 'netstat' in cmd[0] if isinstance(cmd, list) else 'netstat' in cmd:
+                raise OSError('sin netstat')
+            return mock.Mock(stdout=b'')
+        self.mon.setattr(install, '_run', fake_run)
+        says = []
+        n = install.kill_proxy(say=lambda *a, **k: says.append(a))
+        self.assertTrue(any('netstat' in str(s) for s in says))
+        self.assertTrue(any('taskkill' in str(c) for c in runs))
+        self.assertEqual(n, 0)
+
+    def test_taskkill_por_pid_encontrado(self):
+        exe, _la, _ad = _frozen(self.tmp, self.mon)
+        netstat = ('  TCP    127.0.0.1:9700    0.0.0.0:0    LISTENING'
+                   '       4242\r\n')
+        runs = []
+        def fake_run(cmd, timeout=15):
+            c = cmd if isinstance(cmd, list) else [cmd]
+            runs.append(c)
+            return mock.Mock(stdout=netstat.encode())
+        self.mon.setattr(install, '_run', fake_run)
+        install.kill_proxy(say=lambda *a, **k: None)
+        self.assertTrue(any('taskkill' in c and '4242' in c for c in runs))
+
+
+class TestSetClearAutostartWin(_TmpCase):
+    def test_set_sin_winreg_noop(self):
+        _frozen(self.tmp, self.mon)
+        self.mon.setattr(install, 'winreg', None)
+        install._set_autostart('/x/conflux.exe')   # no-op limpio
+
+    def test_set_escribe_run_key(self):
+        _frozen(self.tmp, self.mon)
+        wr = _FakeWinreg()
+        self.mon.setattr(install, 'winreg', wr)
+        install._set_autostart('C:\\x\\conflux.exe')
+        self.assertIn('Conflux', wr.store)
+
+    def test_clear_borra_valor(self):
+        _frozen(self.tmp, self.mon)
+        wr = _FakeWinreg({'Conflux': '"C:\\x\\conflux.exe"'})
+        self.mon.setattr(install, 'winreg', wr)
+        install._clear_autostart()
+        self.assertNotIn('Conflux', wr.store)
+
+    def test_clear_sin_winreg_noop(self):
+        _frozen(self.tmp, self.mon)
+        self.mon.setattr(install, 'winreg', None)
+        install._clear_autostart()
+
+
+class TestClearAutostartDarwin(_TmpCase):
+    def test_unload_y_unlink(self):
+        _frozen_posix(self.tmp, self.mon, 'darwin')
+        home = self.tmp / 'home'
+        plist = os.path.join(str(home), 'Library', 'LaunchAgents',
+                             'site.conflux.plist')
+        os.makedirs(os.path.dirname(plist))
+        with open(plist, 'w') as f:
+            f.write('x')
+        runs = []
+        self.mon.setattr(install, '_run',
+                         lambda *a, **k: runs.append(a[0]))
+        install._clear_autostart()
+        self.assertFalse(os.path.exists(plist))
+        self.assertIn(['launchctl', 'unload', '-w', plist], runs)
+
+
+class TestWritePidEdge(_TmpCase):
+    def test_makedirs_oserror_tragado(self):
+        _frozen_posix(self.tmp, self.mon, 'linux')
+        self.mon.setattr(install.os, 'makedirs',
+                         mock.Mock(side_effect=OSError('ro')))
+        install._write_pid()                     # no propaga
+
+
+class TestRegisterAddonEdge(_TmpCase):
+    def test_proxy_nunca_responde_remote_unreachable(self):
+        _exe, la, _ad = _frozen(self.tmp, self.mon)
+        dest = os.path.join(str(la), 'Conflux')
+        os.makedirs(dest)
+        self.mon.setattr(install.time, 'sleep', lambda s: None)
+        states = []
+        with mock.patch('urllib.request.urlopen',
+                        side_effect=OSError('down')), \
+             mock.patch('conflux.app.doctor.set_addon_state',
+                        side_effect=lambda s, **k: states.append(s)):
+            install.register_addon()
+        self.assertIn('remote_unreachable', states)
+
+    def test_manual_deeplink_win(self):
+        _exe, la, _ad = _frozen(self.tmp, self.mon)
+        dest = os.path.join(str(la), 'Conflux')
+        os.makedirs(dest)
+        opened = []
+        self.mon.setattr(install.os, 'startfile',
+                         lambda p: opened.append(p), raising=False)
+        states = []
+        with mock.patch('urllib.request.urlopen', return_value=mock.Mock()), \
+             mock.patch.object(_stremio, 'install',
+                               return_value=('manual', 'sin key')), \
+             mock.patch('conflux.app.doctor.set_addon_state',
+                        side_effect=lambda s, **k: states.append(s)):
+            install.register_addon()
+        self.assertIn('authentication_failed', states)
+        self.assertTrue(any('stremio://' in p for p in opened))
+
+    def test_manual_deeplink_posix(self):
+        """manual en linux -> xdg-open; en darwin -> open (376-381)."""
+        for plat, cmd in (('linux', 'xdg-open'), ('darwin', 'open')):
+            with self.subTest(plat=plat):
+                td = __import__('tempfile').TemporaryDirectory()
+                self.addCleanup(td.cleanup)
+                self.tmp = _Path(td.name)
+                _frozen_posix(self.tmp, self.mon, plat)
+                dest = install._dest_dir()
+                os.makedirs(dest)
+                spawned = []
+                self.mon.setattr(install, '_spawn',
+                                 lambda a: spawned.append(a))
+                with mock.patch('urllib.request.urlopen',
+                                return_value=mock.Mock()), \
+                     mock.patch.object(_stremio, 'install',
+                                       return_value=('manual', 'k')):
+                    install.register_addon()
+                self.assertEqual(spawned[0][0], cmd)
+                self.assertIn('stremio://', spawned[0][1])
+
+    def test_manual_deeplink_oserror_tragado(self):
+        _exe, la, _ad = _frozen(self.tmp, self.mon)
+        dest = os.path.join(str(la), 'Conflux')
+        os.makedirs(dest)
+        self.mon.setattr(install.os, 'startfile',
+                         mock.Mock(side_effect=OSError('no handler')),
+                         raising=False)
+        with mock.patch('urllib.request.urlopen',
+                        return_value=mock.Mock()), \
+             mock.patch.object(_stremio, 'install',
+                               return_value=('manual', 'k')):
+            install.register_addon()           # no propaga
+
+    def test_health_retry_segundo_intento(self):
+        """Primer urlopen falla, segundo ok -> sigue (356->354)."""
+        _exe, la, _ad = _frozen(self.tmp, self.mon)
+        dest = os.path.join(str(la), 'Conflux')
+        os.makedirs(dest)
+        calls = []
+        def flaky(url, timeout=None):
+            calls.append(url)
+            if len(calls) == 1:
+                raise OSError('aún no')
+            return mock.Mock()
+        self.mon.setattr(install.time, 'sleep', lambda s: None)
+        with mock.patch('urllib.request.urlopen', side_effect=flaky), \
+             mock.patch.object(_stremio, 'install',
+                               return_value=('installed', 'ok')):
+            install.register_addon()
+        self.assertGreaterEqual(len(calls), 2)
+
+    def test_error_retry_pending(self):
+        _exe, la, _ad = _frozen(self.tmp, self.mon)
+        dest = os.path.join(str(la), 'Conflux')
+        os.makedirs(dest)
+        states = []
+        with mock.patch('urllib.request.urlopen', return_value=mock.Mock()), \
+             mock.patch.object(_stremio, 'install',
+                               return_value=('error', 'boom')), \
+             mock.patch('conflux.app.doctor.set_addon_state',
+                        side_effect=lambda s, **k: states.append(s)):
+            install.register_addon()
+        self.assertIn('retry_pending', states)
+
+    def test_bg_lanza_hilo_daemon(self):
+        started = []
+        class _T:
+            def __init__(self, target=None, args=None, daemon=None, name=None):
+                started.append((daemon, name))
+            def start(self):
+                pass
+        self.mon.setattr(install.threading, 'Thread', _T)
+        install.register_addon_bg(force=True)
+        self.assertEqual(started, [(True, 'addon-register')])
+
+
+class TestInstallSelfEdge(_TmpCase):
+    def test_destino_inescribible_sirve_en_sitio(self):
+        _frozen(self.tmp, self.mon)
+        self.mon.setattr(install.os, 'makedirs',
+                         mock.Mock(side_effect=OSError('denied')))
+        warns = []
+        self.mon.setattr(install._log, 'warning',
+                         lambda *a, **k: warns.append(a))
+        self.assertTrue(install.install_self())
+        self.assertTrue(warns)
+
+    def test_config_copy_oserror_se_ignora(self):
+        exe, la, _ad = _frozen(self.tmp, self.mon)
+        # config.json junto al exe, copy2 revienta -> no aborta el install
+        bin_dir = os.path.dirname(str(exe))
+        with open(os.path.join(bin_dir, 'config.json'), 'w') as f:
+            f.write('{}')
+        self.mon.setattr(install, 'kill_proxy', lambda: 0)
+        self.mon.setattr(install, '_set_autostart', lambda x: None)
+        self.mon.setattr(install, '_spawn', mock.Mock())
+        real_copy2 = install.shutil.copy2
+        def picky(src, dst):
+            if str(src).endswith('.json'):
+                raise OSError('ro')
+            return real_copy2(src, dst)
+        self.mon.setattr(install.shutil, 'copy2', picky)
+        install.install_self()                   # llega al final sin crash
+
+    def test_autostart_oserror_sigue_sirviendo(self):
+        exe, la, _ad = _frozen(self.tmp, self.mon)
+        dest = os.path.join(str(la), 'Conflux', 'conflux.exe')
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        self.mon.setattr(sys, 'executable', dest)     # ya instalado
+        self.mon.setattr(install, '_set_autostart',
+                         mock.Mock(side_effect=OSError('registro ro')))
+        warns = []
+        self.mon.setattr(install._log, 'warning',
+                         lambda *a, **k: warns.append(a))
+        self.mon.setattr(install, 'register_addon_bg', mock.Mock())
+        self.assertTrue(install.install_self())
+        self.assertTrue(any('autostart' in str(w) for w in warns))
+
+
+class TestUninstallEdge(_TmpCase):
+    def test_stremio_remove_explota_continua(self):
+        exe, la, _ad = _frozen(self.tmp, self.mon)
+        dest = os.path.join(str(la), 'Conflux')
+        os.makedirs(dest)
+        self.mon.setattr(install, 'kill_proxy', lambda say: 0)
+        self.mon.setattr(install, '_clear_autostart', lambda: None)
+        self.mon.setattr(install, '_clear_lnk', lambda: None)
+        with mock.patch.object(_stremio, 'remove',
+                               side_effect=RuntimeError('boom')):
+            install.uninstall(say=lambda *a, **k: None)
+
+
+class TestCliEntryEdge(_TmpCase):
+    def test_log_level_valido(self):
+        _frozen(self.tmp, self.mon)
+        self.mon.setattr(install, 'is_installed', lambda: True)
+        self.mon.setattr(install, 'register_addon_bg', mock.Mock())
+        self.mon.setattr(install, '_write_pid', lambda: None)
+        install.cli_entry(['--log-level=DEBUG', 'serve'])
+
+    def test_log_level_invalido_warn(self):
+        _frozen(self.tmp, self.mon)
+        warns = []
+        self.mon.setattr(install._log, 'warning',
+                         lambda *a, **k: warns.append(a))
+        self.mon.setattr(install, 'is_installed', lambda: True)
+        self.mon.setattr(install, 'register_addon_bg', mock.Mock())
+        self.mon.setattr(install, '_write_pid', lambda: None)
+        install.cli_entry(['--log-level=NIVEL_RARO', 'serve'])
+        self.assertTrue(warns)
+
+    def test_rotate_admin_token_salida(self):
+        _frozen(self.tmp, self.mon)
+        import conflux.core.cfg as cfgmod
+        self.mon.setattr(cfgmod, 'rotate_admin_token', mock.Mock())
+        self.assertFalse(install.cli_entry(['rotate-admin-token']))
+
+    def test_doctor_systemexit(self):
+        _frozen(self.tmp, self.mon)
+        import conflux.app.doctor as doc
+        self.mon.setattr(doc, 'cli_diagnose',
+                         lambda argv, out=print: 0)
+        with self.assertRaises(SystemExit):
+            install.cli_entry(['doctor'])
+
+    def test_install_arg_install_self_false(self):
+        exe, la, _ad = _frozen(self.tmp, self.mon)
+        wr = _FakeWinreg({'Conflux': f'"{exe}"'})
+        self.mon.setattr(install, 'winreg', wr)
+        ins = mock.Mock(return_value=False)
+        self.mon.setattr(install, 'install_self', ins)
+        self.assertFalse(install.cli_entry(['install']))
+
+    def test_install_arg_install_self_true_sirve(self):
+        """'install' con install_self True -> _write_pid + sirve (501->505)."""
+        exe, la, _ad = _frozen(self.tmp, self.mon)
+        wr = _FakeWinreg({'Conflux': f'"{exe}"'})
+        self.mon.setattr(install, 'winreg', wr)
+        self.mon.setattr(install, 'install_self',
+                         mock.Mock(return_value=True))
+        pid = mock.Mock()
+        self.mon.setattr(install, '_write_pid', pid)
+        self.assertTrue(install.cli_entry(['install']))
+        pid.assert_called_once()
 
 
 if __name__ == '__main__':

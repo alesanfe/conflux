@@ -1123,6 +1123,327 @@ class TestSrvAttrsYDemonios(unittest.TestCase):
         ctx.wrap_socket.assert_not_called()
 
 
+class TestHealthLiveReady(unittest.TestCase):
+    """_pages('/health/live'|'/health/ready') -> reply JSON (200-204)."""
+
+    def _h(self):
+        h = srv.H.__new__(srv.H)
+        h.headers = {}
+        h.reply = MagicMock()
+        return h
+
+    def test_live_alive_con_version(self):
+        h = self._h()
+        self.assertTrue(h._pages('/health/live'))
+        body = h.reply.call_args[0][0]
+        self.assertEqual(body['status'], 'alive')
+        self.assertIn('version', body)
+
+    def test_ready_devuelve_ready_page(self):
+        h = self._h()
+        with unittest.mock.patch.object(srv, '_ready_page',
+                                        return_value={'status': 'ready'}) as rp:
+            self.assertTrue(h._pages('/health/ready'))
+        rp.assert_called_once()
+        h.reply.assert_called_once_with({'status': 'ready'})
+
+
+class TestPostHardening(unittest.TestCase):
+    """do_POST: Transfer-Encoding -> 400 (smuggling); CT raro -> 415."""
+
+    def _h(self, headers):
+        h = srv.H.__new__(srv.H)
+        h.path = '/login'
+        h.headers = headers
+        h.reply = MagicMock()
+        h._login = MagicMock()
+        return h
+
+    def test_transfer_encoding_400(self):
+        h = self._h({'Transfer-Encoding': 'chunked'})
+        h.do_POST()
+        h.reply.assert_called_once()
+        self.assertEqual(h.reply.call_args[0][1], 400)
+        self.assertEqual(h.reply.call_args[0][0]['code'], 'CFX-HTTP-001')
+        h._login.assert_not_called()
+
+    def test_content_type_raro_415(self):
+        h = self._h({'Content-Type': 'application/json'})
+        h.do_POST()
+        self.assertEqual(h.reply.call_args[0][1], 415)
+        self.assertEqual(h.reply.call_args[0][0]['code'], 'CFX-HTTP-002')
+        h._login.assert_not_called()
+
+
+class TestLoginRateLimit(unittest.TestCase):
+    """_login: 10 intentos/min por IP -> 429; tries viejos se purgan."""
+
+    def setUp(self):
+        self._lt = {k: v for k, v in srv._LOGIN_TRIES.items()}
+        srv._LOGIN_TRIES.clear()
+
+    def tearDown(self):
+        srv._LOGIN_TRIES.clear()
+        srv._LOGIN_TRIES.update(self._lt)
+
+    def _h(self, ip='1.2.3.4'):
+        h = srv.H.__new__(srv.H)
+        h.client_address = (ip, 9999)
+        h.reply = MagicMock()
+        h._form = MagicMock(return_value={'token': ['x'], 'to': ['/admin']})
+        return h
+
+    def test_onceavo_intento_429(self):
+        from collections import deque
+        srv._LOGIN_TRIES['1.2.3.4'] = deque([srv.time.time()] * 10)
+        h = self._h()
+        srv.H._login(h)
+        self.assertEqual(h.reply.call_args[0][1], 429)
+        self.assertEqual(h.reply.call_args[0][0]['code'], 'CFX-AUTH-010')
+
+    def test_tries_viejos_se_purgan(self):
+        from collections import deque
+        srv._LOGIN_TRIES['1.2.3.4'] = deque(
+            [srv.time.time() - 120] * 10)         # todo >60s: purga completa
+        _, undo = cfg_swap(admin_token='')
+        try:
+            h = self._h()
+            h._redir = MagicMock()
+            srv.H._login(h)
+            h._redir.assert_called_once()             # no 429: ventana expirada
+            self.assertEqual(len(srv._LOGIN_TRIES['1.2.3.4']), 1)
+        finally:
+            undo()
+
+
+class TestVersion(unittest.TestCase):
+    """_version(): paquete instalado -> versión; no instalado -> '0+local'."""
+
+    def test_version_instalada(self):
+        v = srv._version()
+        self.assertIsInstance(v, str)
+        self.assertTrue(v)
+
+    def test_fallback_local(self):
+        import unittest.mock as um
+        import importlib.metadata
+        with um.patch.object(importlib.metadata, 'version',
+                             side_effect=Exception('not installed')):
+            self.assertEqual(srv._version(), '0+local')
+
+
+class TestReadyPage(unittest.TestCase):
+    """_ready_page(): ready / starting (sin fuentes) / degraded (breaker|streak).
+    Los contenedores viven en core.state — _ready_page los importa dentro."""
+
+    def _cm(self, mans, fails=None, health=None, cooldown=None):
+        import unittest.mock as um
+        import conflux.core.state as st
+        return _Stacked([
+            um.patch.object(srv, 'manifests', mans),   # binding module-level
+            um.patch.object(st, 'manifests', mans),    # por si otro lee st.*
+            um.patch.object(st, '_fails', fails if fails is not None else {}),
+            um.patch.object(st, 'HEALTH', health if health is not None else {}),
+            um.patch.object(st, 'COOLDOWN',
+                            cooldown if cooldown is not None else {})])
+
+    def test_ready_con_manifest(self):
+        with self._cm([{'m': 1}]):
+            out = srv._ready_page()
+        self.assertEqual(out['status'], 'ready')
+        self.assertEqual(out['sources']['with_manifest'], 1)
+
+    def test_starting_sin_manifest(self):
+        with self._cm([None]):
+            out = srv._ready_page()
+        self.assertEqual(out['status'], 'starting')
+
+    def test_degraded_breaker_abierto(self):
+        with self._cm([{'m': 1}], fails={'h.lan': (5, srv.time.time())}):
+            out = srv._ready_page()
+        self.assertEqual(out['status'], 'degraded')
+        self.assertEqual(out['breakers_open'], ['h.lan'])
+
+    def test_degraded_streak_salud(self):
+        with self._cm([{'m': 1}], health={'src1': {'streak': 3}}):
+            out = srv._ready_page()
+        self.assertEqual(out['status'], 'degraded')
+        self.assertIn('src1', out['sources']['degraded'])
+
+    def test_breaker_viejo_no_degraded(self):
+        """streak>=4 pero ts >60s: breaker ya enfriado -> no cuenta."""
+        with self._cm([{'m': 1}],
+                      fails={'h.lan': (9, srv.time.time() - 120)}):
+            out = srv._ready_page()
+        self.assertEqual(out['status'], 'ready')
+        self.assertEqual(out['breakers_open'], [])
+
+
+class _Stacked:
+    """Context manager que entra/sale N patchers (helper de TestReadyPage)."""
+    def __init__(self, patchers):
+        self._p = patchers
+
+    def __enter__(self):
+        for p in self._p:
+            p.__enter__()
+        return self
+
+    def __exit__(self, *a):
+        for p in reversed(self._p):
+            p.__exit__(*a)
+        return False
+
+
+class TestSrvSemaforo(unittest.TestCase):
+    """_Srv.process_request/_thread: semáforo se libera incluso con excepción."""
+
+    def _srv(self):
+        s = srv._Srv.__new__(srv._Srv)
+        s._sem = threading.Semaphore(1)
+        return s
+
+    def test_process_request_adquiere_sem(self):
+        s = self._srv()
+        acquired = []
+        import unittest.mock as um
+        with um.patch.object(srv.ThreadingHTTPServer, 'process_request',
+                             lambda *a: acquired.append(s._sem._value)):
+            s.process_request(MagicMock(), ('1.2.3.4', 1))
+        self.assertEqual(acquired, [0])        # sem ya adquirido al entrar
+        self.assertEqual(s._sem._value, 0)     # lo libera el thread, no aquí
+
+    def test_process_request_excepcion_libera(self):
+        s = self._srv()
+        import unittest.mock as um
+        with um.patch.object(srv.ThreadingHTTPServer, 'process_request',
+                             side_effect=RuntimeError('spawn fail')):
+            with self.assertRaises(RuntimeError):
+                s.process_request(MagicMock(), ('1.2.3.4', 1))
+        self.assertEqual(s._sem._value, 1)     # liberado pese al error
+
+    def test_process_request_thread_siempre_libera(self):
+        s = self._srv()
+        s._sem.acquire()                                    # como lo haría process_request
+        import unittest.mock as um
+        with um.patch.object(srv.ThreadingHTTPServer,
+                             'process_request_thread',
+                             side_effect=ValueError('boom')):
+            with self.assertRaises(ValueError):
+                s.process_request_thread(MagicMock(), ('1.2.3.4', 1))
+        self.assertEqual(s._sem._value, 1)     # finally liberó
+
+
+class TestCfgUrlOkStr(unittest.TestCase):
+    """Clave str simple: str ok, no-str no (155)."""
+
+    def test_str_keys(self):
+        ok = srv.H._cfg_url_ok
+        self.assertTrue(ok('rpdb_key', 'abc'))
+        self.assertTrue(ok('opensubtitles_user', 'u'))
+        self.assertFalse(ok('rpdb_key', 5))
+        self.assertFalse(ok('rpdb_key', ['x']))
+        self.assertFalse(ok('admin_token', 'x'))       # fuera de whitelist
+
+
+class TestDoGetRedirects(unittest.TestCase):
+    """do_GET: /r/ /dp/ /s/ dispatch -> helpers + _timed_route al final."""
+
+    def _h(self, path):
+        h = srv.H.__new__(srv.H)
+        h.path = path
+        h.headers = {}
+        h.reply = MagicMock()
+        h._redir = MagicMock()
+        h._db_proxy = MagicMock()
+        return h
+
+    def test_r_debrid_redirect(self):
+        import unittest.mock as um
+        h = self._h('/r/real-debrid/' + 'a' * 40 + '?fi=3')
+        with um.patch.object(srv, '_db_resolve',
+                             return_value='https://dl/x') as dr:
+            h.do_GET()
+        dr.assert_called_once_with('real-debrid', 'a' * 40, '3')
+        h._redir.assert_called_once_with('https://dl/x')
+
+    def test_dp_debrid_proxy(self):
+        h = self._h('/dp/torbox/' + 'b' * 40 + '?fi=0')
+        h.do_GET()
+        h._db_proxy.assert_called_once_with('torbox', 'b' * 40, '0')
+
+    def test_s_subtitle_redirect(self):
+        import unittest.mock as um
+        h = self._h('/s/abc123')
+        with um.patch.object(srv, '_sub_download',
+                             return_value='https://sub/dl') as sd:
+            h.do_GET()
+        sd.assert_called_once_with('abc123')
+        h._redir.assert_called_once_with('https://sub/dl')
+
+    def test_ruta_dinamica_cae_en_timed(self):
+        h = self._h('/stream/movie/tt1.json')
+        with unittest.mock.patch.object(srv, 'handle_stream',
+                                        return_value={'streams': []}):
+            h.do_GET()
+        h.reply.assert_called_once_with({'streams': []})
+
+
+class TestPostLoginDispatch(unittest.TestCase):
+    def test_post_login_llama_login(self):
+        h = srv.H.__new__(srv.H)
+        h.path = '/login'
+        h.headers = {}
+        h._login = MagicMock()
+        h.do_POST()
+        h._login.assert_called_once()
+
+
+class TestSrvBindNoWin(unittest.TestCase):
+    """server_bind fuera de win32 -> super() directo (sin EXCLUSIVEADDRUSE)."""
+
+    def test_posix_bind_sin_exclusive(self):
+        import unittest.mock as um
+        with um.patch.object(srv.sys, 'platform', 'linux'):
+            s = srv._Srv(('127.0.0.1', 0), srv.H)
+            try:
+                self.assertTrue(s.server_address[1] > 0)
+            finally:
+                s.server_close()
+
+
+class TestSigtermNoMainThread(unittest.TestCase):
+    """main() fuera del hilo principal: no registra handler SIGTERM."""
+
+    def test_no_main_no_registra(self):
+        import unittest.mock as um
+        made = []
+
+        class FakeSrv:
+            daemon_threads = True
+            def __init__(self, addr, h):
+                self.socket = MagicMock()
+                self.serve_forever = MagicMock()
+                made.append(self)
+
+        faketh = type('T', (), {
+            'Thread': staticmethod(
+                lambda target=None, daemon=None: MagicMock()),
+            'Semaphore': threading.Semaphore,
+            'current_thread': staticmethod(lambda: 'worker'),
+            'main_thread': staticmethod(lambda: 'main')})
+        sig = MagicMock()
+        with um.patch.object(srv, '_load_manifests_cache',
+                             return_value=[{}]), \
+                um.patch.object(srv, 'refresh_manifests'), \
+                um.patch.object(srv, 'threading', faketh), \
+                um.patch.object(srv, '_Srv', FakeSrv), \
+                um.patch.object(srv, 'CFG', {}), \
+                um.patch.object(srv.signal, 'signal', sig):
+            srv.main()
+        sig.assert_not_called()            # solo el hilo principal maneja SIGTERM
+
+
 class TestDobleBind(unittest.TestCase):
     """BUG (Windows): SO_REUSEADDR permite doble bind silencioso sobre el
     mismo puerto -> dos instancias sirven código distinto a la vez (la
