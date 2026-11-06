@@ -4,16 +4,20 @@ on:
   push:
     tags: ['v*']
 
-permissions:
-  contents: write
-  id-token: write
-  attestations: write
+permissions: {}    # cada job declara lo suyo (zizmor: excessive-permissions)
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write        # gh-release
+      id-token: write        # cosign/attestation OIDC
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
         with:
           python-version: '3.12'
@@ -22,7 +26,7 @@ jobs:
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
         with:
           subject-path: dist/*
-      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # v3
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # zizmor: ignore[superfluous-actions] v3 — multipart files+notes nativo
         with:
           files: dist/*
           generate_release_notes: true
@@ -37,8 +41,14 @@ jobs:
           - {os: macos-latest, asset: conflux-macos, flags: ''}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    permissions:
+      contents: write        # gh-release
+      id-token: write        # cosign/attestation OIDC
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7
         with:
           python-version: '3.12'
@@ -53,7 +63,7 @@ jobs:
       - name: checksum del artefacto
         shell: bash
         run: sha256sum "dist/${{ matrix.asset }}" | tee "dist/${{ matrix.asset }}.sha256"
-      - name: smoke test del binario (instala → health → uninstall → limpio)
+      - name: smoke test del binario (instala â†’ health â†’ uninstall â†’ limpio)
         shell: bash
         timeout-minutes: 6
         run: bash scripts/smoke_binary.sh "dist/${{ matrix.asset }}"
@@ -71,14 +81,14 @@ jobs:
             -o "dist/${{ matrix.asset }}.sbom.json"
       - name: firma keyless del checksum (cosign/Sigstore)
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532  # v4.1.3
-      - name: firma y verificación del artefacto
+      - name: firma y verificaciÃ³n del artefacto
         shell: bash
         run: |
-          # firma el digest del artefacto PROBADO (smoke) → firma=provenance del mismo digest
+          # firma el digest del artefacto PROBADO (smoke) â†’ firma=provenance del mismo digest
           cosign sign-blob --yes \
             --bundle "dist/${{ matrix.asset }}.sha256.sigstore.json" \
             "dist/${{ matrix.asset }}.sha256"
-          # verifica antes de publicar: la release no sube una firma inválida
+          # verifica antes de publicar: la release no sube una firma invÃ¡lida
           cosign verify-blob \
             --bundle "dist/${{ matrix.asset }}.sha256.sigstore.json" \
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
@@ -87,7 +97,7 @@ jobs:
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
         with:
           subject-path: dist/${{ matrix.asset }}
-      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # v3
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # zizmor: ignore[superfluous-actions] v3 — multipart files+notes nativo
         with:
           files: |
             dist/${{ matrix.asset }}

@@ -12,7 +12,9 @@ permissions:
 jobs:
   automerge:
     runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]' &&
+    # user.login no es falsificable por nombre de rama (github.actor sí):
+    # zizmor bot-conditions. Doble cierre: autor + prefijo dependabot/actions.
+    if: github.event.pull_request.user.login == 'dependabot[bot]' &&
         startsWith(github.event.pull_request.head.ref, 'dependabot/github_actions/')
     steps:
       - run: gh pr merge --auto --squash "$PR_URL"
