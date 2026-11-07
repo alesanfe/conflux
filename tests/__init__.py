@@ -55,6 +55,15 @@ _net._public_url = _public_url_no_dns
 
 FIX = os.path.join(ROOT, 'tests', 'fixtures')
 
+# torrent_health carga .seed-cache.json al importar — un run previo que haya
+# dejado veredictos de hashes fake ('a'*40 = -2) contamina el baseline de
+# _SEED para toda la suite (los tests de _hash_filter ven muertos ajenos).
+# Baseline vacío + path a fixtures: _seed_save jamás escribe el repo.
+import conflux.infra.torrent_health as _th
+_th._SEED.clear()
+_th._SEED_PATH = os.path.join(__import__('tempfile').gettempdir(),
+                             '.test-seed-cache.json')
+
 
 def fixture(name):
     """fixtures/<name>.json -> lista de streams grabados (o [])."""
@@ -177,6 +186,7 @@ _STATE_ATTRS = {
     'conflux.infra.net': ['_PUBLIC_URL_OK'],
     'conflux.infra.wikidata': ['_wd_c'],
     'conflux.infra.epg': ['_STATE'],
+    'conflux.infra.torrent_health': ['_SEED', '_DHT_NODES'],
     'conflux.web.server': ['_LOGIN_TRIES'],
 }
 

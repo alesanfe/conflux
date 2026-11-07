@@ -19,6 +19,11 @@ def _session(host):
             if len(_SESS) >= 64:                            # hosts de streams/CDN son
                 _SESS.clear()                               # ilimitados: recrear es barato
             s = _SESS.setdefault(host, requests.Session())
+            # pool_maxsize 32: ráfagas de probes (32 posters, 40 _dead_videos)
+            # al mismo host no descartan conexiones (handshake TLS por hit).
+            ad = requests.adapters.HTTPAdapter(pool_maxsize=32)
+            s.mount('https://', ad)
+            s.mount('http://', ad)
             s.headers.update(UA)
             s.headers['Accept-Encoding'] = 'gzip'
     return s

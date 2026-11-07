@@ -20,6 +20,12 @@ from tests import patch_fetch
 MARGIN = 10          # CI compartido: presupuesto real × 10 como tripwire
 
 
+def _timed(fn, *a, **k):
+    t0 = time.perf_counter()
+    out = fn(*a, **k)
+    return out, time.perf_counter() - t0
+
+
 class TestStartupBudget(unittest.TestCase):
     def test_import_frio_rapido(self):
         """Importar proxy.py (entry) en un proceso fresco < 3s presupuesto,
@@ -177,6 +183,178 @@ class TestParseBudget(unittest.TestCase):
                             f'p95 cat caliente {sorted(ts)[-3]*1000:.0f}ms')
         finally:
             C._cat_c.pop(key, None)
+
+
+class TestRowsOutBudget(unittest.TestCase):
+    """_rows_out+_user_filters: pipeline post-collect que corre en CADA
+    /stream (hit o miss). Regresión medida: 98ms -> 18ms a 12k filas;
+    el tripwire va al peor caso real (collect de ~30 fuentes puede juntar
+    miles de streams)."""
+
+    @staticmethod
+    def _rows(n):
+        import conflux.domain.text as T
+        raw = {'name': 'x', 'title': 'F.2024.1080p.WEBRip.x264 seeds:120',
+               'infoHash': 'a' * 40, 'url': 'http://x',
+               'behaviorHints': {'videoSize': 2_000_000_000}}
+        return [T.norm_stream(dict(raw), 'TS') for _ in range(n)]
+
+    def test_rows_out_12k_sin_filtros(self):
+        """Sin filtros activos: sort dominante — presupuesto 2s
+        (tripwire; real ~20-30ms)."""
+        rows = self._rows(12000)
+        _, dt = _timed(lambda: S._user_filters(S._rows_out(rows)))
+        self.assertLess(dt, 2.0, f'{dt*1000:.0f}ms en 12k filas')
+
+    def test_rows_out_12k_con_filtros(self):
+        """Todos los filtros activos (exclude+regex+required+adult+preferred):
+        1 join+~5 regex por fila — presupuesto 4s (real ~80ms)."""
+        from tests import cfg_swap
+        _, undo = cfg_swap(stream_exclude=['zz-no-match'],
+                           stream_exclude_regex=[r'zz-no-match'],
+                           stream_required=[],
+                           stream_required_regex=[],
+                           parental=True,
+                           stream_preferred=['es'])
+        try:
+            rows = self._rows(12000)
+            _, dt = _timed(lambda: S._user_filters(S._rows_out(rows)))
+        finally:
+            undo()
+        self.assertLess(dt, 4.0, f'{dt*1000:.0f}ms en 12k filas filtradas')
+
+    def test_user_filters_no_activo_no_toca_texto(self):
+        """Sin filtros activos el pipeline no construye el texto del stream:
+        _rex_text jamás se invoca (era el coste oculto por fila)."""
+        from unittest.mock import patch
+        rows = self._rows(2000)
+        with patch.object(S, '_rex_text') as rt:
+            S._user_filters([r[0] for r in rows])
+        rt.assert_not_called()
+
+
+class TestM3uStatCache(unittest.TestCase):
+    """_m3u_metas: stat(path,mtime,size) intacto -> NO relee el fichero.
+    Antes cada vista del catálogo IPTV releía el .m3u entero (MBs) para
+    descubrir que no había cambiado."""
+
+    def tearDown(self):
+        import conflux.domain.lists as L
+        L._M3U.clear(); L._M3U_TXT[0] = None; L._M3U_SIG[0] = None
+
+    def test_sin_cambio_no_relee(self):
+        import tempfile
+        from tests import cfg_swap
+        from unittest.mock import patch
+        import conflux.domain.lists as L
+        fd, path = tempfile.mkstemp(suffix='.m3u')
+        os.write(fd, b'#EXTM3U\n#EXTINF:-1,A\nhttp://x\n')
+        os.close(fd)
+        self.addCleanup(os.unlink, path)
+        _, undo = cfg_swap(m3u_path=path)
+        self.addCleanup(undo)
+        calls = [0]
+        real_open = L._open
+        def counting(*a, **k):
+            calls[0] += 1
+            return real_open(*a, **k)
+        with patch.object(L, '_open', counting):
+            L._m3u_metas(); L._m3u_metas(); L._m3u_metas()
+        self.assertEqual(calls[0], 1,
+                         'mtime/size intactos pero releyó el fichero')
+
+    def test_cambio_si_relee(self):
+        """El contenido nuevo sí se recoge (la firma stat cambió)."""
+        import tempfile
+        from tests import cfg_swap
+        import conflux.domain.lists as L
+        fd, path = tempfile.mkstemp(suffix='.m3u')
+        os.write(fd, b'#EXTM3U\n#EXTINF:-1,A\nhttp://x\n')
+        os.close(fd)
+        self.addCleanup(os.unlink, path)
+        _, undo = cfg_swap(m3u_path=path)
+        self.addCleanup(undo)
+        self.assertEqual(len(L._m3u_metas()), 1)
+        time.sleep(0.002)                                # resolución mtime NTFS
+        with open(path, 'w', encoding='utf-8') as fh:
+            fh.write('#EXTM3U\n#EXTINF:-1,A\nhttp://x\n'
+                     '#EXTINF:-1,B\nhttp://y\n')
+        self.assertEqual(len(L._m3u_metas()), 2)
+
+
+class TestEpgHotPath(unittest.TestCase):
+    """epg_meta/_videos por request: _iso memoizado — 200 vistas de un
+    canal con 24 programas no puede tardar segundos."""
+
+    def test_epg_meta_200_vistas(self):
+        import conflux.infra.epg as E
+        today = time.strftime('%Y-%m-%d', time.gmtime())
+        nxt = time.strftime('%Y-%m-%d', time.gmtime(time.time() + 86400))
+        t0 = E.CLOCK.time()
+        progs = [{'title': 'p', 'desc': '', 'icon': '',
+                  'start': t0 + i * 1800, 'stop': t0 + i * 1800 + 900}
+                 for i in range(24)]
+        old_days, old_f = E._STATE.get('days'), E._STATE.get('fetched')
+        E._STATE['days'] = {today: {'c1': progs}, nxt: {'c1': progs[:6]}}
+        E._STATE['fetched'] = t0
+        try:
+            _, dt = _timed(lambda: [E.epg_meta({'id': 'c1', 'name': 'c1'})
+                                    for _ in range(200)])
+        finally:
+            E._STATE['days'] = old_days or {}
+            E._STATE['fetched'] = old_f or 0
+        self.assertLess(dt, 2.0, f'200 metas epg: {dt*1000:.0f}ms')
+
+
+class TestUrlHealthScan(unittest.TestCase):
+    """_url_health filtra por stream (O(streams)), no barriendo _URL_BAD
+    entero (hasta 2000 veredictos). Tripwire: una regresión a O(veredictos)
+    por request cuesta ~µs×2000 en cada /stream."""
+
+    def setUp(self):
+        self._b = dict(S._URL_BAD); self._o = dict(S._URL_OK)
+
+    def tearDown(self):
+        S._URL_BAD.clear(); S._URL_BAD.update(self._b)
+        S._URL_OK.clear(); S._URL_OK.update(self._o)
+
+    def test_2000_veredictos_rapido(self):
+        now = st.CLOCK.time()
+        S._URL_BAD.clear(); S._URL_OK.clear()      # exactamente 2000: sin prune
+        S._URL_BAD.update({f'http://dead{i}.x': (2, now) for i in range(2000)})
+        streams = [{'url': f'http://ok{i}.x'} for i in range(100)]
+        streams.append({'url': 'http://dead7.x'})          # este sí debe caer
+        sub = S._POOL_BG.submit
+        S._POOL_BG.submit = lambda f, *a: None             # HEADs fuera: sin red
+        try:
+            _, dt = _timed(S._url_health, streams)
+        finally:
+            S._POOL_BG.submit = sub
+        self.assertLess(dt, 0.5, f'_url_health: {dt*1000:.0f}ms')
+        self.assertNotIn('http://dead7.x', [s['url'] for s in streams])
+
+
+class TestMetaCacheHit(unittest.TestCase):
+    """handle_meta cache-hit: _posters_view+_rpdb por request — presupuesto
+    p95 (el detalle de ficha no puede esperar por un meta ya visto)."""
+
+    def test_meta_caliente_rapido(self):
+        import conflux.app.meta as M
+        key = ('movie', 'tt-hit')
+        st._cset(M._meta_c, key, {'meta': {
+            'id': 'tt-hit', 'name': 'X', 'videos': [
+                {'id': f'tt-hit:{i}', 'season': 1, 'episode': i}
+                for i in range(20)]}})
+        try:
+            ts = []
+            for _ in range(50):
+                t0 = time.perf_counter()
+                M.handle_meta('movie', 'tt-hit')
+                ts.append(time.perf_counter() - t0)
+            self.assertLess(sorted(ts)[int(len(ts) * .95)], 0.5,
+                            'p95 meta caliente demasiado alto')
+        finally:
+            M._meta_c.pop(key, None)
 
 
 if __name__ == '__main__':

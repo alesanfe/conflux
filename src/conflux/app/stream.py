@@ -562,6 +562,12 @@ def _url_prune():
         _URL_OK.pop(u, None)
 
 
+def _url_dead(u, now):
+    """Veredicto muerto confirmado (2 strikes) y vigente (<30min)."""
+    v = _URL_BAD.get(u)
+    return v is not None and v[0] >= 2 and now - v[1] < 1800
+
+
 def _url_health(streams):
     """Streams http: los confirmados muertos salen de la lista; los desconocidos
     se HEAD-encolan async (máx 15, 3s). Fallo transitorio (timeout) solo cuenta
@@ -570,9 +576,9 @@ def _url_health(streams):
     if len(_URL_BAD) + len(_URL_OK) > 2000:
         _url_prune()
     todo = _url_todo(streams, now)          # antes de filtrar: los muertos también
-    dead = {u for u, (st, ts) in _URL_BAD.items() if st >= 2 and now - ts < 1800}
-    if dead:                                # reintentan su resurrección al HEAD
-        streams[:] = [s for s in streams if s.get('url') not in dead]
+    # muertos confirmados y vigentes fuera — O(streams), no O(todos los
+    # veredictos): _URL_BAD llega a 2000 entradas y el response trae ~15.
+    streams[:] = [s for s in streams if not _url_dead(s.get('url'), now)]
     for u in todo:
         _POOL_BG.submit(_url_head, u)
 

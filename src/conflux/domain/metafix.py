@@ -73,7 +73,7 @@ def _poster_probe(m):
             _POSTER_BAD.pop(u, None)
         for u in sorted(_POSTER_OK, key=lambda u: _POSTER_OK[u])[:len(_POSTER_OK) // 2]:
             _POSTER_OK.pop(u, None)
-    st, ts = _POSTER_BAD.get(p, (0, 0))
+    ts = _POSTER_BAD.get(p, (0, 0))[1]
     if (now - ts > 1800 and now - _POSTER_OK.get(p, 0) > 1800
             and len(_POSTER_PEND) < 32 and p not in _POSTER_PEND):
         _POSTER_PEND.add(p)
@@ -99,8 +99,10 @@ def _posters_view(d):
             continue
         _poster_probe(m)
         p = m.get('poster')
-        st, ts = _POSTER_BAD.get(p, (0, 0)) if isinstance(p, str) else (0, 0)
-        if st >= 2 and now - ts < 1800:
+        if not isinstance(p, str):
+            continue
+        v = _POSTER_BAD.get(p)
+        if v is not None and v[0] >= 2 and now - v[1] < 1800:
             dead.add(p)
     if not dead:
         return d
