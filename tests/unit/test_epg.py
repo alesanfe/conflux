@@ -131,6 +131,29 @@ class TestBuild(unittest.TestCase):
         with um.patch.object(E, '_log'):
             self.assertIsNone(E._build([{'id': 'x', 'tvg': 'noexiste'}]))
 
+    def test_gz_bomb_acotada(self):
+        """zip-bomb: el gz cabe en 40MB pero infla > cap -> se lee acotado
+        (truncado -> XML incompleto -> None por _reload, no OOM).
+        _GZ_CAP parcheado a 1KB para no mover 160MB en el test."""
+        import unittest.mock as um
+        E.CFG['epg_url'] = 'https://epg.test/x.xml.gz'
+        E._OPENER.open = lambda req, timeout=0: io.BytesIO(
+            gzip.compress(b'<tv>' + b'x' * 2000))
+        with um.patch.object(E, '_GZ_CAP', 1024), \
+                um.patch.object(E, '_log'):
+            self.assertIsNone(E._build([{'id': 'c1'}]))     # truncado: sin canales -> None
+
+    def test_gz_truncado_no_lanza(self):
+        """gzip partido a la mitad: EOFError -> cae a raw -> None controlado."""
+        import unittest.mock as um
+        E.CFG['epg_url'] = 'https://epg.test/x.xml.gz'
+        raw = gzip.compress(_xmltv([('la1.es', _ts(time.time()),
+                                    _ts(time.time() + 60), 'P', '', '')],
+                                   canales=('la1.es',)))
+        E._OPENER.open = lambda req, timeout=0: io.BytesIO(raw[:len(raw) // 2])
+        with um.patch.object(E, '_log'):
+            self.assertIsNone(E._build([{'id': 'la1', 'tvg': 'la1.es'}]))
+
 
 class TestStateIO(unittest.TestCase):
     """_videos/epg_metas/epg_meta con _STATE sembrado."""

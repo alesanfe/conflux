@@ -118,13 +118,16 @@ def _skip_stream(s):
 def _collect_merge(state, name, streams):
     """Merge dedup + norm de los streams de la fuente en state."""
     for s in streams:
-        if _skip_stream(s):
-            continue
-        k = _merge_key(s)
-        if not k or k in state['seen']:
-            continue
-        state['seen'].add(k)
-        nr = norm_stream(s, name)
+        try:
+            if _skip_stream(s):
+                continue
+            k = _merge_key(s)
+            if not k or k in state['seen']:
+                continue
+            state['seen'].add(k)
+            nr = norm_stream(s, name)
+        except Exception:                             # noqa: BLE001 — un stream
+            continue                                  # malformado no mata el batch
         state['rows'].append(nr)
         sv = _SERVED.setdefault(name, {'n': 0, 'res': {}})
         sv['n'] += 1                                    # 5.2: qué fuente aporta y en qué calidad

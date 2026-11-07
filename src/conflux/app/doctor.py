@@ -14,7 +14,7 @@ import sys
 import time
 import urllib.request
 
-from conflux.core.state import _LOG_FILE, _ROOT, SOURCES, _fails, manifests
+from conflux.core.state import _LOG_FILE, _ROOT, SOURCES, manifests
 
 PROXY = 'http://127.0.0.1:9700'
 
@@ -93,16 +93,18 @@ def _port_free(port=9700):
 
 def collect_status():
     """Resumen operativo — datos, no formateo."""
-    code, _health = _http('/health')
+    code, health = _http('/health')
     running = code == 200
-    now = time.time()
-    open_brk = [h for h, (st_, ts) in _fails.items()
-                if st_ >= 4 and now - ts < 60]
-    from conflux.core.state import HEALTH
-    degraded = sorted(n for n, h in HEALTH.items()
-                      if h.get('streak', 0) >= 3)
+    # Breakers/degradados viven en el proceso del SERVICIO: leer /health,
+    # no los dicts locales (vacíos en este proceso CLI).
+    hb = health if isinstance(health, dict) else {}
+    open_brk = sorted(h for h, strikes in
+                      (hb.get('fetch_fails') or {}).items()
+                      if isinstance(strikes, int) and strikes >= 4)
+    degraded = sorted(n for n, h in (hb.get('sources') or {}).items()
+                      if isinstance(h, dict) and h.get('streak', 0) >= 3)
     try:
-        cache_age = int(now - os.path.getmtime(
+        cache_age = int(time.time() - os.path.getmtime(
             os.path.join(_ROOT, '.manifests-cache.json')))
     except OSError:
         cache_age = None

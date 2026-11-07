@@ -98,8 +98,46 @@ class TestVerifyHash(unittest.TestCase):
 class TestSigVerify(unittest.TestCase):
     def test_unavailable(self):
         self.assertEqual(U._sig_verify(b'x', None), 'unavailable')
-        # bundle presente pero sin lib sigstore instalada -> 'unavailable'|'failed'
-        self.assertIn(U._sig_verify(b'x', b'{}'), ('unavailable', 'failed'))
+
+    def test_sin_lib_unavailable(self):
+        """Sin la lib sigstore -> 'unavailable' determinista. Si está instalada,
+        Verifier.production() refresca la raíz TUF de sigstore.dev — red real
+        (~12s): aquí se fuerza el path ImportError, la lib NO puede tocarla."""
+        import sys
+        import unittest.mock as um
+        block = {k: None for k in list(sys.modules)
+                 if k == 'sigstore' or k.startswith('sigstore.')}
+        block.update({'sigstore': None, 'sigstore.models': None,
+                      'sigstore.verify': None})
+        with um.patch.dict(sys.modules, block):
+            self.assertEqual(U._sig_verify(b'x', b'{}'), 'unavailable')
+
+    def test_firma_mala_failed(self):
+        """Bundle presente + lib stubbeada: verify_artifact lanza -> 'failed'
+        (un bundle inválido es RECHAZO, no 'unavailable' que instala igual)."""
+        import sys
+        import unittest.mock as um
+
+        class _B:
+            @staticmethod
+            def from_json(_b):
+                return object()
+
+        class _V:
+            @staticmethod
+            def production():
+                raise RuntimeError('tuf')
+
+        fake_verify = um.MagicMock()
+        fake_verify.policy = um.MagicMock()
+        fake_verify.Verifier = _V
+        fake_models = um.MagicMock()
+        fake_models.Bundle = _B
+        with um.patch.dict(sys.modules,
+                           {'sigstore': um.MagicMock(),
+                            'sigstore.models': fake_models,
+                            'sigstore.verify': fake_verify}):
+            self.assertEqual(U._sig_verify(b'x', b'{}'), 'failed')
 
 
 class TestDl(unittest.TestCase):

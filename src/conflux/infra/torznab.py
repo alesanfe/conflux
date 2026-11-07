@@ -5,7 +5,7 @@ import re
 import urllib.parse
 
 from conflux.core.state import CFG, CLOCK, _POOL, _health
-from conflux.infra.net import _session
+from conflux.infra.net import _public_url_cached, _session
 
 try:
     from defusedxml import ElementTree as _ET  # torznab: XML del indexer (no confiable)
@@ -20,7 +20,8 @@ def _torznab(stype, sid):
     habilitados). Jackett: /api/v2.0/indexers/all/results/torznab."""
     url, key = CFG.get('torznab_url', '').rstrip('/'), CFG.get('torznab_key', '')
     imdb = sid.split(':')[0]
-    if not url or not key or not imdb.startswith('tt') or _ET is None:
+    if (not url or not key or not imdb.startswith('tt') or _ET is None
+            or not _public_url_cached(url)):            # SSRF (link-local/reservado)
         return []
     try:
         out = _tz_query(url, key, stype, imdb)

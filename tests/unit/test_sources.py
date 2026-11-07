@@ -71,11 +71,39 @@ if __name__ == '__main__':
 class TestIdMapNoTTL(unittest.TestCase):
     """_idmap no expira: el mapeo prefijo->imdb es estable en el tiempo."""
 
-    def test_entrada_vieja_sigue_resolviendo(self):
+    def setUp(self):
         _sources._idmap.clear()
+
+    def tearDown(self):
+        _sources._idmap.clear()
+
+    def test_entrada_vieja_sigue_resolviendo(self):
         _sources._idmap[('kitsu', '999')] = (0, ('tt0009999', []))   # ts=0 = prehistórico
         imdb, _ = _sources._resolve_meta('series', 'kitsu', '999')
         self.assertEqual(imdb, 'tt0009999')
+
+    def test_fallo_no_queda_pinchado(self):
+        """Un fetch fallido NO se pincha sin TTL: a los 5min reintenta.
+        Antes: meta->('' ,[]) cacheado para siempre -> ese anime jamás
+        resolvía hasta reiniciar/evictar las 400 entradas."""
+        calls = []
+        meta = {'meta': {'imdb_id': 'tt7', 'videos': []}}
+        orig = _sources.fetch
+        _sources.fetch = _net.fetch = lambda *a, **k: (calls.append(a), None)[1]
+        try:
+            imdb, _ = _sources._resolve_meta('series', 'kitsu', '1')
+            self.assertEqual(imdb, '')                          # primer intento: fallo
+            _sources.fetch = _net.fetch = lambda *a, **k: (calls.append(a), meta)[1]
+            imdb, _ = _sources._resolve_meta('series', 'kitsu', '1')
+            self.assertEqual(imdb, '')                          # fallo reciente: sirve caché
+            self.assertEqual(len(calls), 1)
+            import conflux.core.state as st
+            _sources._idmap[('kitsu', '1')] = (st.CLOCK.time() - 301, ('', []))
+            imdb, _ = _sources._resolve_meta('series', 'kitsu', '1')
+            self.assertEqual(imdb, 'tt7')                       # >5min: reintenta y resuelve
+            self.assertEqual(len(calls), 2)
+        finally:
+            _sources.fetch = _net.fetch = orig
 
 
 class TestAtomicJson(unittest.TestCase):

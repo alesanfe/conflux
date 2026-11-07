@@ -400,7 +400,7 @@ def health_save(path, bad, ok, throttle=60, keep=None):
         _atomic_json(path, {
             'bad': {u: list(v) for u, v in bad.items()
                     if isinstance(v, (list, tuple)) and len(v) == 2
-                    and now - v[1] < keep},
+                    and isinstance(v[1], (int, float)) and now - v[1] < keep},
             'ok': {u: ts for u, ts in ok.items()
                    if isinstance(ts, (int, float)) and now - ts < keep},
         })

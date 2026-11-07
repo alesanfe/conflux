@@ -18,7 +18,7 @@ import re
 import urllib.parse
 
 from conflux.core.state import CFG, _health, _meta_title
-from conflux.infra.net import _session
+from conflux.infra.net import _public_url_cached, _session
 
 try:
     from defusedxml import ElementTree as _ET        # RSS del indexer (no confiable)
@@ -180,7 +180,7 @@ def _rss_map():
     out = {}
     for i, u in enumerate(want):
         u = str(u).strip()
-        if not u.startswith('http'):
+        if not u.startswith('http') or not _public_url_cached(u):  # SSRF (= epg_url)
             continue
         host = urllib.parse.urlsplit(u).netloc or f'feed{i}'
         out[f'RSS:{host}'] = u                         # host repetido -> último gana

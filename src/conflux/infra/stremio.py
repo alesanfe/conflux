@@ -297,12 +297,16 @@ def install(manifest_url=PROXY_MANIFEST):
     st, msg = install_remote(manifest_url)
     local = False
     if find_db():
-        man = json.load(urllib.request.urlopen(manifest_url, timeout=10))  # nosec B310
-        desc = {'manifest': man, 'transportUrl': manifest_url,
-                'flags': {'official': False, 'protected': False}}
-        local = _sqlite_update(
-            lambda ads: [a for a in ads
-                         if a.get('transportUrl') != manifest_url] + [desc])
+        try:
+            man = json.load(urllib.request.urlopen(manifest_url,  # nosec B310
+                                                   timeout=10))
+            desc = {'manifest': man, 'transportUrl': manifest_url,
+                    'flags': {'official': False, 'protected': False}}
+            local = _sqlite_update(
+                lambda ads: [a for a in ads
+                             if a.get('transportUrl') != manifest_url] + [desc])
+        except Exception:                    # remoto ya aplicó: local opcional
+            local = False
     if st in ('installed', 'updated'):
         return st, msg + (' + perfil local' if local else '')
     if st == 'already':

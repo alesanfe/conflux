@@ -281,6 +281,9 @@ class TestSsrfGuardSync(unittest.TestCase):
 
     def test_veredictos_identicos(self):
         from conflux.infra import net
+        # tests/__init__ stubaea net._public_url (sin DNS) para la hermeticidad
+        # global; el original queda en _real_public_url — el sync es con ESE.
+        net_pub = getattr(net, '_real_public_url', net._public_url)
 
         def fake_gai(host, port, proto=None):
             ipaddress.ip_address(host)  # no-IP -> gaierror
@@ -291,7 +294,7 @@ class TestSsrfGuardSync(unittest.TestCase):
             with self.subTest(url=url), \
                     mock.patch.object(socket, 'getaddrinfo',
                                       side_effect=fake_gai):
-                a, n = apply_env._public_url(url), net._public_url(url)
+                a, n = apply_env._public_url(url), net_pub(url)
                 self.assertEqual(a, n,
                                  f'drift: apply_env={a} net={n} para {url}')
                 self.assertEqual(a, esperado, f'verdicto inesperado: {url}')

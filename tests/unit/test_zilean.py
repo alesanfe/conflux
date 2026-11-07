@@ -18,6 +18,17 @@ class TestNum(unittest.TestCase):
 
 
 class TestZilean(unittest.TestCase):
+    def test_ssrf_linklocal_no_fetch(self):
+        """zilean_url a metadata-cloud (169.254.x) no se fetchea — el guard
+        _public_url la bloquea como epg_url ya hacía."""
+        _, undo = cfg_swap(zilean_url='http://169.254.169.254')
+        try:
+            with patch.object(z, '_session') as ms:
+                self.assertEqual(z._zilean('movie', 'tt0137523'), [])
+        finally:
+            undo()
+        ms.assert_not_called()
+
     def test_sin_url(self):
         _, undo = cfg_swap(zilean_url='')
         try:

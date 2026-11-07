@@ -10,7 +10,7 @@ import conflux.web.torzapi as T
 from tests import cfg_swap
 
 
-def _row(ih='a' * 40, seeds=10, size=2e9, url='', title='Movie.2020.1080p'):
+def _row(ih='a' * 40, seeds=10, size=2.0, url='', title='Movie.2020.1080p'):
     out = {'title': title, 'infoHash': ih}
     if url:
         out['url'] = url
@@ -253,6 +253,21 @@ class TestSearch(unittest.TestCase):
             undo()
         # la corta gana un slot del top-200 pero no emite item -> 199
         self.assertEqual(body.count('<item>'), 199)
+
+    def test_size_en_bytes(self):
+        """La fila lleva GB (GiB float); newznab size/enclosure van en bytes —
+        int(size) a pelo emitía '1' (1 byte) para un release de 2GB."""
+        _, undo = cfg_swap(torzapi_key='k')
+        try:
+            code, body, _ = self._run(
+                {'t': ['movie'], 'apikey': ['k'], 'imdbid': ['tt0137523']},
+                rows=[_row(size=2.0)])
+        finally:
+            undo()
+        gb = int(2.0 * (1 << 30))
+        self.assertIn(f'name="size" value="{gb}"', body)
+        self.assertIn(f'length="{gb}"', body)
+        self.assertNotIn('value="2"', body)
 
     def test_item_usenet(self):
         nzb = 'https://idx/get/x.nzb'

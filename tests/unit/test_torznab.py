@@ -61,6 +61,15 @@ class TestTorznab(unittest.TestCase):
         st.CFG['torznab_key'] = 'k'
         self.assertEqual(tz._torznab('movie', 'kitsu:1'), [])
 
+    def test_ssrf_linklocal_no_fetch(self):
+        """torznab_url a IP link-local (metadata cloud) se rechaza — mismo
+        guard _public_url que epg_url."""
+        st.CFG['torznab_url'] = 'http://169.254.169.254/api'
+        st.CFG['torznab_key'] = 'k'
+        with patch.object(tz, '_tz_query') as q:
+            self.assertEqual(tz._torznab('movie', 'tt0137523'), [])
+            q.assert_not_called()
+
     def test_movie_t_movie(self):
         st.CFG['torznab_url'] = 'http://x'
         st.CFG['torznab_key'] = 'k'

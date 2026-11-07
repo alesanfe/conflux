@@ -164,7 +164,12 @@ def _dht_nodes(s, timeout=3):
 def _dht_peers(infohash, cap=10, timeout=3):
     """get_peers iterando nodos cercanos -> nº de peers encontrados (0 = no visto).
     Private-flag nunca aparece en DHT — eso es esperado, no un fallo."""
-    h = bytes.fromhex(infohash)
+    if not isinstance(infohash, str) or len(infohash) != 40:
+        return 0                             # btih v1 = 40 hex; ''->b'' era valido y disparaba DHT
+    try:
+        h = bytes.fromhex(infohash)
+    except ValueError:
+        return 0                             # infoHash no-hex (upstream raro): unknown
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(timeout)
@@ -319,7 +324,10 @@ def _announce_hints(infohash, urls, cap=6):
             continue
         if m.group(1) == 'udp':
             host, _, port = m.group(2).partition(':')
-            r = _announce_udp(host, int(port or 80), infohash)
+            try:
+                r = _announce_udp(host, int(port or 80), infohash)
+            except ValueError:               # puerto no numérico en el hint
+                r = None
         else:
             r = _announce_http(u, infohash)
         if r is None:

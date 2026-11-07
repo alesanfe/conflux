@@ -318,6 +318,15 @@ _RSS = b"""<?xml version="1.0"?>
 class TestRss(unittest.TestCase):
     """Scraper RSS genérico — feeds de indexers vía `scraper_rss` (gap 4)."""
 
+    def setUp(self):
+        # _public_url_cached consulta DNS vía net (en tests stub no-DNS); aquí
+        # se permite todo para aislar el map — el guard se prueba aparte.
+        self._p = patch.object(sc, '_public_url_cached', lambda u: True)
+        self._p.start()
+
+    def tearDown(self):
+        self._p.stop()
+
     def test_map_nombres_por_host(self):
         _, undo = cfg_swap(scraper_rss=[
             'https://showrss.info/allshows.rss', 'nope-not-url',
@@ -427,6 +436,33 @@ class TestRss(unittest.TestCase):
         s, _ = fake_session({'content': b'<rss><channel></channel></rss>'})
         with patch.object(sc, '_session', return_value=s):
             self.assertEqual(sc._sc_rss('https://f/x', 'movie', 'tt1'), [])
+
+    def test_ssrf_linklocal_filtrado(self):
+        """scraper_rss pasaba por _session sin validar: un feed apuntando a
+        169.254.169.254 (metadata cloud) se fetcheaba. Ahora pasa _public_url
+        como epg_url — en tests el stub no-DNS bloquea la IP literal."""
+        self._p.stop()                               # usamos el guard real
+        try:
+            _, undo = cfg_swap(scraper_rss=[
+                'http://169.254.169.254/latest/meta-data',
+                'https://feed.example/rss'])
+            try:
+                m = sc._rss_map()
+            finally:
+                undo()
+        finally:
+            self._p.start()
+        self.assertEqual(m, {'RSS:feed.example': 'https://feed.example/rss'})
+
+    def test_public_url_cached_memo(self):
+        """_public_url_cached memoiza: la 2ª llamada no repite DNS
+        (ruta caliente /stream)."""
+        import conflux.infra.net as net
+        net._PUBLIC_URL_OK.clear()
+        with patch.object(net, '_public_url', return_value=True) as pu:
+            self.assertTrue(net._public_url_cached('https://a.example/f'))
+            self.assertTrue(net._public_url_cached('https://a.example/f'))
+        self.assertEqual(pu.call_count, 1)
 
     def test_tipo_no_soportado_no_pide(self):
         """stype fuera de movie/series/anime -> [] SIN fetch (Or@239:

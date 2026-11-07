@@ -465,7 +465,20 @@ class TestPosixKill(_TmpCase):
         with open(os.path.join(dest, 'conflux.pid'), 'w') as f:
             f.write('4321')
         self.mon.setattr(install, '_proc_pids', lambda: set())
+        self.mon.setattr(install, '_pid_es_conflux', lambda pid: True)
         self.assertEqual(install._posix_pids(lambda *a: None), {4321})
+
+    def test_posix_pids_pidfile_stale_no_mata_inocente(self):
+        """Pidfile stale con PID reutilizado por OTRO proceso: sin verificar
+        la identidad, uninstall/install_self le mandaba SIGTERM al inocente."""
+        _frozen_posix(self.tmp, self.mon, 'linux')
+        dest = install._dest_dir()
+        os.makedirs(dest)
+        with open(os.path.join(dest, 'conflux.pid'), 'w') as f:
+            f.write('4321')
+        self.mon.setattr(install, '_proc_pids', lambda: set())
+        self.mon.setattr(install, '_pid_es_conflux', lambda pid: False)
+        self.assertEqual(install._posix_pids(lambda *a: None), set())
 
     def test_posix_pids_lsof_darwin(self):
         _frozen_posix(self.tmp, self.mon, 'darwin')

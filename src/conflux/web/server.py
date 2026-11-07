@@ -250,15 +250,30 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         """Router GET: stream/catalog/meta/subtitles + páginas y redirects."""
         new_req_id()                                            # correlation id por request
+        try:
+            return self._route_get()
+        except Exception as e:                                  # noqa: BLE001 — última barrera:
+            log_ev('route_err', path=getattr(self, 'path', '?')[:120],  # una ruta rota
+                   err=repr(e)[:200])                           # NO debe colgar sin respuesta
+            try:
+                self.reply({'err': 'internal'}, 500)            # 500 -> el cliente reintenta
+            except Exception:                                   # noqa: BLE001 — conexión ya rota
+                pass
+            return None
+
+    def _route_get(self):
+        """Cuerpo del router GET (bajo el boundary de do_GET)."""
         p = self._profile(urllib.parse.unquote(self.path.split('?', 1)[0]))  # sin query string
         if self._pages(p):
             return None
         if p.startswith('/r/'):                                        # debrid redirect
-            _, _, pvd, h = p.split('/')
+            seg = p.split('/')
+            pvd, h = (seg[2], seg[3]) if len(seg) == 4 else ('', '')
             fi = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('fi', ['0'])[0]
             return self._redir(_db_resolve(pvd, h, fi))
         if p.startswith('/dp/'):                                       # debrid proxy (túnel de salida)
-            _, _, pvd, h = p.split('/')
+            seg = p.split('/')
+            pvd, h = (seg[2], seg[3]) if len(seg) == 4 else ('', '')
             fi = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('fi', ['0'])[0]
             return self._db_proxy(pvd, h, fi)
         if p.startswith('/nzb/'):                                      # usenet (newznab -> torbox)
@@ -363,6 +378,19 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         """Router POST: /login, /configure, /reload."""
         new_req_id()
+        try:
+            return self._route_post()
+        except Exception as e:                                  # noqa: BLE001 — última barrera:
+            log_ev('route_err', path=getattr(self, 'path', '?')[:120],  # misma regla que GET:
+                   err=repr(e)[:200])                           # nunca colgar sin responder
+            try:
+                self.reply({'err': 'internal'}, 500)
+            except Exception:                                   # noqa: BLE001 — conexión ya rota
+                pass
+            return None
+
+    def _route_post(self):
+        """Cuerpo del router POST (bajo el boundary de do_POST)."""
         p = self.path.split('?', 1)[0]
         if self.headers.get('Transfer-Encoding'):                # smuggling: CL único y acotado
             return self.reply({'err': 'transfer-encoding not supported',

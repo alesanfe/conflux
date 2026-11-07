@@ -1495,6 +1495,49 @@ class TestDoGetRedirects(unittest.TestCase):
             h.do_GET()
         h.reply.assert_called_once_with({'streams': []})
 
+    def test_r_malformado_404_no_crash(self):
+        """/r/x (3 segmentos) o /r/a/b/c (5) hacían `_,_,pvd,h = split` ->
+        ValueError y el handler moría sin respuesta. Ahora 404."""
+        import unittest.mock as um
+        for path in ('/r/solo', '/r/', '/r/a/b/c'):
+            h = self._h(path)
+            with um.patch.object(srv, '_db_resolve', return_value=None):
+                h.do_GET()                                  # no lanza
+            h._redir.assert_called_once_with(None)
+        for path in ('/dp/solo', '/dp/a/b/c'):
+            h = self._h(path)
+            h.do_GET()                                      # no lanza
+            h._db_proxy.assert_called_once_with('', '', '0')
+
+    def test_r_segmentos_extra_ignora_el_quinto(self):
+        """len!=4 -> pvd/h vacíos -> _db_resolve(None-able) -> 404."""
+        import unittest.mock as um
+        h = self._h('/r/rd/' + 'a' * 40 + '/extra')
+        with um.patch.object(srv, '_db_resolve', return_value=None) as dr:
+            h.do_GET()
+        dr.assert_called_once_with('', '', '0')
+        h._redir.assert_called_once_with(None)
+
+    def test_boundary_500_no_cuelga(self):
+        """do_GET: excepción residual en una ruta -> reply 500 controlado.
+        Antes propagaba -> BaseHTTPRequestHandler cerraba sin respuesta
+        (el cliente veía reset, no un error reintentable)."""
+        import unittest.mock as um
+        h = self._h('/stream/movie/tt1.json')
+        with um.patch.object(srv, 'handle_stream',
+                             side_effect=RuntimeError('boom')):
+            h.do_GET()                                          # no lanza
+        h.reply.assert_called_once_with({'err': 'internal'}, 500)
+
+    def test_boundary_500_post(self):
+        """do_POST: mismo boundary — excepción en _login -> 500, no reset."""
+        import unittest.mock as um
+        h = self._h('/login')
+        with um.patch.object(srv.H, '_login',
+                             side_effect=RuntimeError('boom')):
+            h.do_POST()                                         # no lanza
+        h.reply.assert_called_once_with({'err': 'internal'}, 500)
+
 
 class TestPostLoginDispatch(unittest.TestCase):
     def test_post_login_llama_login(self):

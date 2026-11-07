@@ -490,6 +490,12 @@ class TestDhtPeersEdges(unittest.TestCase):
                                 return_value={b'values': [b'x' * 6]}):
             self.assertEqual(TH._dht_peers('a' * 40), 1)
 
+    def test_infohash_no_hex_no_crash(self):
+        """bytes.fromhex lanzaba ValueError en un infoHash no-hex upstream —
+        mataba el hilo de _scrape_submit; ahora cuenta como 0 peers."""
+        self.assertEqual(TH._dht_peers('zz-no-hex'), 0)
+        self.assertEqual(TH._dht_peers(''), 0)
+
 
 class TestScrapeEdges(unittest.TestCase):
     """_scrape_tracker: respuestas truncadas / tx ajeno -> {}."""
@@ -636,6 +642,15 @@ class TestAnnounceHintsEdges(unittest.TestCase):
         with um.patch.object(TH, '_announce_udp', side_effect=['deny', 'deny']):
             r = TH._announce_hints('a' * 40, ['udp://t1:1/x', 'udp://t2:2/x'])
         self.assertEqual(r, 'dead')                  # 2 respondieron: muerto
+
+    def test_puerto_no_numerico_salta(self):
+        """udp://host:badport — int() lanzaba ValueError sin capturar;
+        ahora cuenta como no-respondida."""
+        import unittest.mock as um
+        with um.patch.object(TH, '_announce_udp') as au:
+            r = TH._announce_hints('a' * 40, ['udp://t1:notaport/x'])
+        self.assertEqual(r, 'unknown')
+        au.assert_not_called()
 
 
 class TestScrapeHashes(unittest.TestCase):

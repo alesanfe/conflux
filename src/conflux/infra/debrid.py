@@ -10,7 +10,7 @@ from contextlib import suppress
 import requests
 
 from conflux.core.state import CFG, PORT
-from conflux.infra.net import _session
+from conflux.infra.net import _public_url_cached, _session
 
 # ---- debrid (Real-Debrid / TorBox) — activo solo con key en config.json/env ----
 _DB_OK: dict = {}
@@ -430,8 +430,8 @@ def _db_stream(p, h, fi, rq_headers):
     headers de validación del cliente (Range/If-*) — sin ellos el player no
     puede hacer seek. Devuelve el response requests o None."""
     u = _db_resolve(p, h, fi)
-    if not u:
-        return None
+    if not u or not _public_url_cached(u):
+        return None                            # la API debrid debe devolver URLs públicas
     try:
         s = _session(urllib.parse.urlsplit(u).hostname or 'debrid')
         fwd = {k: v for k, v in rq_headers.items()

@@ -446,6 +446,17 @@ class TestDbStream(_DbBase):
         with patch.object(db, '_db_resolve', return_value=None):
             self.assertIsNone(db._db_stream('real-debrid', 'h', 0, {}))
 
+    def test_url_no_publica_rechazada(self):
+        """SSRF: una API debrid maliciosa/caída devolviendo link-local o
+        reserved -> None sin tocar la red (guard _public_url_cached)."""
+        s, _ = fake_session({'json': {}})
+        for u in ('http://169.254.169.254/latest/meta-data',
+                  'http://[::1]/x', 'gopher://x/'):
+            with patch.object(db, '_db_resolve', return_value=u), \
+                    patch.object(db, '_session', return_value=s) as m:
+                self.assertIsNone(db._db_stream('real-debrid', 'h', 0, {}), u)
+                m.assert_not_called()
+
 
 class TestResolveFi(unittest.TestCase):
     """?fi= del query: malformado -> 0 (no crash ni fallo del resolve)."""

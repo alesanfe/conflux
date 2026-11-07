@@ -76,6 +76,27 @@ class TestNewznab(unittest.TestCase):
         finally:
             undo()
 
+    def test_ssrf_linklocal_no_pide(self):
+        """newznab_url a IP link-local se rechaza con _public_url (= epg_url)."""
+        s, _ = fake_session({'content': _XML})
+        _, undo = cfg_swap(**{**self.CFG,
+                              'newznab_url': 'http://169.254.169.254/api'})
+        try:
+            with patch.object(nz, '_session', return_value=s) as m:
+                self.assertEqual(nz._newznab('movie', 'tt0137523'), [])
+            m.assert_not_called()
+        finally:
+            undo()
+
+    def test_sab_ssrf_linklocal_none(self):
+        """_sab_cfg con sabnzbd_url link-local -> None (no addurl al metadata)."""
+        _, undo = cfg_swap(sabnzbd_url='http://169.254.169.254:8080',
+                           sabnzbd_key='k')
+        try:
+            self.assertIsNone(nz._sab_cfg())
+        finally:
+            undo()
+
     def test_params_movie_vs_series(self):
         _, calls = self._run('movie', 'tt0137523')
         self.assertEqual(calls[0][2]['params']['t'], 'movie')

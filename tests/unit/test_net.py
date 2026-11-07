@@ -216,6 +216,14 @@ class TestDisyuntorHost(unittest.TestCase):
 class TestPublicUrl(unittest.TestCase):
     """_public_url: guard SSRF de URLs configurables (epg_url, M3U_URL)."""
 
+    def setUp(self):
+        # tests/__init__ stubéa _public_url sin DNS; aquí probamos el real
+        self._p = patch.object(net, '_public_url', net._real_public_url)
+        self._p.start()
+
+    def tearDown(self):
+        self._p.stop()
+
     @staticmethod
     def _gai(ips):
         return [(2, 1, 6, '', (ip, 80)) for ip in ips]

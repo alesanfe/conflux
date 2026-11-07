@@ -87,10 +87,11 @@ def _row_items(r, cat):
     if link:
         entries.append((link, 'application/x-nzb', 0, ''))
     when = email.utils.formatdate(time.time())
+    size_b = int(size * (1 << 30))       # filas llevan GB (GiB); newznab size/length = bytes
     outx = []
     for u, mime, sd, h in entries:
         attrs = (f'<newznab:attr name="category" value="{cat}"/>'
-                 f'<newznab:attr name="size" value="{int(size)}"/>'
+                 f'<newznab:attr name="size" value="{size_b}"/>'
                  f'<newznab:attr name="seeders" value="{int(sd)}"/>'
                  f'<newznab:attr name="magneturl" value="{escape(u)}"/>')
         if h:
@@ -100,7 +101,7 @@ def _row_items(r, cat):
             f'<guid isPermaLink="false">{escape(u[:120])}</guid>'
             f'<link>{escape(u)}</link>'
             f'<pubDate>{when}</pubDate>'
-            f'<enclosure url="{escape(u)}" length="{int(size)}" type="{mime}"/>'
+            f'<enclosure url="{escape(u)}" length="{size_b}" type="{mime}"/>'
             f'{attrs}</item>')
     return ''.join(outx)
 

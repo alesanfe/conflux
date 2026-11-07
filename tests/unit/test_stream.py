@@ -1038,6 +1038,33 @@ class TestCollectMergeServed(unittest.TestCase):
         S._collect_merge(stt, 'Foo', ['rueda', 7, {'title': 'ok', 'url': 'http://x'}])
         self.assertEqual(len(stt['rows']), 1)
 
+    def test_stream_malformado_no_mata_batch(self):
+        """Un stream que hace fallar norm_stream abortaba el merge ENTERO:
+        los demás streams de la fuente se perdían. Ahora se salta solo ese."""
+        stt = self._state()
+        real = S.norm_stream
+        def picky(s, name):
+            if s.get('title') == 'boom':
+                raise TypeError('upstream raro')
+            return real(s, name)
+        with mock.patch.object(S, 'norm_stream', picky):
+            S._collect_merge(stt, 'Foo', [
+                {'title': 'boom', 'url': 'http://x/0'},
+                {'title': 'ok 1080p', 'url': 'http://x/1'},
+                {'title': 'ok2 720p', 'url': 'http://x/2'}])
+        self.assertEqual(len(stt['rows']), 2)
+        self.assertEqual(st._SERVED['Foo']['n'], 2)
+
+    def test_videosize_no_numerico_no_explota(self):
+        """videoSize:'abc' upstream hacía 'abc'/1e9 -> TypeError en
+        extract_fields (entraba al merge-killer de arriba)."""
+        stt = self._state()
+        S._collect_merge(stt, 'Foo', [
+            {'title': 'ok', 'url': 'http://x/1',
+             'behaviorHints': {'videoSize': 'abc'}}])
+        self.assertEqual(len(stt['rows']), 1)
+        self.assertIsNone(stt['rows'][0][5]['size'])   # f['size'] None, no crash
+
 
 class TestCollectWorkers(unittest.TestCase):
     """_collect_tz/zl/nz/en: excepción -> (name, [], 0) + log truncado;

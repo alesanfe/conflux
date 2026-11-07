@@ -242,6 +242,21 @@ class TestProfiles(unittest.TestCase):
             cfg.SOURCES[:] = old[0]
             cfg._DISABLED.clear(); cfg._DISABLED.update(old[1])
 
+    def test_eff_disabled_for_grupo_vacio_apaga_tipo(self):
+        """{'movie': []} explícito (perfil o /cfg/) = kill-switch: ninguna
+        fuente responde a ese tipo. Es la semántica documentada (a diferencia
+        del typo del formulario, que ya no puede crear un grupo vacío)."""
+        from conflux.core.state import Source
+        old = list(cfg.SOURCES)
+        try:
+            cfg.SOURCES[:] = [Source('A', 'u1'), Source('B', 'u2')]
+            with mock.patch.dict(cfg.CFG, {'source_groups': {'movie': []}}):
+                dis = cfg._eff_disabled_for('movie')
+                self.assertIn('A', dis)
+                self.assertIn('B', dis)
+        finally:
+            cfg.SOURCES[:] = old
+
     def test_es_pat_perfil(self):
         """stream_langs de perfil compila su regex (Add@203s, _strs)."""
         self._prof({'stream_langs': ['de', 'vo']})

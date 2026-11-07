@@ -403,6 +403,21 @@ class TestHealthPersist(unittest.TestCase):
     def test_save_error_tragado(self):
         st.health_save('/no/such/dir/x.json', {'u': (2, 1)}, {}, throttle=0)
 
+    def test_save_ts_no_numerico_no_venena_el_save(self):
+        """Una entrada malformada ('ts' str) hacía `now - 'x'` -> TypeError
+        dentro del try -> el save entero se abortaba y se perdían TODOS los
+        veredictos válidos. Ahora se filtra solo la entrada mala."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = self._tmp(d)
+            now = st.CLOCK.time()
+            st.health_save(p, {'malo': (1, 'no-es-num'),
+                               'bueno': (3, now)}, {}, throttle=0)
+            import json
+            data = json.load(open(p, encoding='utf-8'))
+            self.assertNotIn('malo', data['bad'])
+            self.assertEqual(data['bad']['bueno'], [3, now])
+
 
 class TestUrlHealthPersist(unittest.TestCase):
     """_url_head persiste el veredicto tras cada probe (META-001)."""

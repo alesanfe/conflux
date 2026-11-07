@@ -241,17 +241,26 @@ class TestCollectStatusEdge(unittest.TestCase):
         self.assertFalse(st['running'])
 
     def test_degraded_y_breakers(self):
-        import conflux.core.state as st
-        with mock.patch.object(doctor, '_http', return_value=(200, {})), \
-             mock.patch.object(doctor, '_fails',
-                               {'h.lan': (5, doctor.time.time())}), \
-             mock.patch.object(st, 'HEALTH', {'src': {'streak': 4}}), \
+        """Breakers/degradados vienen del body de /health (proceso servicio),
+        no de los dicts locales del CLI — antes siempre salían []."""
+        body = {'fetch_fails': {'h.lan': 5, 'ok.lan': 1},
+                'sources': {'src': {'streak': 4}, 'fine': {'streak': 1}}}
+        with mock.patch.object(doctor, '_http', return_value=(200, body)), \
              mock.patch.object(doctor.os.path, 'getmtime',
                                return_value=doctor.time.time() - 10):
             out = doctor.collect_status()
         self.assertEqual(out['breakers_open'], ['h.lan'])
         self.assertIn('src', out['sources']['degraded'])
+        self.assertNotIn('fine', out['sources']['degraded'])
         self.assertIsNotNone(out['cache_age_s'])
+
+    def test_health_body_no_dict_no_rompe(self):
+        with mock.patch.object(doctor, '_http', return_value=(200, ['x'])), \
+             mock.patch.object(doctor.os.path, 'getmtime',
+                               return_value=doctor.time.time() - 10):
+            out = doctor.collect_status()
+        self.assertEqual(out['breakers_open'], [])
+        self.assertEqual(out['sources']['degraded'], [])
 
     def test_run_status_texto_con_cache(self):
         buf = io.StringIO()

@@ -149,8 +149,10 @@ def _ef_res(text):
 
 def _ef_size(bh, text):
     size = parse_size(text)
-    if size is None and bh.get('videoSize'):
-        size = bh['videoSize'] / 1e9
+    if size is None:
+        vs = bh.get('videoSize')                     # upstream puede mandar 'abc'
+        if isinstance(vs, (int, float)) and not isinstance(vs, bool):
+            size = vs / 1e9
     return size
 
 

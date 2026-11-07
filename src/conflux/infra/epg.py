@@ -25,6 +25,7 @@ from conflux.infra.net import _public_url
 
 _EPG_FILE = os.path.join(_ROOT, 'epg-cache.json')
 _EPG_TTL = 12 * 3600
+_GZ_CAP = 160_000_000       # cota de DEScompresión (anti zip-bomb; parcheable en tests)
 
 
 class _ChkRedirect(urllib.request.HTTPRedirectHandler):
@@ -125,9 +126,11 @@ def _build(m3u_metas):
     if not raw:
         return None
     try:
-        data = gzip.decompress(raw)
-    except OSError:
-        data = raw                                   # por si el XML no va gz
+        # cap también al DESCOMPRIMIR: 40MB de gzip pueden inflar a GBs
+        # (zip-bomb) — el XMLTV real son ~10-60MB de texto
+        data = gzip.GzipFile(fileobj=io.BytesIO(raw)).read(_GZ_CAP)
+    except (OSError, EOFError):
+        data = raw                                   # por si el XML no va gz / gz truncado
     ch_map, want = _epg_channels(data, m3u_metas)
     if not want:
         return None

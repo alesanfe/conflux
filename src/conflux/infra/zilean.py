@@ -8,7 +8,7 @@ behaviorHints.cached (debrid los marca ⚡ al verificarlos)."""
 import urllib.parse
 
 from conflux.core.state import CFG
-from conflux.infra.net import _session
+from conflux.infra.net import _public_url_cached, _session
 
 
 def _num(v):
@@ -48,7 +48,9 @@ def _zilean_item(it):
 def _zilean(stype, sid):
     """Consulta Zilean por IMDb id -> [streams]. Vacío si no hay url o no es tt."""
     base = (CFG.get('zilean_url') or '').rstrip('/')
-    if not base or stype not in ('movie', 'series', 'anime') or not sid.startswith('tt'):
+    if (not base or stype not in ('movie', 'series', 'anime')
+            or not sid.startswith('tt')
+            or not _public_url_cached(base)):           # SSRF (link-local/reservado)
         return []
     parts = sid.split(':')
     q = {'ImdbId': parts[0]}

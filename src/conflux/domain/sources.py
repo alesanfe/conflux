@@ -5,6 +5,7 @@ import json
 from contextlib import suppress
 
 from conflux.core.state import (
+    CLOCK,
     _MF_CACHE,
     _POOL_BG,
     SOURCES,
@@ -95,17 +96,19 @@ _PREFIX_SRC = {'kitsu': 'Kitsu', 'mal': 'Kitsu', 'anilist': 'Kitsu', 'anidb': 'K
 
 
 def _resolve_meta(stype, pref, base_id):
-    """meta de la fuente que resuelve el prefijo -> (imdb_id, videos), cacheado
-    SIN TTL: el mapeo id->imdb es estable (años); _cset solo acota a 400."""
+    """meta de la fuente que resuelve el prefijo -> (imdb_id, videos), cacheado:
+    el ACIERTO sin TTL (el mapeo id->imdb es estable, años; _cset acota a 400)
+    pero el FALLO se reintenta a los 5min — un upstream caído un instante no
+    debe pinchar el mapeo vacío hasta el próximo reinicio/evicción."""
     key = (pref, base_id)
     ent = _idmap.get(key)
-    if ent is None:
+    if ent is None or (not ent[1][0] and CLOCK.time() - ent[0] > 300):
         base = next((b.base for b in SOURCES if b.name == _PREFIX_SRC[pref]), None)
         d = fetch(f'{base}/meta/{stype}/{pref}:{base_id}.json', 4) if base else None
         m = as_dict(d).get('meta') or {}
-        ent = (m.get('imdb_id') or '', m.get('videos') or [])
-        _cset(_idmap, key, ent)
-        return ent
+        val = (m.get('imdb_id') or '', m.get('videos') or [])
+        _cset(_idmap, key, val)
+        return val
     return ent[1]                              # entrada (ts, valor): sin TTL (estable)
 
 

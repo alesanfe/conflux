@@ -159,12 +159,29 @@ def _proc_pids(port=9700):
     return pids
 
 
+def _pid_es_conflux(pid):
+    """El pid del pidfile sigue siendo conflux: un pidfile stale + PID
+    reutilizado mataría un proceso inocente en uninstall/install_self."""
+    try:
+        if sys.platform.startswith('linux'):
+            with open(f'/proc/{pid}/cmdline', 'rb') as fh:
+                return b'conflux' in fh.read().lower()
+        res = _run(['ps', '-p', str(pid), '-o', 'comm='])
+        out = res.stdout.decode() if isinstance(res.stdout, bytes) \
+            else res.stdout
+        return 'conflux' in out.lower()
+    except (OSError, ValueError):
+        return False
+
+
 def _posix_pids(say):
     """PIDs escuchando :9700 en posix: pidfile propio + /proc|lsof."""
     pids = set()
     try:
         with open(_pidfile(), encoding='ascii') as fh:
-            pids.add(int(fh.read().strip()))
+            pid = int(fh.read().strip())
+            if _pid_es_conflux(pid):
+                pids.add(pid)
     except (OSError, ValueError):
         pass
     if sys.platform.startswith('linux'):

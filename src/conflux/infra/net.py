@@ -35,6 +35,20 @@ def _strike(host):
                 _fails.pop(h, None)
 
 
+_PUBLIC_URL_OK: dict = {}                    # url -> bool (memo; DNS por request sería caro)
+
+
+def _public_url_cached(url):
+    """_public_url memoizada — los fetchers la consultan por request."""
+    ok = _PUBLIC_URL_OK.get(url)
+    if ok is None:
+        if len(_PUBLIC_URL_OK) > 512:
+            _PUBLIC_URL_OK.clear()
+        ok = _public_url(url)
+        _PUBLIC_URL_OK[url] = ok
+    return ok
+
+
 def _public_url(url):
     """Guard SSRF para URLs remotas configurables (epg_url, M3U_URL):
     scheme http/https y el host no resuelve a link-local (169.254.169.254 =

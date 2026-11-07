@@ -17,7 +17,7 @@ import urllib.parse
 
 from conflux.core.state import CFG, PORT, _health
 from conflux.infra.debrid import _db_key
-from conflux.infra.net import _session
+from conflux.infra.net import _public_url_cached, _session
 
 try:
     from defusedxml import ElementTree as _ET        # XML del indexer (no confiable)
@@ -61,7 +61,7 @@ def _nntp_server():
 def _sab_cfg():
     """(url, apikey) de SABnzbd o None — downloader externo, no playback."""
     url, key = CFG.get('sabnzbd_url', '').rstrip('/'), CFG.get('sabnzbd_key', '')
-    return (url, key) if url and key else None
+    return (url, key) if url and key and _public_url_cached(url) else None
 
 
 def _sab_add(nzb_url):
@@ -88,6 +88,7 @@ def _nz_gate(stype, sid):
     url, key = CFG.get('newznab_url', '').rstrip('/'), CFG.get('newznab_key', '')
     imdb = sid.split(':')[0]
     if (not url or not key or _ET is None or not imdb.startswith('tt')
+            or not _public_url_cached(url)              # SSRF (link-local/reservado)
             or not (_db_key('torbox') or _nntp_server() or _sab_cfg())):
         return None
     params = {'t': 'movie' if stype == 'movie' else 'tvsearch',

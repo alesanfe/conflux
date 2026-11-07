@@ -27,6 +27,32 @@ os.environ.setdefault('CONFLUX_LOG',
 
 import proxy as px
 
+# _public_url hace DNS real (getaddrinfo): en tests lo stubamos con una versión
+# que valida scheme + host sin resolver — las IPs literales peligrosas
+# (169.254.x, multicast, reservadas) siguen bloqueadas para probar el guard SSRF.
+import ipaddress as _ip
+import urllib.parse as _up
+import conflux.infra.net as _net
+
+
+def _public_url_no_dns(url):
+    try:
+        p = _up.urlsplit(url)
+        if p.scheme not in ('http', 'https') or not p.hostname:
+            return False
+        try:
+            ip = _ip.ip_address(p.hostname)
+            return not (ip.is_link_local or ip.is_multicast
+                        or ip.is_reserved or ip.is_unspecified)
+        except ValueError:
+            return True                         # hostname: tests no resuelven
+    except ValueError:
+        return False
+
+
+_net._real_public_url = _net._public_url      # test_net lo restaura por clase
+_net._public_url = _public_url_no_dns
+
 FIX = os.path.join(ROOT, 'tests', 'fixtures')
 
 
@@ -148,6 +174,7 @@ _STATE_ATTRS = {
     'conflux.app.subs': ['_OS_TOK'],
     'conflux.domain.lists': ['_M3U', '_M3U_METAS', '_M3U_TXT'],
     'conflux.infra.torznab': ['_TZ_IDS', '_TZ_C', '_TZ_DL'],
+    'conflux.infra.net': ['_PUBLIC_URL_OK'],
     'conflux.infra.wikidata': ['_wd_c'],
     'conflux.infra.epg': ['_STATE'],
     'conflux.web.server': ['_LOGIN_TRIES'],
@@ -210,6 +237,49 @@ def _restore_state(snap):
 
 
 import unittest as _ut
+
+
+# ---------------------------------------------------------------------------
+# Timing por test: cada test mide su duración real (perf_counter) y al final
+# del proceso se informan los más lentos — los cuellos de botella del código
+# bajo test saltan aquí. CONFLUX_TEST_TIMING=0 lo desactiva (CI ruidoso).
+# ---------------------------------------------------------------------------
+import atexit as _atexit
+import time as _time
+
+_TEST_TIMES: list = []
+
+
+def _install_timing():
+    if getattr(_ut.TestCase.run, '_conflux_timing', False):
+        return
+    _orig = _ut.TestCase.run
+
+    def _timed_run(self, result=None):
+        t0 = _time.perf_counter()
+        try:
+            return _orig(self, result)
+        finally:
+            _TEST_TIMES.append((_time.perf_counter() - t0, str(self)))
+
+    _timed_run._conflux_timing = True
+    _ut.TestCase.run = _timed_run
+
+
+def _report_slowest(n=15):
+    if not _TEST_TIMES:
+        return
+    top = sorted(_TEST_TIMES, reverse=True)[:n]
+    total = sum(d for d, _ in _TEST_TIMES)
+    print(f'\n-- timing de tests: {len(_TEST_TIMES)} tests, '
+          f'{total:.1f}s total, top {n} más lentos --', file=sys.stderr)
+    for dur, name in top:
+        print(f'{dur:8.3f}s  {name}', file=sys.stderr)
+
+
+if os.environ.get('CONFLUX_TEST_TIMING', '1') != '0':
+    _install_timing()
+    _atexit.register(_report_slowest)
 
 
 def _install_isolation():

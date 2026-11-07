@@ -581,6 +581,18 @@ class TestInstallLocal(unittest.TestCase):
             st, _ = stremio.install()
         self.assertEqual(st, 'manual')
 
+    def test_fetch_manifest_local_falla_no_tumba_remoto(self):
+        """El 2º urlopen (manifest para sqlite) iba sin try: un fallo puntual
+        mataba el registro aunque el remoto ya se hubiera aplicado."""
+        with mock.patch.object(stremio, 'install_remote',
+                               return_value=('installed', 'ok')), \
+             mock.patch.object(stremio, 'find_db', return_value='/db'), \
+             mock.patch.object(stremio.urllib.request, 'urlopen',
+                               side_effect=OSError('caído')):
+            st, msg = stremio.install()
+        self.assertEqual(st, 'installed')
+        self.assertNotIn('perfil local', msg)
+
     def test_remove_remoto_y_local_besteffort(self):
         with mock.patch.object(stremio, 'remove_remote',
                                return_value=('removed', 'ok')), \

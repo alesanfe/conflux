@@ -270,8 +270,8 @@ def _eff_disabled_for(stype):
     si el tipo tiene grupo, SOLO sus fuentes responden a ese contenido."""
     dis = set(_eff_disabled())
     sel = _groups_cfg().get(stype)
-    if sel is not None:
-        keep = set(sel)
+    if sel is not None:                        # [] explícito = kill-switch del tipo
+        keep = set(sel)                        # (contrato documentado en test_stream)
         dis |= {s.name for s in SOURCES if s.name not in keep}
     return dis
 
