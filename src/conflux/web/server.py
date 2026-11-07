@@ -116,6 +116,10 @@ class H(BaseHTTPRequestHandler):
         brute-forceable sin pasar por el rate-limit de /login."""
         ip = getattr(self, 'client_address', ('local',))[0]
         now = time.time()
+        if len(_AUTH_TRIES) > 256:                      # acotado: spam multi-IP
+            for ip_, dq in list(_AUTH_TRIES.items()):   # no infla el dict —
+                if not dq:                              # las vacías se reciclan
+                    _AUTH_TRIES.pop(ip_, None)
         tries = _AUTH_TRIES.setdefault(ip, deque())
         while tries and now - tries[0] > 60:
             tries.popleft()

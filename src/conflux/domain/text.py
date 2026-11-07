@@ -337,14 +337,34 @@ def sanitize_stream(s):
     return out
 
 
+_NORM_C: dict = {}        # (short, repr(raw), sig) -> nr — un re-collect del
+                          # mismo contenido (TTL expirado) re-normalizaba todo:
+                          # ~160us×2000 streams de regexes idénticos
+
+
+def _norm_sig():
+    """Knobs de norm_stream que NO vienen del stream crudo: patrón ES
+    (identidad por objeto — el memo _ES_PAT_C lo hace estable) + formato."""
+    from conflux.core.cfg import _es_pat, _cfgget
+    return (id(_es_pat()), _cfgget('stream_format', ''),
+            _cfgget('stream_max_chars', 200))
+
+
 def norm_stream(s, short):
     """Pipeline: parsea → sanitiza → formatea. Devuelve
     (stream, res, seeds_crudos, size, cached, campos, short) — campos+short
     permiten re-etiquetar por perfil sin re-parsear el caché compartido."""
-    f = extract_fields(s)
-    out = sanitize_stream(s)
-    out['name'], out['title'] = build_display(f, short)
-    return out, f['res'], f['seeds'] or 0, f['size'] or 0, f['cached'], f, short
+    k = (short, repr(s), _norm_sig())
+    nr = _NORM_C.get(k)
+    if nr is None:
+        f = extract_fields(s)
+        out = sanitize_stream(s)
+        out['name'], out['title'] = build_display(f, short)
+        nr = out, f['res'], f['seeds'] or 0, f['size'] or 0, f['cached'], f, short
+        if len(_NORM_C) > 4000:
+            _NORM_C.clear()
+        _NORM_C[k] = nr
+    return nr
 
 
 RANK = {'4320P': 9, '2160P': 8, '1440P': 7, '1080P': 6, 'HD': 6, '720P': 5, '576P': 4, '480P': 3, '360P': 2, '240P': 1, 'SD': 1}

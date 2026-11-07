@@ -68,7 +68,9 @@ class TestLatency(unittest.TestCase):
         margen para ruido bajo carga — degenerado real sería >10x)."""
         s = {'infoHash': 'a' * 40, 'title': 'Película 1080p 👤120 💾1.5 GB ES',
              'behaviorHints': {'bingeGroup': 'x', 'videoSize': 1_500_000_000}}
-        _, dt = _timed(lambda: [T.norm_stream(s, 'x') for _ in range(5000)])
+        # dicts distintos: mide el PARSEO, no el hit de _NORM_C
+        _, dt = _timed(lambda: [T.norm_stream(dict(s, title=f'Peli {i} 1080p 👤120 💾1.5 GB ES'), 'x')
+                                for i in range(5000)])
         self.assertLess(dt, 4.5, 'parseo degeneró')
 
 

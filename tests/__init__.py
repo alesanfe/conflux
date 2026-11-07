@@ -187,6 +187,7 @@ _STATE_ATTRS = {
     'conflux.app.stream': ['_URL_BAD', '_URL_OK', '_URL_PEND', '_REX_C'],
     'conflux.app.subs': ['_OS_TOK', '_SUBS_C'],
     'conflux.domain.lists': ['_M3U', '_M3U_METAS', '_M3U_BYID', '_M3U_TXT'],
+    'conflux.domain.text': ['_NORM_C'],
     'conflux.infra.torznab': ['_TZ_IDS', '_TZ_C', '_TZ_DL'],
     'conflux.infra.net': ['_PUBLIC_URL_OK'],
     'conflux.infra.wikidata': ['_wd_c'],
