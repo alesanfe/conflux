@@ -938,7 +938,7 @@ class TestCollectOne(unittest.TestCase):
              mock.patch.object(S, '_health'):
             name, out, usable = S._collect_one(0, 'movie', 'tt1', set())
         self.assertEqual(usable, 1)
-        self.assertEqual(out, ss)
+        self.assertEqual(out, [ss[0]])        # ya viene filtrada (checked=True al merge)
 
 
 class TestCollectHealth(unittest.TestCase):
@@ -1089,7 +1089,7 @@ class TestCollectWorkers(unittest.TestCase):
         for worker, dep, name in self.WORKERS:
             with self.subTest(worker=worker), \
                  mock.patch.object(S, dep, return_value=ss):
-                self.assertEqual(getattr(S, worker)('m', 'i'), (name, ss, 1))
+                self.assertEqual(getattr(S, worker)('m', 'i'), (name, ss[:1], 1))
 
 
 class _Fut:
@@ -1818,7 +1818,7 @@ class TestCollectScMut(unittest.TestCase):
               {'title': 'upgrade to premium'}]
         with mock.patch.object(S, '_scraper', return_value=ss):
             name, out, usable = S._collect_sc('YTS', 'movie', 'tt1')
-        self.assertEqual((name, out), ('YTS', ss))
+        self.assertEqual((name, out), ('YTS', ss[:2]))   # filtrada una sola vez
         self.assertEqual(usable, 2)
 
 

@@ -81,16 +81,18 @@ def _collect_one(i, stype, sid, dis):
         COOLDOWN[name] = (_st.CLOCK.time() + COOLDOWN_T, 'cuota')       # disyuntor 12h
         _health(name, True, 'cuota agotada → espera 12h', 0)
         return name, [], 0
-    return name, ss, _collect_health(name, d, ss)
+    good = _collect_health(name, d, ss)
+    return name, good, len(good)
 
 def _collect_health(name, d, ss):
     """Health + cooldown por racha de fallos (o nada si responde bien).
-    -> nº usable: el _skip_stream del conteo ya corrió aquí, no se repite."""
-    usable = sum(1 for s in ss if not _skip_stream(s))
-    _health(name, d is not None, '' if d is not None else 'timeout/error', usable)
+    -> lista usable: _skip_stream corre UNA vez aquí — el merge recibe
+    checked=True y no la repite."""
+    good = [s for s in ss if not _skip_stream(s)]
+    _health(name, d is not None, '' if d is not None else 'timeout/error', len(good))
     if d is None and HEALTH[name]['streak'] >= FAIL_STREAK:        # racha de fallos: descanso
         COOLDOWN[name] = (_st.CLOCK.time() + FAIL_CD_T, 'fallos')
-    return usable
+    return good
 
 
 def _collect_fetch(i, stype, sid):
@@ -116,11 +118,12 @@ def _skip_stream(s):
     return not isinstance(s, dict) or _spam(s) or _ad_link(s) or not _playable(s)
 
 
-def _collect_merge(state, name, streams):
-    """Merge dedup + norm de los streams de la fuente en state."""
+def _collect_merge(state, name, streams, checked=False):
+    """Merge dedup + norm de los streams de la fuente en state.
+    checked=True: el caller (worker) ya filtró con _skip_stream — no repetir."""
     for s in streams:
         try:
-            if _skip_stream(s):
+            if not checked and _skip_stream(s):
                 continue
             k = _merge_key(s)
             if not k or k in state['seen']:
@@ -142,7 +145,8 @@ def _collect_tz(stype, sid):
     except Exception as e:                              # noqa: BLE001 — indexer local nunca tumba el collect
         log_ev('src_worker', err=repr(e)[:100])
         return 'Torznab', [], 0
-    return 'Torznab', ss, sum(1 for s in ss if not _skip_stream(s))
+    ss = [s for s in ss if not _skip_stream(s)]
+    return 'Torznab', ss, len(ss)
 
 
 def _collect_zl(stype, sid):
@@ -152,7 +156,8 @@ def _collect_zl(stype, sid):
     except Exception as e:                              # noqa: BLE001 — indexer local nunca tumba el collect
         log_ev('src_worker', err=repr(e)[:100])
         return 'Zilean', [], 0
-    return 'Zilean', ss, sum(1 for s in ss if not _skip_stream(s))
+    ss = [s for s in ss if not _skip_stream(s)]
+    return 'Zilean', ss, len(ss)
 
 
 def _collect_nz(stype, sid):
@@ -162,7 +167,8 @@ def _collect_nz(stype, sid):
     except Exception as e:                              # noqa: BLE001 — indexer nunca tumba el collect
         log_ev('src_worker', err=repr(e)[:100])
         return 'Newznab', [], 0
-    return 'Newznab', ss, sum(1 for s in ss if not _skip_stream(s))
+    ss = [s for s in ss if not _skip_stream(s)]
+    return 'Newznab', ss, len(ss)
 
 
 def _collect_en(stype, sid):
@@ -172,7 +178,8 @@ def _collect_en(stype, sid):
     except Exception as e:                              # noqa: BLE001 — fuente nunca tumba el collect
         log_ev('src_worker', err=repr(e)[:100])
         return 'Easynews', [], 0
-    return 'Easynews', ss, sum(1 for s in ss if not _skip_stream(s))
+    ss = [s for s in ss if not _skip_stream(s)]
+    return 'Easynews', ss, len(ss)
 
 
 def _collect_sc(name, stype, sid):
@@ -182,7 +189,8 @@ def _collect_sc(name, stype, sid):
     except Exception as e:                              # noqa: BLE001 — scraper nunca tumba el collect
         log_ev('src_worker', err=repr(e)[:100])
         return name, [], 0
-    return name, ss, sum(1 for s in ss if not _skip_stream(s))
+    ss = [s for s in ss if not _skip_stream(s)]
+    return name, ss, len(ss)
 
 
 def _collect(key, state):
@@ -214,7 +222,7 @@ def _collect(key, state):
                 continue
             state['contrib'][name] = usable                     # por collect: sin mezclas
             with state['lock']:
-                _collect_merge(state, name, streams)
+                _collect_merge(state, name, streams, checked=True)
     finally:
         if t:                                                   # collect rápido: suelta el timer
             t.cancel()

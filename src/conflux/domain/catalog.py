@@ -100,7 +100,11 @@ def _search_merge(d, utype, seen, out):
     metas = [
         m for m in as_dict(d).get("metas") or [] if isinstance(m, dict) and m.get("id")
     ]
-    keys = _POOL.map(lambda m: _search_key(utype, m), metas)
+    if any(not m.get('imdb_id') and _id_prefix(m['id']) in _PREFIX_SRC
+           for m in metas):
+        keys = _POOL.map(lambda m: _search_key(utype, m), metas)
+    else:                                            # todo tt/imdb_id: sync gratis
+        keys = [_search_key(utype, m) for m in metas]
     for m, k in zip(metas, keys):
         if k in seen:
             continue

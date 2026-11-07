@@ -974,7 +974,7 @@ class TestReplyGzipBorde(unittest.TestCase):
 
     def test_1025_comprime(self):
         h = self._h()
-        h.reply({'x': 'a' * 1016})
+        h.reply({'x': 'a' * 1017})              # compacto {"x":"..."} = 1025
         hdrs = {c.args[0] for c in h.send_header.call_args_list}
         self.assertIn('Content-Encoding', hdrs)
 

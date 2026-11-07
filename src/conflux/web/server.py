@@ -54,6 +54,16 @@ from conflux.web.pages import (
 )
 from conflux.web.torzapi import handle_torzapi
 
+def _dumps_std(o):
+    return json.dumps(o, separators=(',', ':')).encode()
+
+_dumps = _dumps_std
+try:
+    import orjson as _oj                       # opcional (no está en requirements):
+    _dumps = _oj.dumps                         # ~7x json.dumps en replies grandes
+except ImportError:                            # y emite UTF-8 nativo (sin \uXXXX)
+    pass                                       # compacto igual que orjson
+
 
 class H(BaseHTTPRequestHandler):
     """Handler HTTP: router Stremio + páginas /configure /admin /health."""
@@ -66,7 +76,7 @@ class H(BaseHTTPRequestHandler):
         log_ev('req', msg=format % args, ua=ua[:60])
     def reply(self, obj, code=200):
         """JSON (+gzip si aplica) con keep-alive HTTP/1.1."""
-        body = json.dumps(obj).encode()
+        body = _dumps(obj)
         gz = len(body) > 1024 and 'gzip' in self.headers.get('Accept-Encoding', '')
         if gz:
             # level 1: ~2x más rápido que 6/9 — el cliente va por loopback,
