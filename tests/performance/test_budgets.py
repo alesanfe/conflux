@@ -233,6 +233,64 @@ class TestRowsOutBudget(unittest.TestCase):
         rt.assert_not_called()
 
 
+class TestRowsPipeMemo(unittest.TestCase):
+    """_rows_pipe memoiza la salida por (key, firma-config, identidad rows):
+    el path warm con filtros era ~57ms/request a 2k filas; con firma
+    estable es un hit de dict."""
+
+    def setUp(self):
+        self._o = dict(S._OUT_C); S._OUT_C.clear()
+
+    def tearDown(self):
+        S._OUT_C.clear(); S._OUT_C.update(self._o)
+
+    @staticmethod
+    def _rows(n):
+        import conflux.domain.text as T
+        raw = {'name': 'x', 'title': 'F.2024.1080p.WEBRip.x264 seeds:120',
+               'infoHash': 'a' * 40, 'url': 'http://x',
+               'behaviorHints': {'videoSize': 2_000_000_000}}
+        return [T.norm_stream(dict(raw), 'TS') for _ in range(n)]
+
+    def test_misma_firma_es_hit(self):
+        from tests import cfg_swap
+        rows = self._rows(2000)
+        _, undo = cfg_swap(stream_exclude=['zz'], stream_preferred=['es'])
+        try:
+            S._rows_pipe(rows, ('movie', 'tt-x', ()))
+            _, dt = _timed(lambda: [S._rows_pipe(rows, ('movie', 'tt-x', ()))
+                                    for _ in range(50)])
+        finally:
+            undo()
+        self.assertLess(dt, 0.5, f'50 warm hits: {dt*1000:.0f}ms')
+
+    def test_firma_distinta_recomputa(self):
+        """Config distinta -> otra entrada: nunca sirve la firma vieja
+        (exclude=WEBRip filtra las 50; exclude=[] las deja todas)."""
+        from tests import cfg_swap
+        rows = self._rows(50)
+        import conflux.core.cfg as _c
+        old_rex = _c.RE_EX                                 # RE_EX se rebindea
+        _, undo = cfg_swap(stream_exclude=['WEBRip'])      # en load_config
+        _c.RE_EX = _c._ex_re(['WEBRip'])                   # (emulo el reload)
+        try:
+            out_a = S._rows_pipe(rows, ('movie', 'tt-y', ()))
+        finally:
+            _c.RE_EX = old_rex
+            undo()
+        out_b = S._rows_pipe(rows, ('movie', 'tt-y', ()))
+        self.assertEqual(len(out_a), 0)
+        self.assertEqual(len(out_b), 50)
+
+    def test_rows_nuevas_no_stale(self):
+        """Otro objeto rows (nuevo collect) con la misma firma -> recomputa
+        (la entrada verifica identidad, no sirve la salida vieja)."""
+        rows1 = self._rows(30)
+        rows2 = self._rows(60)
+        S._rows_pipe(rows1, ('movie', 'tt-z', ()))
+        self.assertEqual(len(S._rows_pipe(rows2, ('movie', 'tt-z', ()))), 60)
+
+
 class TestM3uStatCache(unittest.TestCase):
     """_m3u_metas: stat(path,mtime,size) intacto -> NO relee el fichero.
     Antes cada vista del catálogo IPTV releía el .m3u entero (MBs) para

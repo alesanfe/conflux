@@ -195,29 +195,36 @@ def _db_avail(hashes):
 
 
 def _debrid_mark(streams):
-    if not _db_cfgs():
+    cfgs = _db_cfgs()
+    if not cfgs:
         return
-    hashes = [s.get('infoHash') for s in streams if s.get('infoHash')]
+    # dedup: el mismo infoHash aparece en N fuentes — un lookup por hash único
+    hashes = list(dict.fromkeys(s['infoHash'] for s in streams if s.get('infoHash')))
     if not hashes:
         return
     ok = _db_avail_map(hashes)
+    multi = len(cfgs) > 1                       # hoisted: _db_cfgs por stream no
+    route = 'dp' if CFG.get('debrid_proxy') else 'r'
     for i, s in enumerate(streams):
         p = ok.get(s.get('infoHash'))
         if p:
             streams[i] = dict(s)                # copia: los dicts viven en _cache —
-            _db_mark_one(p, streams[i])         # mutarlos envenena el caché con /r/
+            _db_mark_one(p, streams[i], multi, route)  # mutarlos envenena con /r/
 
 
-def _db_mark_one(p, s):
+def _db_mark_one(p, s, multi=None, route=None):
     """Stream cacheado -> rayo + url /r/ (o /dp/ con debrid_proxy: tunel de
     salida estilo StremThru — el cliente no toca el debrid, la IP visible es
     la del servidor; coste: nuestro ancho de banda). Multi-debrid: el tag
     [XX] identifica qué provider lo sirve."""
+    if multi is None:
+        multi = len(_db_cfgs()) > 1
+    if route is None:
+        route = 'dp' if CFG.get('debrid_proxy') else 'r'
     h = s['infoHash']
     s['cached'] = True
-    tag = f'[{_DB_SHORT.get(p, str(p).upper()[:4])}] ' if len(_db_cfgs()) > 1 else ''
+    tag = f'[{_DB_SHORT.get(p, str(p).upper()[:4])}] ' if multi else ''
     s['name'] = '⚡ ' + tag + (s.get('name') or '')
-    route = 'dp' if CFG.get('debrid_proxy') else 'r'
     s['url'] = f'http://127.0.0.1:{PORT}/{route}/{p}/{h}?fi={s.get("fileIdx", 0)}'
     s.pop('infoHash', None)
     s.pop('sources', None)

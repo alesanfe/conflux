@@ -44,11 +44,16 @@ def _meta_one(i, want, mid):
 
 
 def _meta_tv(mid):
-    """Canal M3U propio: meta local + programas de hoy (Native EPG)."""
-    from conflux.domain.lists import _m3u_metas   # import perezoso: evita ciclo
+    """Canal M3U propio: meta local + programas de hoy (Native EPG).
+    Lookup por _M3U_BYID — antes copiaba los ~2000 metas y los barría en
+    lineal para encontrar uno. epg_meta copia el dict él mismo."""
+    from conflux.domain.lists import _m3u_ensure, _M3U_BYID, _M3U, _iptv_dead, _m3u_adult
     from conflux.infra.epg import epg_meta
-    ch = next((x for x in _m3u_metas() if x['id'] == mid), None)
-    return {'meta': epg_meta(ch) if ch else {}}
+    _m3u_ensure()                                   # stat+parse si el fichero cambió
+    ch = _M3U_BYID.get(mid)
+    if ch is None or _iptv_dead(_M3U.get(mid, '')) or _m3u_adult(ch):
+        return {'meta': {}}                         # mismo filtro que _m3u_out
+    return {'meta': epg_meta(ch)}
 
 
 def handle_meta(stype, mid):

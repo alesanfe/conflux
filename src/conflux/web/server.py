@@ -69,7 +69,9 @@ class H(BaseHTTPRequestHandler):
         body = json.dumps(obj).encode()
         gz = len(body) > 1024 and 'gzip' in self.headers.get('Accept-Encoding', '')
         if gz:
-            body = gzip.compress(body)
+            # level 1: ~2x más rápido que 6/9 — el cliente va por loopback,
+            # el tamaño extra no cuesta nada y la CPU sí (streams de ~0.5MB).
+            body = gzip.compress(body, compresslevel=1)
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self.send_header('X-Content-Type-Options', 'nosniff')

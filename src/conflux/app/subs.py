@@ -6,9 +6,13 @@ import threading
 import requests
 
 from conflux.core.cfg import _cfgget
-from conflux.core.state import CLOCK, PORT, as_dict
+from conflux.core.state import CLOCK, PORT, as_dict, _cget, _cset
 from conflux.domain.sources import _resolve_sid
 from conflux.infra.net import _session
+
+
+_SUBS_C: dict = {}        # (stype,sid) -> subtitles — reabrir una ficha no debe
+                          # repetir la query a OpenSubtitles (latencia + cuota)
 
 
 def _subs_query(stype, sid):
@@ -46,11 +50,17 @@ def handle_subtitles(stype, sid):
     q = _subs_query(stype, sid) if key else None
     if not q:
         return {'subtitles': []}
+    ck = (stype, sid)
+    hit = _cget(_SUBS_C, ck)
+    if hit is not None:
+        return hit
     try:
         r = _session('api.opensubtitles.com').get(
             'https://api.opensubtitles.com/api/v1/subtitles',
             params=q, headers={'Api-Key': key, 'User-Agent': 'conflux 1.0'}, timeout=8)
-        return {'subtitles': _subs_map(r)}
+        out = {'subtitles': _subs_map(r)}
+        _cset(_SUBS_C, ck, out)                 # CACHE_TTL: subs estables, reabrir no re-consulta
+        return out
     except Exception:                                            # noqa: BLE001 — boundary HTTP: siempre respuesta válida
         return {'subtitles': []}
 

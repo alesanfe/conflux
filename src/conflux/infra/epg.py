@@ -203,17 +203,34 @@ def epg_kick():
     _POOL_BG.submit(_reload)
 
 
+_VID_C: dict = {}        # (cid, day) -> videos renderizados
+_VID_DAYS = [None]       # objeto 'days' con el que se construyó el caché
+
+
 def _videos(cid, day):
-    """Programas de `cid` el día `day` -> meta.videos del protocolo EPG."""
-    progs = _STATE['days'].get(day, {}).get(cid) or []
-    out = []
-    for i, p in enumerate(progs):
-        out.append({'id': f'{cid}:{i}', 'name': p['title'] or 'Programa',
-                    'season': 1, 'episode': i + 1, 'number': i + 1,
-                    'released': _iso(p['start']), 'firstAired': _iso(p['start']),
-                    'startTime': _iso(p['start']), 'endTime': _iso(p['stop']),
-                    'thumbnail': p['icon'], 'overview': p['desc']})
-    return out
+    """Programas de `cid` el día `day` -> meta.videos del protocolo EPG.
+    Cacheado por (cid,day) mientras 'days' sea el mismo objeto (reload lo
+    reemplaza entero): la guía de 500 canales re-renderizaba ~15k dicts
+    de vídeo en cada request aunque nada hubiera cambiado.
+    DEVUELVE LA LISTA CACHEADA — los llamadores que la muten deben copiar."""
+    days = _STATE['days']
+    if _VID_DAYS[0] is not days:
+        _VID_C.clear()
+        _VID_DAYS[0] = days
+    k = (cid, day)
+    v = _VID_C.get(k)
+    if v is None:
+        progs = days.get(day, {}).get(cid) or []
+        v = [{'id': f'{cid}:{i}', 'name': p['title'] or 'Programa',
+              'season': 1, 'episode': i + 1, 'number': i + 1,
+              'released': _iso(p['start']), 'firstAired': _iso(p['start']),
+              'startTime': _iso(p['start']), 'endTime': _iso(p['stop']),
+              'thumbnail': p['icon'], 'overview': p['desc']}
+             for i, p in enumerate(progs)]
+        if len(_VID_C) > 2000:                       # cota: días×canales acotado
+            _VID_C.clear()
+        _VID_C[k] = v
+    return v
 
 
 def epg_metas(day, metas):
@@ -235,9 +252,9 @@ def epg_meta(m):
     m = dict(m)
     today = time.strftime('%Y-%m-%d', time.gmtime())
     nxt = time.strftime('%Y-%m-%d', time.gmtime(time.time() + 86400))
-    vids = _videos(m['id'], today)
+    vids = list(_videos(m['id'], today))             # copia: += no muta el caché
     n_today = len(vids)
-    vids += _videos(m['id'], nxt)[:6]                 # un poco de mañana
+    vids += [dict(v) for v in _videos(m['id'], nxt)[:6]]   # id mutado abajo: copiar
     for v in vids[n_today:]:
         v['id'] = f"{m['id']}:n{v['id'].rsplit(':', 1)[-1]}"
     m['videos'] = vids

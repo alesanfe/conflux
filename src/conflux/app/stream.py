@@ -81,15 +81,16 @@ def _collect_one(i, stype, sid, dis):
         COOLDOWN[name] = (_st.CLOCK.time() + COOLDOWN_T, 'cuota')       # disyuntor 12h
         _health(name, True, 'cuota agotada → espera 12h', 0)
         return name, [], 0
-    _collect_health(name, d, ss)
-    return name, ss, sum(1 for s in ss if not _skip_stream(s))
+    return name, ss, _collect_health(name, d, ss)
 
 def _collect_health(name, d, ss):
-    """Health + cooldown por racha de fallos (o nada si responde bien)."""
+    """Health + cooldown por racha de fallos (o nada si responde bien).
+    -> nº usable: el _skip_stream del conteo ya corrió aquí, no se repite."""
     usable = sum(1 for s in ss if not _skip_stream(s))
     _health(name, d is not None, '' if d is not None else 'timeout/error', usable)
     if d is None and HEALTH[name]['streak'] >= FAIL_STREAK:        # racha de fallos: descanso
         COOLDOWN[name] = (_st.CLOCK.time() + FAIL_CD_T, 'fallos')
+    return usable
 
 
 def _collect_fetch(i, stype, sid):
@@ -489,6 +490,55 @@ def _rows_out(rows):
     return [r[0] for r in _light_pass(rr)]
 
 
+_OUT_C: dict = {}          # (key, sig) -> out filtrado+ordenado (pre-debrid)
+_OUT_CAP = 200
+
+
+def _sig_list(k):
+    """Knob lista efectivo (perfil > global) como tupla para la firma."""
+    v = _strs((_pcfg() or {}).get(k))
+    if v is None:
+        v = _strs(cfg.CFG.get(k))
+    return tuple(v or ())
+
+
+def _pipe_sig():
+    """Firma de TODOS los knobs que afectan al pipeline post-collect
+    (_lang_rows/_rows_out/_user_filters/_light_pass). MISMA salida si la
+    firma coincide; un knob nuevo en el pipeline debe entrar aquí o los
+    requests servirían resultados con la config anterior (stale)."""
+    pc = _pcfg() or {}
+    return (
+        _sig_list('stream_exclude'), _sig_list('stream_exclude_regex'),
+        _sig_list('stream_required'), _sig_list('stream_required_regex'),
+        _sig_list('stream_preferred'), _sig_list('stream_sort'),
+        tuple(_strs(pc.get('stream_langs')) or ()),       # langs: solo perfil
+        bool((_pcfg() or {}).get('parental', cfg.CFG.get('parental'))),
+        cfg._cfgget('stream_max_gb', 0) or 0,
+        bool(cfg._cfgget('stream_light', True)),
+    )
+
+
+def _rows_pipe(rows, key):
+    """_rows_out + _user_filters memoizados por (key, firma de config):
+    el path warm recomponía el pipeline entero por request (~57ms a 2k
+    filas con filtros); con firma igual es un hit de dict.
+    Solo para rows FINALES (caché): el entry retiene la referencia a rows
+    y verifica identidad — un collect nuevo (TTL) produce otro objeto ->
+    miss -> recomputa (nunca stale por id() reciclado). Devuelve COPIA de
+    la lista — _debrid_mark/_url_health mutan slots y contaminarían el
+    caché compartido entre perfiles."""
+    k = (key, _pipe_sig())
+    ent = _OUT_C.get(k)
+    if ent is not None and ent[1] is rows:
+        return list(ent[0])
+    out = _user_filters(_rows_out(rows))
+    if len(_OUT_C) >= _OUT_CAP:            # acotado: ids×firmas; clear simple
+        _OUT_C.clear()                     # (LRU fino no compensa a 200 entradas)
+    _OUT_C[k] = (out, rows)
+    return list(out)
+
+
 def handle_stream(stype, sid):
     """GET /stream — agrega fuentes (pool), dedup, ordena, marca debrid y filtra urls muertas."""
     if sid.startswith('m3u:'):                              # canales M3U propios
@@ -499,7 +549,7 @@ def handle_stream(stype, sid):
     key = (stype, sid, tuple(sorted(_eff_disabled_for(stype))))  # off+groups por perfil
     hit = _cget(_cache, key)
     if hit is not None:
-        out = _user_filters(_rows_out(hit))
+        out = _rows_pipe(hit, key)
         _debrid_mark(out)                          # debrid marca copias: fuera del caché
         _url_health(out)                           # veredicto muerto filtra también el caché
         _hash_health(out)                          # veredictos scrape: filtran también el caché
@@ -507,8 +557,8 @@ def handle_stream(stype, sid):
     state = _ensure_collect(key)
     state['done'].wait(STREAM_BUDGET)
     with state['lock']:
-        out = _rows_out(state['rows'])
-    out = _user_filters(out)                                             # filtros usuario tras dedup/rank
+        # rows en vuelo: pueden llegar stragglers tras early-done — no memoizar
+        out = _user_filters(_rows_out(state['rows']))                    # filtros usuario tras dedup/rank
     _debrid_mark(out)                                        # si hay key: cache + resolve /r/
     _url_health(out)                                         # HEAD async a streams http
     _hash_health(out)                                        # infoHash sin swarm ni hints fuera
@@ -539,6 +589,10 @@ def _url_todo(streams, now):
             and now - _URL_OK.get(s['url'], 0) > 1800][:15]
 
 
+_URL_PEND: set = set()      # HEADs en vuelo — sin dedup cada request re-encola
+                            # las mismas 15 urls mientras el probe anterior corre
+
+
 def _url_head(u):
     """HEAD async: <400 -> vivo; 4xx/5xx -> muerte segura; resto -> 1 strike."""
     try:
@@ -551,6 +605,7 @@ def _url_head(u):
     except Exception:                                    # noqa: BLE001 — timeout/SSL/cualquiera = strike
         st, _ = _URL_BAD.get(u, (0, 0))
         _URL_BAD[u] = (st + 1, _st.CLOCK.time())                # timeout: strike
+    _URL_PEND.discard(u)
     _urlh_save()
 
 
@@ -562,12 +617,6 @@ def _url_prune():
         _URL_OK.pop(u, None)
 
 
-def _url_dead(u, now):
-    """Veredicto muerto confirmado (2 strikes) y vigente (<30min)."""
-    v = _URL_BAD.get(u)
-    return v is not None and v[0] >= 2 and now - v[1] < 1800
-
-
 def _url_health(streams):
     """Streams http: los confirmados muertos salen de la lista; los desconocidos
     se HEAD-encolan async (máx 15, 3s). Fallo transitorio (timeout) solo cuenta
@@ -575,12 +624,34 @@ def _url_health(streams):
     now = _st.CLOCK.time()
     if len(_URL_BAD) + len(_URL_OK) > 2000:
         _url_prune()
-    todo = _url_todo(streams, now)          # antes de filtrar: los muertos también
-    # muertos confirmados y vigentes fuera — O(streams), no O(todos los
-    # veredictos): _URL_BAD llega a 2000 entradas y el response trae ~15.
-    streams[:] = [s for s in streams if not _url_dead(s.get('url'), now)]
+    # Un pase: veredicto BAD resuelto una vez por url — antes _url_todo + filtro
+    # lo consultaban dos veces. Los muertos vigentes no entran en todo (su ts
+    # <1800 ya los excluye del criterio de antigüedad). `_URL_PEND` evita
+    # re-encolar HEADs ya en vuelo (requests consecutivos con las mismas urls).
+    out: list = []
+    todo: list = []
+    empty_bad = not _URL_BAD                  # sin malos: tras llenar el cupo
+    for i, s in enumerate(streams):           # de probes el resto no filtra nada
+        u = s.get('url')
+        if isinstance(u, str) and u.startswith('http') and '127.0.0.1' not in u:
+            v = _URL_BAD.get(u)
+            if v is not None and v[0] >= 2 and now - v[1] < 1800:
+                continue                      # muerto confirmado y vigente: fuera
+            if len(todo) < 15 and u not in _URL_PEND \
+                    and (v is None or now - v[1] > 1800) \
+                    and now - _URL_OK.get(u, 0) > 1800:
+                todo.append(u)                # sin veredicto fresco: HEAD async
+                _URL_PEND.add(u)
+                if empty_bad and len(todo) == 15:
+                    out.extend(streams[i + 1:])
+                    break
+        out.append(s)
+    streams[:] = out
     for u in todo:
-        _POOL_BG.submit(_url_head, u)
+        try:
+            _POOL_BG.submit(_url_head, u)
+        except Exception:                                 # noqa: BLE001 — pool cerrado
+            _URL_PEND.discard(u)
 
 
 _st.health_load(_URLH_PATH, _URL_BAD, _URL_OK)   # veredictos del proceso anterior

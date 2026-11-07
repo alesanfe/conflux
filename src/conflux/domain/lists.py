@@ -104,30 +104,30 @@ def _list_metas(url, utype):
 _M3U: dict = {}
 
 _M3U_METAS: list = []
+_M3U_BYID: dict = {}     # id -> meta: /meta/m3u:N consulta uno sin copiar 2000
 _M3U_TXT = [None]        # contenido ya parseado — no re-parsear por request
 _M3U_SIG: list = [None]  # (path, mtime_ns, size) — stat() ~50us vs read() MBs
 
 
-def _m3u_metas():
-    """Parsea config.m3u_path -> metas tv + streams indexados (m3u:N).
-    stat() primero (barato): mtime/size iguales -> caché sin leer el fichero
-    (antes releía MBs por request). stat falla -> se intenta leer igual
-    (tests con _open mockeado / fs sin stat)."""
+def _m3u_ensure():
+    """stat() + re-parse si cambió la firma — sin copiar metas (los callers
+    que piden la lista completa sí las necesitan copiadas; los de un canal
+    solo consultan _M3U_BYID)."""
     try:
         st_ = os.stat(CFG['m3u_path'])
         sig = (CFG['m3u_path'], st_.st_mtime_ns, st_.st_size)
         if sig == _M3U_SIG[0]:
-            return _m3u_out([{**m} for m in _M3U_METAS])
+            return
     except OSError:
         sig = None
     try:
         txt = _open(CFG['m3u_path'], encoding='utf-8', errors='replace').read()
     except OSError:
-        return []
+        return
     if sig is not None:
         _M3U_SIG[0] = sig
     if txt == _M3U_TXT[0]:
-        return _m3u_out([{**m} for m in _M3U_METAS])
+        return
     metas: list = []
     idx: dict = {}                         # local + swap: un reader durante el
     cur = {'name': '', 'logo': '', 'group': '', 'tvg': ''}   # re-parseo no ve el dict a medias
@@ -147,10 +147,17 @@ def _m3u_metas():
             cur = {'name': '', 'logo': '', 'group': '', 'tvg': ''}
     _M3U.clear()
     _M3U.update(idx)
+    _M3U_BYID.clear()
+    _M3U_BYID.update({m['id']: m for m in metas})
     _M3U_TXT[0] = txt
     _M3U_METAS[:] = metas
     _iptv_sweep()                                   # canales nuevos: verificar en bg
-    return _m3u_out(metas)
+
+
+def _m3u_metas():
+    """Metas tv del .m3u (copias: el caller puede mutarlas sin tocar el caché)."""
+    _m3u_ensure()
+    return _m3u_out([{**m} for m in _M3U_METAS])
 
 
 # ---- cuarentena de canales IPTV muertos (IPTV-001/002) ----
@@ -223,15 +230,22 @@ def _iptv_sweep():
     return n
 
 
+def _m3u_adult(m):
+    """Canal con etiqueta adulta y parental activo -> oculto (misma regla en
+    catálogo y /meta: un canal X no se sirve por ninguna vía)."""
+    if not CFG.get('parental'):
+        return False
+    from conflux.core.cfg import RE_ADULT           # local: cfg importa lists (circular)
+    return bool(RE_ADULT.search(f"{m.get('name', '')} {m.get('description', '')}"))
+
+
 def _m3u_out(metas):
     """parental: fuera canales con etiquetas adultas; cuarentena IPTV: fuera
     los confirmados muertos — reaparecen solos si el barrido los revive."""
     out = [m for m in metas if not _iptv_dead(_M3U.get(m['id'], ''))]
     if not CFG.get('parental'):
         return out
-    from conflux.core.cfg import RE_ADULT           # local: cfg importa lists (circular)
-    return [m for m in out
-            if not RE_ADULT.search(f"{m.get('name', '')} {m.get('description', '')}")]
+    return [m for m in out if not _m3u_adult(m)]
 
 def _m3u_extinf(ln):
     """Línea #EXTINF -> {name, logo, group, tvg}."""

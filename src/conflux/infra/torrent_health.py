@@ -410,22 +410,36 @@ def _hash_dead(s):
     return v == -1 and not s.get('sources')
 
 
-def _hash_filter(streams):
-    """Clasifica streams por veredicto -> (dead, todo[(hash, tracker_urls)]).
-    dead = inalcanzable confirmado; todo = desconocido a scrapear (dedup)."""
-    dead, todo, seen = set(), [], set()
+def _hash_scan(streams):
+    """Un pase por stream: veredicto resuelto una vez (str+lower+lookup —
+    _hash_dead+_hash_known+_hash_sink lo re-hacían hasta 3 veces por fila).
+    -> (drop_ids, sink_ids, todo): id()s a quitar, id()s a hundir al fondo,
+    hashes desconocidos a scrapear (dedup por hash)."""
+    drop, sink, todo, seen = set(), set(), [], set()
     for s in streams:
         h = str(s.get('infoHash') or '').lower()
         if not h or len(h) != 40:
             continue
-        if _hash_dead(s):
-            dead.add(h)
-        elif _hash_known(h) is None and h not in seen:
+        v = _hash_known(h)
+        has_src = bool(s.get('sources'))
+        if v == -2 or (v == -1 and not has_src):
+            drop.add(id(s))                 # inalcanzable confirmado: fuera
+        elif v == -1:
+            sink.add(id(s))                 # muerto-con-hints: sobrevive hundido
+        elif v is None and h not in seen:
             seen.add(h)
             urls = [u[8:] for u in (s.get('sources') or [])
                     if isinstance(u, str) and u.startswith('tracker:')]
             todo.append((h, urls))
-    return dead, todo
+    return drop, sink, todo
+
+
+def _hash_filter(streams):
+    """Clasifica streams por veredicto -> (dead, todo[(hash, tracker_urls)]).
+    dead = inalcanzable confirmado; todo = desconocido a scrapear (dedup)."""
+    drop, _sink, todo = _hash_scan(streams)
+    by_id = {id(s): str(s.get('infoHash') or '').lower() for s in streams}
+    return {by_id[i] for i in drop}, todo
 
 
 def _hash_sink(streams):
@@ -445,11 +459,13 @@ def _hash_health(streams):
     los desconocidos (máx ~140/request — el resto espera a la próxima)."""
     if not streams or not _cfgget('torrent_health', True):
         return
-    dead, todo = _hash_filter(streams)
-    if dead:
-        streams[:] = [s for s in streams
-                      if str(s.get('infoHash') or '').lower() not in dead]
-    _hash_sink(streams)
+    drop, sink, todo = _hash_scan(streams)
+    if drop or sink:
+        streams[:] = ([s for s in streams if id(s) not in drop]
+                      if drop else list(streams))
+        if sink and len(sink) < len(streams):
+            streams[:] = ([s for s in streams if id(s) not in sink]
+                          + [s for s in streams if id(s) in sink])
     for i in range(0, min(len(todo), 140), _CHUNK * 7):   # ~140 hashes por lote
         _POOL_BG.submit(_scrape_submit, todo[i:i + _CHUNK * 7])
 

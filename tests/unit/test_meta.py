@@ -161,8 +161,9 @@ class TestHandleMeta(unittest.TestCase):
     def test_meta_tv_elige_canal_por_id(self):
         """_meta_tv usa el canal cuyo id == mid, no "el primero" (Eq@50)."""
         ch_a, ch_b = {'id': 'm3u:a'}, {'id': 'm3u:b'}
-        with patch('conflux.domain.lists._m3u_metas',
-                   return_value=[ch_a, ch_b]), \
+        with patch('conflux.domain.lists._m3u_ensure'), \
+                patch.dict('conflux.domain.lists._M3U_BYID',
+                           {'m3u:a': ch_a, 'm3u:b': ch_b}, clear=True), \
                 patch('conflux.infra.epg.epg_meta',
                       return_value={'id': 'm3u:b'}) as epg:
             out = M.handle_meta('tv', 'm3u:b')
