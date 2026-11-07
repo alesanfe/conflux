@@ -9,9 +9,11 @@ Verificación antes de staged:
      está instalada (dependencia opcional — no va en requirements base);
      sin ella el estado queda 'hash-only' y queda logueado (degradado
      explícito, nunca silencioso)
-  3. staged atómico: conflux.new.exe + conflux.update.json — un exe en
-     ejecución no se puede reemplazar en Windows: el swap lo aplica el
-     siguiente arranque vía scripts/apply_update.py.
+  3. staged atómico: conflux.new.exe + conflux.update.json + helper
+     conflux-apply-update.ps1 — un exe en ejecución no se puede reemplazar
+     en Windows: el servidor lanza el .ps1 en shutdown; éste espera a que
+     el proceso muera, re-verifica el sha256 embebido (Get-FileHash) y
+     mueve el binario (con retry). En POSIX frozen el swap es directo.
 
 Política de canal (SC-007) — config.update_channel:
   'stable' (default): solo releases no-prerelease
@@ -28,6 +30,7 @@ import os
 import re
 import sys
 import urllib.request
+from contextlib import suppress
 
 from conflux.core.cfg import _cfgget
 from conflux.core.state import CLOCK, _ROOT, _atomic_json, log_ev
@@ -198,6 +201,12 @@ def _stage(exe, tag, sig):
             log_ev('update_stage_err', err=str(e)[:80])
         return None
     _atomic_json(_UPD_JSON, {'tag': tag, 'sig': sig, 'sha256': sha})
+    # staged del diseño anterior (.cmd ciego/OEM): queda huérfano si el
+    # proceso nunca se cerró — fuera junto al exe si existe
+    legacy_cmd = _SWAP_PS1[:-4] + '.cmd'
+    if os.path.exists(legacy_cmd):
+        with suppress(OSError):
+            os.remove(legacy_cmd)
     exe_path = sys.executable
     proc = os.path.splitext(os.path.basename(exe_path))[0]
 

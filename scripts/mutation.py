@@ -10,7 +10,7 @@ not eliminado), constantes numericas +-1, return None.
 
 Uso:
     python scripts/mutation.py src/conflux/infra/epg.py tests/unit/test_epg.py
-    python scripts/mutation.py src/conflux/infra/anilist.py   # autodetecta tests
+    python scripts/mutation.py src/conflux/infra/torznab.py   # autodetecta tests
     python scripts/mutation.py archivo.py tests/x.py --max 30 --timeout 20
 """
 import ast
@@ -23,7 +23,6 @@ from pathlib import Path
 FOCUS = {
     'infra/epg.py': 'tests/unit/test_epg.py',
     'infra/torrent_health.py': 'tests/unit/test_torrent_health.py',
-    'infra/anilist.py': 'tests/unit/test_anilist.py',
     'infra/torznab.py': 'tests/unit/test_torznab.py',
     'domain/catalog.py': 'tests/unit/test_catalog.py',
     'domain/text.py': 'tests/unit/test_text.py',

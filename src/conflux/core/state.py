@@ -470,12 +470,6 @@ def _cstale(cache, key):
 _YEARS  = [str(y) for y in range(time.gmtime().tm_year, time.gmtime().tm_year - 12, -1)]
 
 
-def submit_ctx(pool, fn, *a, **kw):
-    """pool.submit propagando contextvars (correlation id) al hilo worker."""
-    ctx = contextvars.copy_context()
-    return pool.submit(ctx.run, lambda: fn(*a, **kw))
-
-
 def new_req_id():
     """Id de correlación por request (8 hex); lo fija el handler HTTP."""
     import secrets

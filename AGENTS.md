@@ -7,7 +7,7 @@ en Linux iba como systemd user `stremio-proxy`).
 ## Comandos
 
 ```bash
-python3 -m unittest discover -s tests -t .  # ~1364 tests (~70s): unit+integration+security+contract+property+resilience+regression+performance+e2e
+python3 -m unittest discover -s tests -t .  # ~1650 tests (~60s): unit+integration+security+contract+property+resilience+regression+performance+e2e
 python3 -m unittest discover -s tests/unit -t .       # solo unit (~5s)
 scripts/stress_seeds.py --seeds N           # suite barajada por seed (expone orden→flakes)
 conflux.exe doctor [--json]                 # diagnóstico: config/puerto/addon/authkey/breakers
@@ -63,7 +63,7 @@ systemctl --user restart stremio-proxy      # Linux: tras editar src/conflux/
 ./scripts/setup.sh --env <tar.gz>          # otra máquina: mismo entorno exacto
 scripts\setup_win.ps1                      # Windows: venv+deps+autostart (carpeta Inicio)+addon
 python scripts/apply_env.py                # .env → config.json+sources.json (idempotente)
-# .env (gitignored): DEBRID_*, TRAKT_*, TORZNAB_*, OPENSUBTITLES_KEY, MDBLIST_KEY,
+# .env (gitignored): DEBRID_*, TORZNAB_*, OPENSUBTITLES_KEY, MDBLIST_KEY,
 # M3U_PATH, SOURCES_EXTRA="N|url;N2|url2", PROWLARR=1 (instala y autoconecta torznab)
 
 ## Estructura (src-layout estándar PyPA)
@@ -100,18 +100,24 @@ Sub-paquetes por capa — cada uno solo depende "hacia abajo":
   se rebindea) + `cfg.py` (config.json + perfiles)
 - `conflux/infra/`  adaptadores externos: `net.py` (sesiones+fetch),
   `anilist.py`, `wikidata.py`, `debrid.py`, `torznab.py` (Prowlarr/Jackett, defusedxml),
-  `zilean.py` (hashlists DMM self-hosted → streams `behaviorHints.cached`)
+  `zilean.py` (hashlists DMM self-hosted → streams `behaviorHints.cached`),
+  `newznab.py`/`easynews.py` (Usenet), `scrape.py`/`mediafusion.py` (scrapers+provision),
+  `epg.py` (XMLTV m3u↔programa), `stremio.py` (API/authKey), `torrent_health.py`
+  (veredictos seed persistidos), `updater.py` (auto-update hash+sigstore verificado)
 - `conflux/domain/` lógica Stremio: `text.py` (parseo streams, RANK), `sources.py`
   (manifests upstream, res_*, impedancia ids R1), `manifest.py` (contrato: `_UTYPE`/
   `_SYNTH`/`_YR_OPTS`/agrupación), `lists.py` (listas ext + M3U),
   `catalog.py` (routing /catalog), `metafix.py` (_fix_meta*)
 - `conflux/app/`    casos de uso: `stream.py` (/stream: _collect* + url-health),
-  `meta.py` (/meta race/fallback), `subs.py` (OpenSubtitles), `bg.py` (prefetch+refresher)
+  `meta.py` (/meta race/fallback), `subs.py` (OpenSubtitles), `bg.py` (prefetch+refresher),
+  `obs.py` (histórico diario de métricas, persistido), `doctor.py`/`install.py`
+  (diagnóstico e instalación del entorno)
   · `_idmap` (sources): mapeo prefijo->imdb SIN TTL (estable; cap 400 vía _cset)
   · `_m3u_metas` (lists): re-parsea solo si cambia el contenido del .m3u
   · `?fi=` de /r/ se sanitiza a int en `_db_resolve` (malformado -> 0)
 - `conflux/web/`    `pages.py` (HTML /configure /admin /health) + `server.py`
-  (handler H + ROUTES + main()) + `torzapi.py` (indexer *arr: /torznab/api,
+  (handler H + ROUTES + main()) + `metrics.py` (/metrics Prometheus + /admin/diag)
+  + `torzapi.py` (indexer *arr: /torznab/api,
   /newznab/api — auth por torzapi_key|admin_token) + `metrics.py` (/metrics
   Prometheus)
 

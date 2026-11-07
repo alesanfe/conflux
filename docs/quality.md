@@ -6,7 +6,7 @@ lanzarla localmente y en qué workflow vive.
 ## Suite de tests
 
 ```bash
-python3 -m unittest discover -s tests -t .   # TODO: ~1600 tests
+python3 -m unittest discover -s tests -t .   # ~1650 tests
 python3 -m unittest discover -s tests/unit -t .        # solo unit (~10s)
 scripts/check.sh                             # linters + suite + smoke
 ```

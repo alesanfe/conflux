@@ -560,14 +560,6 @@ class TestSetupLogging(unittest.TestCase):
 
 
 class TestSubmitCtxYReqId(unittest.TestCase):
-    def test_submit_ctx_propaga_req_id(self):
-        import concurrent.futures as cf
-        st.new_req_id()
-        rid = st._REQ_ID.get()
-        with cf.ThreadPoolExecutor(1) as pool:
-            fut = st.submit_ctx(pool, lambda: st._REQ_ID.get())
-            self.assertEqual(fut.result(), rid)
-
     def test_new_req_id_8_hex(self):
         rid = st.new_req_id()
         self.assertEqual(len(rid), 8)

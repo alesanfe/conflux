@@ -71,9 +71,12 @@ config.json siempre desactiva:
    update staged queda marcado `sig: 'hash-only'` — degradado explícito en el
    marcador y el log, nunca silencioso.
 5. **Staged atómico**: `conflux.new.exe` + `conflux.update.json` (tag, sha256,
-   estado de firma) + `conflux-apply-update.cmd` (espera a que el proceso
-   muera, mueve el nuevo exe y se auto-borra). El swap lo lanza el handler
-   SIGTERM — Windows no permite reemplazar un exe en ejecución.
+   estado de firma) + `conflux-apply-update.ps1` (UTF-8-BOM: espera a que el
+   proceso muera, re-verifica `Get-FileHash` contra el hash embebido — la
+   ventana staged→swap es superficie de tamper — mueve el nuevo exe con
+   retry y se auto-borra). El swap lo lanza el handler SIGTERM — Windows no
+   permite reemplazar un exe en ejecución; en POSIX frozen el reemplazo es
+   directo.
 
 Toda la cadena es fail-safe: un fallo en discovery/descarga/verificación solo
 emite un `log_ev` (`update_skip`/`update_rejected`/`update_err`) — la

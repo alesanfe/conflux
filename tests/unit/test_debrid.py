@@ -7,18 +7,6 @@ import conflux.core.state as st
 import conflux.infra.debrid as db
 
 
-class TestDbCfg(unittest.TestCase):
-    def setUp(self):
-        self._old = dict(st.CFG)
-
-    def tearDown(self):
-        st.CFG.clear(); st.CFG.update(self._old)
-
-    def test_sin_config_none(self):
-        st.CFG.pop('debrid_provider', None); st.CFG.pop('debrid_key', None)
-        self.assertEqual(db._db_cfg(), (None, None))
-
-
 class TestPickFile(unittest.TestCase):
     def test_indice_valido(self):
         self.assertEqual(db._pick_file(['a', 'b', 'c'], 1), 'b')

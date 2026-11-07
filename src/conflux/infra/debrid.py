@@ -41,11 +41,6 @@ def _db_cfgs():
     return out
 
 
-def _db_cfg():
-    cfgs = _db_cfgs()
-    return cfgs[0] if cfgs else (None, None)
-
-
 def _db_key(p):
     """API key del provider p entre los configurados (multi-debrid)."""
     return next((k for pp, k in _db_cfgs() if pp == p), None)
