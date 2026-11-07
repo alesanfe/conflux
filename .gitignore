@@ -52,3 +52,4 @@ soak-logs/
 conflux.update.json
 conflux.new.exe
 conflux-apply-update.ps1
+.import_linter_cache/

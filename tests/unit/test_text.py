@@ -217,21 +217,21 @@ class TestEfLang(unittest.TestCase):
 
     def test_multi_con_otro_idioma_es_multi(self):
         """['Multi','Español'] -> 'Multi' solo: mata or->and en _ef_lang."""
-        self.assertEqual(self.T._ef_lang('', 'Movie Multi Español 1080p'), 'Multi')
+        self.assertEqual(self.T._ef_lang('', self.T.RE_LANG.findall('Movie Multi Español 1080p')), 'Multi')
 
     def test_tres_idiomas_sin_token_es_multi(self):
         self.assertEqual(
-            self.T._ef_lang('', 'Movie English Español Portuguese 1080p'), 'Multi')
+            self.T._ef_lang('', self.T.RE_LANG.findall('Movie English Español Portuguese 1080p')), 'Multi')
 
     def test_dos_idiomas_se_listan(self):
-        self.assertEqual(self.T._ef_lang('', 'Movie English Español'),
+        self.assertEqual(self.T._ef_lang('', self.T.RE_LANG.findall('Movie English Español')),
                          'Inglés / Español')
 
     def test_un_idioma(self):
-        self.assertEqual(self.T._ef_lang('', 'Movie Castellano'), 'Castellano')
+        self.assertEqual(self.T._ef_lang('', self.T.RE_LANG.findall('Movie Castellano')), 'Castellano')
 
     def test_flags_tope_6(self):
-        out = self.T._ef_lang('🇪🇸🇬🇧🇫🇷🇩🇪🇮🇹🇵🇹🇯🇵🇰🇷', 'x')
+        out = self.T._ef_lang('🇪🇸🇬🇧🇫🇷🇩🇪🇮🇹🇵🇹🇯🇵🇰🇷', self.T.RE_LANG.findall('x'))
         self.assertEqual(len(out.split()), 6)
 
 
@@ -262,13 +262,13 @@ class TestEfSize(unittest.TestCase):
     import conflux.domain.text as T
 
     def test_texto_gana_a_videosize(self):
-        self.assertEqual(self.T._ef_size({'videoSize': 9e9}, 'x 1.4 GB'), 1.4)
+        self.assertEqual(self.T._ef_size({'videoSize': 9e9}, 'x 1.4 GB', 'x 1.4 gb'), 1.4)
 
     def test_videosize_a_gb(self):
-        self.assertEqual(self.T._ef_size({'videoSize': 2500000000}, 'x'), 2.5)
+        self.assertEqual(self.T._ef_size({'videoSize': 2500000000}, 'x', 'x'), 2.5)
 
     def test_sin_datos_none(self):
-        self.assertIsNone(self.T._ef_size({}, 'x'))
+        self.assertIsNone(self.T._ef_size({}, 'x', 'x'))
 
     def test_parse_size_unidades(self):
         ps = self.T.parse_size
@@ -281,17 +281,17 @@ class TestEfSeedsAudio(unittest.TestCase):
     import conflux.domain.text as T
 
     def test_seeders_bool_no_es_int(self):
-        self.assertNotEqual(self.T._ef_seeds({'seeders': True}, 'x'), True)
+        self.assertNotEqual(self.T._ef_seeds({'seeders': True}, 'x', 'x'), True)
 
     def test_canales_despues_de_marca(self):
-        self.assertEqual(self.T._ef_audio('x 5.1 DTS'), 'DTS 5.1')
+        self.assertEqual(self.T._ef_audio(self.T.RE_AUDIO.findall('x 5.1 DTS')), 'DTS 5.1')
 
     def test_canales_adyacentes_con_barra(self):
         # '7.1 5.1' se leía '7.15.1' en la card (hallazgo visual)
-        self.assertEqual(self.T._ef_audio('x Atmos 7.1 5.1'), 'Atmos 7.1/5.1')
+        self.assertEqual(self.T._ef_audio(self.T.RE_AUDIO.findall('x Atmos 7.1 5.1')), 'Atmos 7.1/5.1')
 
     def test_tope_3(self):
-        out = self.T._ef_audio('x Atmos TrueHD DTS-HD DTS FLAC')
+        out = self.T._ef_audio(self.T.RE_AUDIO.findall('x Atmos TrueHD DTS-HD DTS FLAC'))
         self.assertEqual(len(out.split()), 3)
 
 

@@ -15,19 +15,28 @@ RE_SEEDS = re.compile(r'(?:👤|seed(?:er)?s?|peers?)\s*[:=]?\s*(\d{1,6})|(\d{1,
 
 RE_SRC   = re.compile(r'[⚙️🔎☁️]\s*([\w.\-]+)')
 
-RE_LANG  = re.compile(r'\b(Multi\s?Audio|Multi|Dual\s?Audio|Dual|LATINO|Latino|CASTELLANO|Castellano|ESPAÑOL|Español|Spanish|SPANISH|ESP|ES|ENGLISH|English|ENG|EN|VOSE|FRENCH|French|GERMAN|ITALIAN|PORTUGUESE|JAPANESE|KOREAN|HINDI|RUS|Rutor)\b', re.IGNORECASE)
+_P_LANG  = r'Multi\s?Audio|Multi|Dual\s?Audio|Dual|LATINO|Latino|CASTELLANO|Castellano|ESPAÑOL|Español|Spanish|SPANISH|ESP|ES|ENGLISH|English|ENG|EN|VOSE|FRENCH|French|GERMAN|ITALIAN|PORTUGUESE|JAPANESE|KOREAN|HINDI|RUS|Rutor'
+_P_AUDIO = r'Dolby\s?Atmos|Atmos|DDP?5\.1|DDP|DD\+|TrueHD|DTS(?:-HD|-X)?|E-?AC-?3|EC3|FLAC|AAC2?\.0|AAC|[257]\.1|Stereo|Mono'
+_P_SRCT  = r'BDREMUX|REMUX|BluRay|BDRip|BRRip|WEB-?DL|WEBRip|HDTV|DVDRip|DVD|CAM|HDCAM|TS|SCR'
+_P_HDR   = r'HDR10\+|Dolby\s?Vision|HDR10|HLG|HDR|DV'
+
+RE_LANG  = re.compile(r'\b(' + _P_LANG + r')\b', re.IGNORECASE)
 
 RE_CODEC = re.compile(r'\b(HEVC|x\.?265|h\.?265|x\.?264|h\.?264|AVC|AV1|VP9|XviD)\b', re.IGNORECASE)
 
-RE_AUDIO = re.compile(r'\b(Dolby\s?Atmos|Atmos|DDP?5\.1|DDP|DD\+|TrueHD|DTS(?:-HD|-X)?|E-?AC-?3|EC3|FLAC|AAC2?\.0|AAC|[257]\.1|Stereo|Mono)\b', re.IGNORECASE)
+RE_AUDIO = re.compile(r'\b(' + _P_AUDIO + r')\b', re.IGNORECASE)
 
 RE_DUR   = re.compile(r'(\d+)\s?h\s?(\d+)\s?m|(\d{1,2}):(\d{2}):\d{2}|(\d+)\s?min', re.IGNORECASE)
 
 FLAGS    = re.compile(r'[\U0001F1E6-\U0001F1FF]{2}')
 
-RE_SRCT  = re.compile(r'\b(BDREMUX|REMUX|BluRay|BDRip|BRRip|WEB-?DL|WEBRip|HDTV|DVDRip|DVD|CAM|HDCAM|TS|SCR)\b', re.IGNORECASE)
+RE_SRCT  = re.compile(r'\b(' + _P_SRCT + r')\b', re.IGNORECASE)
 
-RE_HDR   = re.compile(r'\b(HDR10\+|Dolby\s?Vision|HDR10|HLG|HDR|DV)\b', re.IGNORECASE)
+RE_HDR   = re.compile(r'\b(' + _P_HDR + r')\b', re.IGNORECASE)
+
+# RE_TAGS fusionado (finditer + lastgroup) medido NEUTRO en el pipeline
+# completo (0.97x): el dispatch por match y el NFA 4-ramas comen el scan
+# ahorrado. Se mantienen los 4 findall en C.
 
 
 LANG_MAP = {'EN':'Inglés','ENG':'Inglés','ENGLISH':'Inglés','ES':'Español','ESP':'Español',
@@ -112,20 +121,26 @@ def parse_seeds(t):
     return int(next(g for g in m.groups() if g))
 
 
-def _ef_lang(raw, text):
+_CH_TOK = frozenset(('2.1', '5.1', '7.1'))
+
+
+def _ef_lang(raw, langs):
     """Idioma: emojis-flags del título o tokens ES/EN/… via LANG_MAP."""
     fl = list(dict.fromkeys(FLAGS.findall(raw)))
     if fl:
         return ' '.join(fl[:6])
-    ls = [x for x in dict.fromkeys(LANG_MAP.get(g.upper(), '') for g in RE_LANG.findall(text)) if x]
+    ls = [x for x in dict.fromkeys(LANG_MAP.get(g.upper(), '') for g in langs) if x]
     return 'Multi' if 'Multi' in ls or len(ls) > 2 else ' / '.join(ls)
 
 
-def _ef_audio(text):
-    au = list(dict.fromkeys(AUDIO_MAP.get(x.upper(), x.upper().title()) for x in RE_AUDIO.findall(text)))
-    au.sort(key=lambda a: 1 if re.fullmatch(r'[257]\.1', a) else 0)    # marca antes que canales
+def _ef_audio(auds):
+    au = list(dict.fromkeys(AUDIO_MAP.get(x.upper(), x.upper().title()) for x in auds))
+    au.sort(key=lambda a: a in _CH_TOK)                  # marca antes que canales
     # canales adyacentes con '/' — '7.1 5.1' se lee '7.15.1' en la card
-    return re.sub(r'(?<=\d\.\d) (?=\d\.\d)', '/', ' '.join(au[:3]))
+    j = ' '.join(au[:3])
+    if len(au[:3]) > 1 and au[:3][-1] in _CH_TOK:   # hay N.N precedido de algo
+        return re.sub(r'(?<=\d\.\d) (?=\d\.\d)', '/', j)
+    return j
 
 
 def _ef_dur(bh, text):
@@ -153,8 +168,8 @@ def _ef_res(text):
     return rm.group(1).upper().replace('4K', '2160P').replace('8K', '4320P') if rm else 'SD'
 
 
-def _ef_size(bh, text):
-    size = parse_size(text)
+def _ef_size(bh, text, tl):
+    size = parse_size(text) if any(u in tl for u in _SIZE_UNITS) else None
     if size is None:
         vs = bh.get('videoSize')                     # upstream puede mandar 'abc'
         if isinstance(vs, (int, float)) and not isinstance(vs, bool):
@@ -162,8 +177,12 @@ def _ef_size(bh, text):
     return size
 
 
-def _ef_seeds(bh, text):
-    seeds = parse_seeds(text)
+_SIZE_UNITS = ('gb', 'gib', 'mb', 'mib', 'tb')       # RE_SIZE units, minúsculas
+
+
+def _ef_seeds(bh, text, tl):
+    seeds = parse_seeds(text) if (
+        '👤' in text or 'seed' in tl or 'peer' in tl) else None
     if isinstance(bh.get('seeders'), int) and not isinstance(bh.get('seeders'), bool):
         seeds = bh['seeders']                                          # Meteor: dato real
     return seeds
@@ -191,13 +210,15 @@ def extract_fields(s):
     bh, raw, text = _ef_text(s)
     res  = _ef_res(text)
     codecm = RE_CODEC.search(text)
+    tl = text.lower()            # lower una vez: 'debrid' + prefilters seeds/size
     return {
         'res': res, 'disp': res[:-1]+'p' if res.endswith('P') else res,
-        'size': _ef_size(bh, text), 'seeds': _ef_seeds(bh, text),
+        'size': _ef_size(bh, text, tl), 'seeds': _ef_seeds(bh, text, tl),
         'indexer': _ef_indexer(text), 'text': text,
-        'lang': _ef_lang(raw, text), 'audio': _ef_audio(text),
+        'lang': _ef_lang(raw, RE_LANG.findall(text)),
+        'audio': _ef_audio(RE_AUDIO.findall(text)),
         'codec': codecm.group(1).upper() if codecm else '', 'dur': _ef_dur(bh, text),
-        'cached': bool(bh.get('cached') or '☁️' in text or 'debrid' in text.lower()),
+        'cached': bool(bh.get('cached') or '☁️' in text or 'debrid' in tl),
         'srctype': _prio(RE_SRCT.findall(text), SRCT_ORD),
         'hdr': _prio(RE_HDR.findall(text), HDR_ORD),
         'es': bool(_es_pat().search(text)),

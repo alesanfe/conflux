@@ -17,6 +17,8 @@ import urllib.parse
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import orjson                                   # ~7x json.dumps en replies
+                                                # grandes + UTF-8 nativo
 from conflux.app.bg import _prefetch_catalogs, _refresher
 from conflux.app.meta import handle_meta
 from conflux.app.stream import handle_stream
@@ -54,15 +56,7 @@ from conflux.web.pages import (
 )
 from conflux.web.torzapi import handle_torzapi
 
-def _dumps_std(o):
-    return json.dumps(o, separators=(',', ':')).encode()
-
-_dumps = _dumps_std
-try:
-    import orjson as _oj                       # opcional (no está en requirements):
-    _dumps = _oj.dumps                         # ~7x json.dumps en replies grandes
-except ImportError:                            # y emite UTF-8 nativo (sin \uXXXX)
-    pass                                       # compacto igual que orjson
+_dumps = orjson.dumps
 
 
 class H(BaseHTTPRequestHandler):

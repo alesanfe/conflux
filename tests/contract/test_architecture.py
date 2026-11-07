@@ -21,7 +21,9 @@ class TestArquitectura(unittest.TestCase):
     def test_capas_no_violadas(self):
         env = dict(os.environ, PYTHONIOENCODING='utf-8',
                    PYTHONPATH=os.path.join(ROOT, 'src'))
-        r = subprocess.run([_lint_imports()], capture_output=True, text=True,
+        r = subprocess.run([_lint_imports(), '--cache-dir',
+                            os.path.join(ROOT, '.import_linter_cache')],
+                           capture_output=True, text=True,
                            encoding='utf-8', errors='replace',
                            cwd=ROOT, timeout=120, env=env)
         self.assertEqual(r.returncode, 0,
