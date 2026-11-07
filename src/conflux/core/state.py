@@ -414,6 +414,15 @@ def _pct(vals, q):
     s = sorted(vals)
     return round(s[min(len(s) - 1, int(len(s) * q))], 1)
 
+
+def _pcts(vals, *qs):
+    """Varios percentiles con UN solo sort — /health y /metrics pedían
+    p50/p95/p99 ordenando la misma serie tres veces por ruta."""
+    if not vals:
+        return [0] * len(qs)
+    s = sorted(vals)
+    return [round(s[min(len(s) - 1, int(len(s) * q))], 1) for q in qs]
+
 COOLDOWN: dict = {}            # fuente -> (ts, motivo) hasta el que se salta
 
 COOLDOWN_T = 12*3600      # cuota agotada: 12h

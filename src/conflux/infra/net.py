@@ -76,6 +76,9 @@ def _public_url(url):
         return False
 
 
+_RETRY_SLEEP = 0.3          # backoff del reintento (los tests lo bajan a 0)
+
+
 def fetch(url, timeout=7):
     """GET JSON con sesión por-host, reintentos y disyuntor por host."""
     host = urllib.parse.urlsplit(url).netloc
@@ -97,5 +100,5 @@ def fetch(url, timeout=7):
         except Exception:                                    # noqa: BLE001 — cualquier fallo de red/parseo = strike del host
             _strike(host)
             if not att:
-                time.sleep(0.3)
+                time.sleep(_RETRY_SLEEP)
     return None

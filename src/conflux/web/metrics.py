@@ -46,6 +46,15 @@ def _pct(vals, q):
     return s[min(len(s) - 1, int(q * len(s)))]
 
 
+def _pcts(vals, *qs):
+    """Varios percentiles de una serie con UN solo sort (el scrape pedía
+    p50/p95/p99 ordenando la misma lista tres veces por ruta)."""
+    if not vals:
+        return [0.0] * len(qs)
+    s = sorted(vals)
+    return [s[min(len(s) - 1, int(q * len(s)))] for q in qs]
+
+
 def _metrics_text():
     now = CLOCK.time()
     out = [_H2.format(n='conflux_source_requests_total',
@@ -74,9 +83,10 @@ def _metrics_text():
         avg = t / n2 if n2 else 0
         out.append(f'conflux_route_latency_ms{{route="{_esc(k)}",quantile="avg"}} {avg:.1f}')
         vals = list(_rts.get(k, ()))
-        out.append(f'conflux_route_latency_ms{{route="{_esc(k)}",quantile="0.5"}} {_pct(vals, .5):.1f}')
-        out.append(f'conflux_route_latency_ms{{route="{_esc(k)}",quantile="0.95"}} {_pct(vals, .95):.1f}')
-        out.append(f'conflux_route_latency_ms{{route="{_esc(k)}",quantile="0.99"}} {_pct(vals, .99):.1f}')
+        p50, p95, p99 = _pcts(vals, .5, .95, .99)
+        out.append(f'conflux_route_latency_ms{{route="{_esc(k)}",quantile="0.5"}} {p50:.1f}')
+        out.append(f'conflux_route_latency_ms{{route="{_esc(k)}",quantile="0.95"}} {p95:.1f}')
+        out.append(f'conflux_route_latency_ms{{route="{_esc(k)}",quantile="0.99"}} {p99:.1f}')
         out.append(f'conflux_route_latency_ms{{route="{_esc(k)}",quantile="max"}} {x:.1f}')
     out.append(_H2.format(n='conflux_host_fail_streak',
                           h='Fallos consecutivos por host (disyuntor)', t='gauge'))

@@ -353,11 +353,22 @@ def _user_filters(streams):
 
 def _pref_pat():
     """stream_preferred -> patrón compilado (o None). Resolución UNA vez por
-    request/sort — hacerlo por fila re-leía config y re-escapaba términos."""
+    request/sort — hacerlo por fila re-leía config y re-escapaba términos.
+    Con términos no-vacíos el compile va memoizado (_ES_PAT_C) — con override
+    de perfil cada request re-compilaba el mismo patrón."""
     terms = _strs((_pcfg() or {}).get('stream_preferred'))
     if terms is None:
         terms = cfg.CFG.get('stream_preferred')
-    return cfg._ex_re(terms) if terms else None
+    if not terms:
+        return None
+    k = ('pref',) + tuple(terms)
+    p = cfg._ES_PAT_C.get(k)
+    if p is None:
+        if len(cfg._ES_PAT_C) > 64:
+            cfg._ES_PAT_C.clear()
+        p = cfg._ex_re(terms)
+        cfg._ES_PAT_C[k] = p
+    return p
 
 
 def _pref_text(out):
@@ -556,9 +567,16 @@ def handle_stream(stype, sid):
         return {'streams': out}
     state = _ensure_collect(key)
     state['done'].wait(STREAM_BUDGET)
-    with state['lock']:
-        # rows en vuelo: pueden llegar stragglers tras early-done — no memoizar
-        out = _user_filters(_rows_out(state['rows']))                    # filtros usuario tras dedup/rank
+    hit = _cget(_cache, key)
+    if hit is not None:
+        # collect terminado: rows finales ya cacheados — la pipe memoiza y
+        # TODOS los waiters comparten filtrado+sort en vez de re-ejecutarlo.
+        out = _rows_pipe(hit, key)
+    else:
+        with state['lock']:
+            # early-done: rows parciales en vuelo — no memoizar (siguen
+            # llegando stragglers; el collect las ordenará al finalizar).
+            out = _user_filters(_rows_out(state['rows']))            # filtros usuario tras dedup/rank
     _debrid_mark(out)                                        # si hay key: cache + resolve /r/
     _url_health(out)                                         # HEAD async a streams http
     _hash_health(out)                                        # infoHash sin swarm ni hints fuera

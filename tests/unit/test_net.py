@@ -70,7 +70,8 @@ class TestFetch(unittest.TestCase):
     def test_backoff_sleep_03(self):
         """Entre reintentos sleep(0.3) exacto (mutante 0.3+1@80)."""
         with patch.object(net, '_session') as m, \
-                patch.object(net.time, 'sleep') as sl:
+                patch.object(net.time, 'sleep') as sl, \
+                patch.object(net, '_RETRY_SLEEP', 0.3):   # suite lo baja a 0
             m.return_value.get.side_effect = Exception('down')
             net.fetch('http://x.com/')
         sl.assert_called_once_with(0.3)

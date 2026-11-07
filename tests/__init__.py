@@ -64,6 +64,11 @@ _th._SEED.clear()
 _th._SEED_PATH = os.path.join(__import__('tempfile').gettempdir(),
                              '.test-seed-cache.json')
 
+# fetch() duerme 0.3s real entre reintentos — cada test que ejercita un
+# upstream fallido la paga. El backoff sigue existiendo en producción.
+import conflux.infra.net as _net
+_net._RETRY_SLEEP = 0
+
 
 def fixture(name):
     """fixtures/<name>.json -> lista de streams grabados (o [])."""

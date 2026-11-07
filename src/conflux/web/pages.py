@@ -4,7 +4,7 @@
 import threading
 from html import escape
 
-from conflux.app.bg import _prefetch_catalogs
+from conflux.app.bg import _prefetch_catalogs, _prefetching
 from conflux.core.cfg import _PROF, _save_cfg, load_config
 from conflux.core.state import CLOCK
 from conflux.core.state import (
@@ -18,7 +18,7 @@ from conflux.core.state import (
     _cat_c,
     _fails,
     _meta_c,
-    _pct,
+    _pcts,
     _rtime,
     _rts,
     manifests,
@@ -41,16 +41,21 @@ def _health_page():
                         for n, h in HEALTH.items()},
             'fetch_fails': {k: v[0] for k, v in _fails.items()},
             'streams_served': _SERVED,
-            'latency_ms': {k: {'n': n, 'avg': round(t/n, 1), 'max': round(x, 1),
-                               'p50': _pct(list(_rts.get(k, ())), .5),
-                               'p95': _pct(list(_rts.get(k, ())), .95),
-                               'p99': _pct(list(_rts.get(k, ())), .99)}
+            'latency_ms': {k: _lat_stats(k, n, t, x)
                            for k, (n, t, x) in _rtime.items()}}
+
+
+def _lat_stats(k, n, t, x):
+    """Stats de una ruta: n/avg/max + p50/p95/p99 con un solo sort."""
+    p50, p95, p99 = _pcts(list(_rts.get(k, ())), .5, .95, .99)
+    return {'n': n, 'avg': round(t / n, 1), 'max': round(x, 1),
+            'p50': p50, 'p95': p95, 'p99': p99}
 
 
 def _manifest_reply():
     """Manifest base + prefetch de catálogos (Discover pega caché) + id por perfil."""
-    threading.Thread(target=_prefetch_catalogs, daemon=True).start()
+    if not _prefetching.is_set():                        # un prefetch en vuelo basta —
+        threading.Thread(target=_prefetch_catalogs, daemon=True).start()  # no spawn por request
     mf = build_manifest()
     if _PROF.name:                                             # identidad por perfil
         mf = dict(mf, id=f"local.uniform.streams.{_PROF.name}",
@@ -220,9 +225,11 @@ def _admin_page():
         rows.append(f"<tr><td>{_h(n)}</td><td class='ok'>{h.get('ok',0)}</td><td class='bad'>{h.get('fail',0)}</td>"
                     f"<td>{sv['n']}</td><td class='dim'>{_h(res_txt)}</td>"
                     f"<td class='dim'>{last_txt}</td><td>{_h(cdtxt)}</td></tr>")
-    lat = ''.join(f"<tr><td>{_h(k)}</td><td>{n2}</td><td>{t/n2:.0f}</td><td>{_pct(list(_rts.get(k,())),.5):.0f}</td>"
-                  f"<td>{_pct(list(_rts.get(k,())),.95):.0f}</td><td>{_pct(list(_rts.get(k,())),.99):.0f}</td><td>{x:.0f}</td></tr>"
-                  for k, (n2, t, x) in _rtime.items())
+    def _lat_row(k, n2, t, x):
+        p50, p95, p99 = _pcts(list(_rts.get(k, ())), .5, .95, .99)
+        return (f"<tr><td>{_h(k)}</td><td>{n2}</td><td>{t/n2:.0f}</td><td>{p50:.0f}</td>"
+                f"<td>{p95:.0f}</td><td>{p99:.0f}</td><td>{x:.0f}</td></tr>")
+    lat = ''.join(_lat_row(k, n2, t, x) for k, (n2, t, x) in _rtime.items())
     return (f"<html><head><title>admin</title>{_PAGE_CSS}</head><body>"
             f"<h1>Streams Unificados · admin</h1>"
             f"<p class='dim'>sources {sum(1 for m in manifests if m)}/{len(manifests)} up · "

@@ -282,16 +282,36 @@ def _strs(v):
     return None
 
 
+_ES_PAT_C: dict = {}        # tuple(langs) -> compiled — con override de perfil
+                            # se llamaba re.compile por stream (extract_fields)
+
+
 def _es_pat():
     """Regex stream_langs efectivo (compiled, igual que _ex_pat)."""
     langs = _strs((_pcfg() or {}).get('stream_langs'))
     if not langs:
         return RE_ES
-    return re.compile(r'\b(' + '|'.join(re.escape(x) for x in langs) + r')\b',
-                      re.IGNORECASE)
+    k = ('es',) + tuple(langs)
+    p = _ES_PAT_C.get(k)
+    if p is None:
+        if len(_ES_PAT_C) > 64:
+            _ES_PAT_C.clear()
+        p = re.compile(r'\b(' + '|'.join(re.escape(x) for x in langs) + r')\b',
+                       re.IGNORECASE)
+        _ES_PAT_C[k] = p
+    return p
 
 
 def _ex_pat():
     """Regex stream_exclude efectivo: override de perfil si lo tiene, si no el global."""
     terms = _strs((_pcfg() or {}).get('stream_exclude'))
-    return _ex_re(terms) if terms is not None else RE_EX
+    if terms is None:
+        return RE_EX
+    k = ('ex',) + tuple(terms)
+    p = _ES_PAT_C.get(k)
+    if p is None:
+        if len(_ES_PAT_C) > 64:
+            _ES_PAT_C.clear()
+        p = _ex_re(terms)
+        _ES_PAT_C[k] = p
+    return p
