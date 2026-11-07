@@ -105,15 +105,27 @@ _M3U: dict = {}
 
 _M3U_METAS: list = []
 _M3U_TXT = [None]        # contenido ya parseado — no re-parsear por request
+_M3U_SIG: list = [None]  # (path, mtime_ns, size) — stat() ~50us vs read() MBs
 
 
 def _m3u_metas():
     """Parsea config.m3u_path -> metas tv + streams indexados (m3u:N).
-    Lee el fichero en cada llamada pero solo re-parsea si el contenido cambió."""
+    stat() primero (barato): mtime/size iguales -> caché sin leer el fichero
+    (antes releía MBs por request). stat falla -> se intenta leer igual
+    (tests con _open mockeado / fs sin stat)."""
+    try:
+        st_ = os.stat(CFG['m3u_path'])
+        sig = (CFG['m3u_path'], st_.st_mtime_ns, st_.st_size)
+        if sig == _M3U_SIG[0]:
+            return _m3u_out([{**m} for m in _M3U_METAS])
+    except OSError:
+        sig = None
     try:
         txt = _open(CFG['m3u_path'], encoding='utf-8', errors='replace').read()
     except OSError:
         return []
+    if sig is not None:
+        _M3U_SIG[0] = sig
     if txt == _M3U_TXT[0]:
         return _m3u_out([{**m} for m in _M3U_METAS])
     metas: list = []

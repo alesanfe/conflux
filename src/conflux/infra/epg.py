@@ -67,8 +67,17 @@ def _xmltv_ts(v):
         return None
 
 
+_ISO_C: dict = {}            # ts -> str (gmtime+strftime por programa por request era O(progs) por vista)
+
+
 def _iso(ts):
-    return time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime(ts))
+    s = _ISO_C.get(ts)
+    if s is None:
+        s = time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime(ts))
+        if len(_ISO_C) > 4096:                          # timestamps distintos son
+            _ISO_C.clear()                              # acotados (ventana 3d)
+        _ISO_C[ts] = s
+    return s
 
 
 def _epg_channels(data, m3u_metas):
@@ -227,8 +236,9 @@ def epg_meta(m):
     today = time.strftime('%Y-%m-%d', time.gmtime())
     nxt = time.strftime('%Y-%m-%d', time.gmtime(time.time() + 86400))
     vids = _videos(m['id'], today)
+    n_today = len(vids)
     vids += _videos(m['id'], nxt)[:6]                 # un poco de mañana
-    for v in vids[len(_videos(m['id'], today)):]:
+    for v in vids[n_today:]:
         v['id'] = f"{m['id']}:n{v['id'].rsplit(':', 1)[-1]}"
     m['videos'] = vids
     return m

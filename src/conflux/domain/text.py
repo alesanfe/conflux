@@ -71,12 +71,18 @@ _AUDIO_SC = {'Atmos': 25, 'DTS:X': 20, 'TrueHD': 18, 'DTS-HD': 16, 'DTS': 12,
 
 def _qscore(f):
     """Puntos de calidad del release parseado (rip + hdr + codec + mejor audio,
-    0..~150). Los campos ya se extraían para el display — ahora también ordenan."""
-    au = (f.get('audio') or '').split()
-    return (_RIP_SC.get(f.get('srctype') or '', 0)
-            + _HDR_SC.get(f.get('hdr') or '', 0)
-            + _CODEC_SC.get((f.get('codec') or '').upper(), 0)
-            + max((_AUDIO_SC.get(t, 0) for t in au), default=0))
+    0..~150). Memoizado en el propio dict de campos ('_q'): los campos son
+    inmutables y el dict se comparte entre perfiles — recalcular por request
+    era el coste dominante de _rows_out."""
+    q = f.get('_q')
+    if q is None:
+        au = (f.get('audio') or '').split()
+        q = (_RIP_SC.get(f.get('srctype') or '', 0)
+             + _HDR_SC.get(f.get('hdr') or '', 0)
+             + _CODEC_SC.get((f.get('codec') or '').upper(), 0)
+             + max((_AUDIO_SC.get(t, 0) for t in au), default=0))
+        f['_q'] = q
+    return q
 
 
 def _prio(found, order):

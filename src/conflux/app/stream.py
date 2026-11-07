@@ -218,7 +218,9 @@ def _collect(key, state):
         if t:                                                   # collect rápido: suelta el timer
             t.cancel()
         with state['lock']:
-            final = sorted(state['rows'], key=_rowkey)      # filas completas: re-score por perfil
+            pat = _pref_pat()                             # resuelto 1 vez: no por fila
+            final = sorted(state['rows'],
+                           key=lambda r: _rowkey(r, pat))  # filas completas: re-score por perfil
         with _slock:
             _cset(_cache, key, final)
             _inflight.pop(key, None)
@@ -316,22 +318,69 @@ def _req_out(streams):
         ' '.join(str(s.get(k) or '') for k in _STREAM_TEXT))]
 
 
-def _seed_score(r):
+def _user_filters(streams):
+    """Cadena exclude→adult→required con el texto por stream calculado UNA vez:
+    los 5 filtros por separado re-construían el join name+title+description en
+    cada pase (5 joins+búsquedas por fila). Si ningún filtro está activo no
+    construye ni un texto."""
+    if not streams:
+        return streams
+    ex = cfg._ex_pat()
+    ad = cfg.RE_ADULT \
+        if ((_pcfg() or {}).get('parental', cfg.CFG.get('parental'))) else None
+    rex_ex = _rex_pats('stream_exclude_regex')
+    rex_req = _rex_pats('stream_required_regex')
+    terms = _strs((_pcfg() or {}).get('stream_required'))
+    if terms is None:
+        terms = cfg.CFG.get('stream_required')
+    req = cfg._ex_re(terms) if terms else None
+    ex_on = ex.pattern != '(?!)'                         # '(?!)' = filtro vacío (_ex_re/RE_EX)
+    if not ex_on and ad is None and not rex_ex and not rex_req and req is None:
+        return streams                                   # sin filtros activos: 0 regex, 0 joins
+    out = []
+    for s in streams:
+        t = _rex_text(s)
+        if (ex_on and ex.search(t)) or (ad is not None and ad.search(t)) \
+                or any(p.search(t) for p in rex_ex):
+            continue                                     # excluded: término, adulto o regex
+        if (req is not None and not req.search(t)) \
+                or (rex_req and not any(p.search(t) for p in rex_req)):
+            continue                                     # required: no matchea -> fuera
+        out.append(s)
+    return out
+
+
+def _pref_pat():
+    """stream_preferred -> patrón compilado (o None). Resolución UNA vez por
+    request/sort — hacerlo por fila re-leía config y re-escapaba términos."""
+    terms = _strs((_pcfg() or {}).get('stream_preferred'))
+    if terms is None:
+        terms = cfg.CFG.get('stream_preferred')
+    return cfg._ex_re(terms) if terms else None
+
+
+def _pref_text(out):
+    """Texto del stream sobre el que busca stream_preferred."""
+    return ' '.join(str(out.get(k) or '') for k in _STREAM_TEXT)
+
+
+def _seed_score(r, pat=None):
     """seeds crudos + boosts de preferencia: idioma ES (+500) y
     stream_preferred (+300 si matchea el título)."""
-    return r[2] + 500 * (1 if r[5]['es'] else 0) + _pref_boost(r[0])
+    if pat is None:
+        pat = _pref_pat()
+    return r[2] + 500 * (1 if r[5]['es'] else 0) + _pref_hit(r[0], pat)
+
+
+def _pref_hit(out, pat):
+    """+300 si el texto del stream matchea el patrón preferred ya compilado."""
+    return 300 if pat is not None and pat.search(_pref_text(out)) else 0
 
 
 def _pref_boost(out):
     """stream_preferred: boost (no filtro) — tercera pata de exclude/required/
     preferred de AIOStreams: 'remux,es' sube esos releases sin matar el resto."""
-    terms = _strs((_pcfg() or {}).get('stream_preferred'))
-    if terms is None:
-        terms = cfg.CFG.get('stream_preferred')
-    if not terms:
-        return 0
-    return 300 if cfg._ex_re(terms).search(
-        ' '.join(str(out.get(k) or '') for k in _STREAM_TEXT)) else 0
+    return _pref_hit(out, _pref_pat())
 
 
 _LIGHT_GB = 15.0   # <=15GB = stream "ligero" (STR-001): cabe en conexiones normales
@@ -371,11 +420,13 @@ def _sort_order():
     return tuple(order + [x for x in _SORT_DEF if x not in order]) or _SORT_DEF
 
 
-def _rowkey(r):
+def _rowkey(r, pat=None):
     """Orden: resolución > debrid-cached > calidad(rip/hdr/codec/audio) >
     seeds(con boost es del global) > size (bandas: ligero > medio > enorme)."""
+    if pat is None:
+        pat = _pref_pat()
     return (-RANK.get(r[1], 0), -r[4], -_qscore(r[5] if len(r) > 5 else {}),
-            -_seed_score(r), (_size_band(r[3]), -r[3]))
+            -_seed_score(r, pat), (_size_band(r[3]), -r[3]))
 
 
 def _lang_rows(rows):
@@ -426,7 +477,15 @@ def _rows_out(rows):
     if mx:                                               # (un 4K de 80GB no siempre gana)
         rr = [r for r in rr if not r[3] or r[3] <= mx]   # size desconocido -> no castigar
     order = _sort_order()
-    rr.sort(key=lambda r: tuple(_SORT_FNS[o](r) for o in order))
+    pat = _pref_pat()                                    # 1 vez por sort: antes por fila
+    if order == _SORT_DEF:                               # caso común: key plana, sin dispatch
+        rr.sort(key=lambda r: (-RANK.get(r[1], 0), -r[4], -r[5],
+                               -(r[2] + _pref_hit(r[0], pat)),
+                               (_size_band(r[3]), -r[3])))
+    else:
+        rr.sort(key=lambda r: tuple(
+            -(r[2] + _pref_hit(r[0], pat)) if o == 'seeds' else _SORT_FNS[o](r)
+            for o in order))
     return [r[0] for r in _light_pass(rr)]
 
 
@@ -440,7 +499,7 @@ def handle_stream(stype, sid):
     key = (stype, sid, tuple(sorted(_eff_disabled_for(stype))))  # off+groups por perfil
     hit = _cget(_cache, key)
     if hit is not None:
-        out = _adult_out(_req_out(_rex_req_out(_rex_ex_out(_ex_out(_rows_out(hit))))))
+        out = _user_filters(_rows_out(hit))
         _debrid_mark(out)                          # debrid marca copias: fuera del caché
         _url_health(out)                           # veredicto muerto filtra también el caché
         _hash_health(out)                          # veredictos scrape: filtran también el caché
@@ -449,7 +508,7 @@ def handle_stream(stype, sid):
     state['done'].wait(STREAM_BUDGET)
     with state['lock']:
         out = _rows_out(state['rows'])
-    out = _adult_out(_req_out(_rex_req_out(_rex_ex_out(_ex_out(out)))))   # filtros usuario tras dedup/rank
+    out = _user_filters(out)                                             # filtros usuario tras dedup/rank
     _debrid_mark(out)                                        # si hay key: cache + resolve /r/
     _url_health(out)                                         # HEAD async a streams http
     _hash_health(out)                                        # infoHash sin swarm ni hints fuera
