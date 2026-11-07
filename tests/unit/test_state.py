@@ -612,6 +612,9 @@ class TestSourcesJsonModule(unittest.TestCase):
                 "print('WARN:', 'ignorado' in buf.getvalue())")
             env = dict(os.environ)
             env['CONFLUX_LOG'] = os.path.join(d, 't.log')
+            # el test verifica el WARNING real en el handler — el silencio
+            # global de la suite no puede heredarse al hijo
+            env.pop('CONFLUX_LOG_LEVEL', None)
             # el hijo escribe utf-8: sus bytes decodifican sin error tanto en
             # utf-8 como en cp1252 (padre con -X utf8 o con locale ANSI)
             env['PYTHONIOENCODING'] = 'utf-8'

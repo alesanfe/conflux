@@ -488,6 +488,8 @@ def new_req_id():
 
 def log_ev(ev, **kv):
     """Un evento = una línea JSON — grep/journalctl -o json-pretty friendly."""
+    if not _log.isEnabledFor(logging.INFO):
+        return                                          # nivel alto: sin dumps
     rid = _REQ_ID.get()
     if rid:
         kv.setdefault('rid', rid)

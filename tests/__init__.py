@@ -24,6 +24,12 @@ sys.modules['conflux.infra.mediafusion'] = _mf_stub
 # del handler de tests peta con WinError 32. CONFLUX_LOG lo lee state.py al import.
 os.environ.setdefault('CONFLUX_LOG',
                       os.path.join(ROOT, 'tests', '.test-conflux.log'))
+# Silencio total: cada log_ev hacía json.dumps + flush a stderr + flush a
+# fichero por REQUEST — el fuzz de schemathesis (miles de requests) y los e2e
+# lo pagaban con contención en el lock de logging. apply_config_level() relee
+# la env tras cada reload -> CRITICAL sobrevive a los load_config de la suite.
+# (Los tests que verifican log_ev lo mockean — no leen los handlers.)
+os.environ['CONFLUX_LOG_LEVEL'] = 'CRITICAL'
 
 import proxy as px
 
@@ -63,11 +69,30 @@ import conflux.infra.torrent_health as _th
 _th._SEED.clear()
 _th._SEED_PATH = os.path.join(__import__('tempfile').gettempdir(),
                              '.test-seed-cache.json')
+# _hash_health encola _scrape_submit en _POOL_BG por request con infoHash
+# desconocido -> scrape UDP real a trackers/DHT en background (los tests que
+# ejercitan la lógica restauran _scrape_submit_orig y mockean las primitivas).
+# patch_fetch ya lo neutraliza en su scope; esto cierra el resto de la suite.
+_th._scrape_submit_orig = _th._scrape_submit
+_th._scrape_submit = lambda items: None
 
 # fetch() duerme 0.3s real entre reintentos — cada test que ejercita un
 # upstream fallido la paga. El backoff sigue existiendo en producción.
 import conflux.infra.net as _net
 _net._RETRY_SLEEP = 0
+
+# epg_kick dispara _reload en _POOL_BG cuando days está vacío/viejo -> _build
+# descarga el XMLTV real (~40MB gz) por urllib fuera de fetch/_session: en
+# background, silencioso, y sin límite durante toda la suite. Opener vacío:
+# test_epg rebinda E._OPENER.open él mismo y lo restaura en tearDown.
+import conflux.infra.epg as _epg
+class _NoOpen:
+    def open(self, req, timeout=0):
+        class _R:
+            def read(self, *a):
+                return b''
+        return _R()
+_epg._OPENER = _NoOpen()
 
 
 def fixture(name):
@@ -154,6 +179,20 @@ def patch_session(fn):
     return restore
 
 
+# Módulos que llaman `_session(host).get/head` DIRECTO (scrapers yts/eztv/nyaa/
+# tpb+RSS, _url_head, probes de poster, subs): ni patch_fetch ni un collect sin
+# mocks los cubre — cada handle_stream de unit/integration/perf pagaba DNS+TLS
+# real (~1.4-2s por test) y la suite hacía requests de verdad a apibay.org.
+# Stub vacío global selectivo: `conflux.infra.net` conserva el real (test_net
+# ejercita la fábrica de sesiones); tests de scrape/subs/etc parchean su
+# `_session` ellos mismos y e2e (patch_session) lo sobreescribe en su scope —
+# restore() devuelve este stub, no el real.
+for _n, _m in list(sys.modules.items()):
+    if _n.startswith('conflux.') and _n != 'conflux.infra.net' \
+            and hasattr(_m, '_session'):
+        _m._session = lambda *a, **k: fake_session()[0]
+
+
 def cfg_swap(**kv):
     """Fija claves de CFG y devuelve (old, restore): restore() deja CFG
     exactamente como estaba. Uso: old, undo = cfg_swap(x='v') ... undo()."""
@@ -190,6 +229,7 @@ _STATE_ATTRS = {
     'conflux.domain.text': ['_NORM_C'],
     'conflux.infra.torznab': ['_TZ_IDS', '_TZ_C', '_TZ_DL'],
     'conflux.infra.net': ['_PUBLIC_URL_OK'],
+    'conflux.infra.stremio': ['_KR_MEMO'],
     'conflux.infra.wikidata': ['_wd_c'],
     'conflux.infra.epg': ['_STATE'],
     'conflux.infra.torrent_health': ['_SEED', '_DHT_NODES'],

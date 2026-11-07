@@ -158,12 +158,21 @@ def _key_cfg():
         return None
 
 
+_KR_MEMO = [0.0, None]     # [ts, valor] — init backend + vault ~1.4s por
+                           # llamada; el authKey en keyring no cambia apenas
+
+
 def _key_keyring():
+    from conflux.core.state import CLOCK
+    if CLOCK.time() - _KR_MEMO[0] < 300:
+        return _KR_MEMO[1]
     try:
         import keyring  # pylint: disable=import-error  # opcional
-        return keyring.get_password('conflux', 'stremio_authkey')
+        v = keyring.get_password('conflux', 'stremio_authkey')
     except Exception:
-        return None
+        v = None
+    _KR_MEMO[0], _KR_MEMO[1] = CLOCK.time(), v
+    return v
 
 
 def _scrape_enabled():

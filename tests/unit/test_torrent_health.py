@@ -10,6 +10,16 @@ H_DEAD = 'b' * 40
 H_PRIV = 'c' * 40
 
 
+class _SubmitRealTC(unittest.TestCase):
+    """tests/__init__ noopea `TH._scrape_submit` (UDP real a trackers/DHT).
+    Las clases que ejercitan su lógica (con primitivas de red mockeadas)
+    heredan de ésta: restaura el original y devuelve el noop al terminar."""
+    def setUp(self):
+        noop = TH._scrape_submit
+        TH._scrape_submit = getattr(TH, '_scrape_submit_orig', noop)
+        self.addCleanup(setattr, TH, '_scrape_submit', noop)
+
+
 class TestHashHealth(unittest.TestCase):
     """_hash_health: 0-seed + sin hints fuera; el resto se mantiene."""
 
@@ -97,10 +107,11 @@ class TestHashHealth(unittest.TestCase):
         self.assertNotIn(H_DEAD, [str(s.get('infoHash', '')).lower() for s in out])
 
 
-class TestDhtVerdict(unittest.TestCase):
+class TestDhtVerdict(_SubmitRealTC):
     """_scrape_submit: 0-seeds de tracker -> DHT decide el veredicto final."""
 
     def setUp(self):
+        super().setUp()
         self._seed = dict(TH._SEED)
         TH._SEED.clear()
 
@@ -131,10 +142,11 @@ class TestDhtVerdict(unittest.TestCase):
         dp.assert_not_called()                       # seeds>0: DHT no hace falta
 
 
-class TestAnnounceVerdict(unittest.TestCase):
+class TestAnnounceVerdict(_SubmitRealTC):
     """_scrape_submit: 0-seed con hints -> announce a sus propios trackers."""
 
     def setUp(self):
+        super().setUp()
         self._seed = dict(TH._SEED)
         TH._SEED.clear()
 
@@ -677,8 +689,9 @@ class TestScrapeHashes(unittest.TestCase):
             self.assertEqual(TH._scrape_hashes(['a' * 40]), {})
 
 
-class TestScrapeSubmitEdges(unittest.TestCase):
+class TestScrapeSubmitEdges(_SubmitRealTC):
     def setUp(self):
+        super().setUp()
         self._seed = dict(TH._SEED)
         TH._SEED.clear()
 
@@ -1134,8 +1147,9 @@ class TestAnnounceHintsCap(unittest.TestCase):
             au.assert_not_called(); ah.assert_not_called()
 
 
-class TestScrapeSubmitVeredictos(unittest.TestCase):
+class TestScrapeSubmitVeredictos(_SubmitRealTC):
     def setUp(self):
+        super().setUp()
         self._seed = dict(TH._SEED)
         TH._SEED.clear()
 
@@ -1292,8 +1306,9 @@ class TestProtocoloConst(unittest.TestCase):
         self.assertEqual(recv_n, [2048, 65535])
 
 
-class TestSinkYFiltro(unittest.TestCase):
+class TestSinkYFiltro(_SubmitRealTC):
     def setUp(self):
+        super().setUp()
         self._seed = dict(TH._SEED)
         TH._SEED.clear()
 
@@ -1460,7 +1475,7 @@ class TestSeedSaveMut(unittest.TestCase):
                 TH._LAST_SAVE[0] = old_last
 
 
-class TestScrapeSubmitMut(unittest.TestCase):
+class TestScrapeSubmitMut(_SubmitRealTC):
     def test_zero_hashes_se_anuncian(self):
         """res.get(h,0)==0 -> zero -> hinted -> announce (Eq@358: `!=0`
         metería los vivos en `zero` y saltaría el announce del hash real)."""
@@ -1536,7 +1551,7 @@ class TestCfgGate(unittest.TestCase):
             TH._SEED.update(old)
 
 
-class TestDhtBudget(unittest.TestCase):
+class TestDhtBudget(_SubmitRealTC):
     """`time.time() - t0 > 90` corta el loop DHT (90+1@367, Gt@367)."""
 
     def _run(self, elapsed_iter2):

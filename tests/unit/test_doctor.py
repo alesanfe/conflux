@@ -323,6 +323,8 @@ class TestLogCheck(unittest.TestCase):
                              'degraded': []},
                  'breakers_open': [], 'addon': {}, 'cache_age_s': 1,
                  'log': 'l', 'config': 'c'}), \
+             mock.patch('conflux.infra.stremio.find_auth',
+                        return_value=(None, None)), \
              mock.patch('builtins.open', side_effect=picky):
             checks = dict((i, (lv, m)) for i, lv, m in doctor.collect_doctor())
         self.assertEqual(checks['log'][0], 'warn')
@@ -347,6 +349,8 @@ class TestCollectDoctor(unittest.TestCase):
                  running=True, cache_age_s=5,
                  sources={'total': 2, 'with_manifest': 1, 'degraded': []},
                  breakers_open=['h'])), \
+             mock.patch('conflux.infra.stremio.find_auth',
+                        return_value=('k' * 30, 'env')), \
              mock.patch.object(doctor.shutil, 'disk_usage',
                                return_value=mock.MagicMock(free=200 << 20)), \
              mock.patch.object(inst, 'is_installed', return_value=True):
@@ -370,7 +374,9 @@ class TestCollectDoctor(unittest.TestCase):
              mock.patch.object(doctor.shutil, 'disk_usage',
                                side_effect=OSError('x')), \
              mock.patch('conflux.app.install.is_installed',
-                        side_effect=RuntimeError('x')):
+                        side_effect=RuntimeError('x')), \
+             mock.patch('conflux.infra.stremio.find_auth',
+                        return_value=('k', 'config')):
             checks = dict((i, (lv, m)) for i, lv, m in doctor.collect_doctor())
         self.assertEqual(checks['service'][0], 'fail')
         self.assertEqual(checks['port'][0], 'warn')    # libre + caído = warn
