@@ -32,6 +32,13 @@ class TestVerKey(unittest.TestCase):
         self.assertEqual(c('v1.0.0-beta.2', 'v1.0.0-beta.1'), 1)
         self.assertIsNone(c('bad', 'v1.0.0'))               # raro -> None
 
+    def test_cmp_prerelease_numerico(self):
+        """Semver: beta.10 > beta.9 — léxico puro lo ordena al revés."""
+        c = U._ver_cmp
+        self.assertEqual(c('v1.0.0-beta.10', 'v1.0.0-beta.9'), 1)
+        self.assertEqual(c('v1.0.0-beta.9', 'v1.0.0-beta.10'), -1)
+        self.assertEqual(c('v1.0.0-beta.2.1', 'v1.0.0-beta.2'), 1)  # más segs >
+
 
 class TestLatest(unittest.TestCase):
     def _rels(self, items):
@@ -92,6 +99,17 @@ class TestSigVerify(unittest.TestCase):
         self.assertEqual(U._sig_verify(b'x', None), 'unavailable')
         # bundle presente pero sin lib sigstore instalada -> 'unavailable'|'failed'
         self.assertIn(U._sig_verify(b'x', b'{}'), ('unavailable', 'failed'))
+
+
+class TestDl(unittest.TestCase):
+    def test_url_ausente_rechaza(self):
+        """Asset con browser_download_url None/'' -> None, no excepción."""
+        self.assertIsNone(U._dl(None))
+        self.assertIsNone(U._dl(''))
+
+    def test_url_no_publica_rechaza(self):
+        with patch.object(U, '_public_url', return_value=False):
+            self.assertIsNone(U._dl('http://169.254.169.254/x'))
 
 
 class TestUpdateTick(unittest.TestCase):
@@ -168,6 +186,38 @@ class TestUpdateTick(unittest.TestCase):
         with patch.object(U, '_version', return_value='1.0.0'):
             self.assertEqual(self._frozen_tick(None, {})[0], 0)
 
+    def test_sigstore_verifica_el_checksum(self):
+        """El bundle firma conflux.exe.sha256 (cosign sign-blob en el
+        workflow), NO el exe — _sig_verify debe recibir los bytes del
+        checksum. Verificar el binario haría fallar siempre la firma."""
+        exe = b'NEW_EXE'
+        sha_bytes = (hashlib.sha256(exe).hexdigest() + '  conflux.exe').encode()
+        dl = {'https://x/exe': exe, 'https://x/sha': sha_bytes, 'https://x/sig': b'BUNDLE'}
+        with patch.object(U, '_cfgget', return_value=True), \
+                patch.object(U.sys, 'frozen', True, create=True), \
+                patch.object(U, '_latest', return_value=_rel('v2.0.0')), \
+                patch.object(U, '_dl', side_effect=lambda u, **_k: dl.get(u)), \
+                patch.object(U, '_stage', return_value='/tmp/x'), \
+                patch.object(U, '_version', return_value='1.0.0'), \
+                patch.object(U, '_sig_verify', return_value='verified') as sv:
+            U._update_tick()
+        sv.assert_called_once_with(sha_bytes, b'BUNDLE')
+
+    def test_stage_oserror_fail_safe(self):
+        """Dir del exe no escribible (p.ej. Program Files): OSError en _stage
+        -> update_skip y 0, NUNCA propaga al refresher."""
+        exe = b'NEW_EXE'
+        sha = (hashlib.sha256(exe).hexdigest() + '  conflux.exe').encode()
+        dl = {'https://x/exe': exe, 'https://x/sha': sha, 'https://x/sig': b'{}'}
+        with patch.object(U, '_cfgget', return_value=True), \
+                patch.object(U.sys, 'frozen', True, create=True), \
+                patch.object(U, '_latest', return_value=_rel('v2.0.0')), \
+                patch.object(U, '_dl', side_effect=lambda u, **_k: dl.get(u)), \
+                patch.object(U, '_stage', side_effect=OSError('denied')), \
+                patch.object(U, '_sig_verify', return_value='unavailable'), \
+                patch.object(U, '_version', return_value='1.0.0'):
+            self.assertEqual(U._update_tick(), 0)          # no lanza
+
 
 class TestStage(unittest.TestCase):
     def test_escribe_marker_exe_ps1(self):
@@ -196,6 +246,43 @@ class TestStage(unittest.TestCase):
                 self.assertIn(sha, body)                          # hash embebido
                 self.assertIn('Get-FileHash', body)               # re-verifica
                 self.assertIn('conflux.exe', body)                # proceso/exe real
+
+    def test_ps1_escapa_comillas_y_unicode(self):
+        """Path con ' (C:\\Users\\O'Brien) no rompe los literales PS;
+        el archivo se escribe UTF-8-BOM (no OEM -> Unicode seguro)."""
+        import os
+        import tempfile
+        exe = b'EXE'
+        with tempfile.TemporaryDirectory() as td:
+            weird = os.path.join(td, "O'Brien", 'conflux.exe')
+            with patch.object(U, '_NEW_EXE', os.path.join(td, 'n.exe')), \
+                    patch.object(U, '_UPD_JSON', os.path.join(td, 'u.json')), \
+                    patch.object(U, '_SWAP_PS1', os.path.join(td, 's.ps1')), \
+                    patch.object(U.sys, 'executable', weird):
+                U._stage(exe, 'v2.0.0', 'unavailable')
+                with open(os.path.join(td, 's.ps1'), 'rb') as f:
+                    raw = f.read()
+                self.assertTrue(raw.startswith(b'\xef\xbb\xbf'))  # BOM utf-8-sig
+                body = raw.decode('utf-8-sig')
+                self.assertIn("O''Brien", body)                   # ' escapada
+                self.assertIn("Move-Item $new $exe -Force -ErrorAction Stop",
+                              body)                               # swap con retry
+
+    def test_stage_posix_no_frozen_no_toca_executable(self):
+        """POSIX no-frozen (dev/CI): marca+ps1, NUNCA os.replace sobre
+        sys.executable — reemplazar el intérprete vivo sería catastrófico."""
+        import os
+        import tempfile
+        exe = b'EXE'
+        with tempfile.TemporaryDirectory() as td:
+            marker = os.path.join(td, 'u.json')
+            with patch.object(U.os, 'name', 'posix'), \
+                    patch.object(U, '_NEW_EXE', os.path.join(td, 'n')), \
+                    patch.object(U, '_UPD_JSON', marker), \
+                    patch.object(U, '_SWAP_PS1', os.path.join(td, 's.ps1')), \
+                    patch.object(U.sys, 'frozen', False, create=True):
+                U._stage(exe, 'v2.0.0', 'unavailable')
+            self.assertTrue(os.path.exists(marker))               # staged, no applied
 
 
 if __name__ == '__main__':

@@ -150,6 +150,22 @@ class TestHist(unittest.TestCase):
             self._snap(os.path.join(td, 'h.json'))
         self.assertLessEqual(len(obs._HIST), obs._HIST_KEEP)
 
+    def test_restart_contador_reset(self):
+        """Proceso reiniciado: _PREV persistido (100) > contador nuevo (30)
+        -> TODO el valor cuenta (contadores reseteados = tramo nuevo entero).
+        Sin el guard v<p el delta negativo descartaba el tramo."""
+        import os
+        import tempfile
+        obs = self._obs
+        st.HEALTH.clear(); st._SERVED.clear()
+        st.HEALTH['S'] = {'ok': 30, 'fail': 0}
+        obs._PREV.clear(); obs._PREV['req_ok'] = 100      # del proceso anterior
+        obs._HIST.clear()
+        with tempfile.TemporaryDirectory() as td:
+            self._snap(os.path.join(td, 'h.json'))
+        day = next(iter(obs._HIST))
+        self.assertEqual(obs._HIST[day]['req_ok'], 30)   # 30 nuevas, no 0
+
     def test_load_tolerante(self):
         import os
         import tempfile

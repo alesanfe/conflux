@@ -353,12 +353,14 @@ class TestPosterDead(unittest.TestCase):
     def setUp(self):
         self._b, self._o, self._p = (dict(mf._POSTER_BAD), dict(mf._POSTER_OK),
                                    set(mf._POSTER_PEND))
+        self._s = dict(mf._MF_STATS)
         mf._POSTER_BAD.clear(); mf._POSTER_OK.clear(); mf._POSTER_PEND.clear()
 
     def tearDown(self):
         mf._POSTER_BAD.clear(); mf._POSTER_BAD.update(self._b)
         mf._POSTER_OK.clear(); mf._POSTER_OK.update(self._o)
         mf._POSTER_PEND.clear(); mf._POSTER_PEND.update(self._p)
+        mf._MF_STATS.clear(); mf._MF_STATS.update(self._s)
 
     def test_vista_sustituye_sin_mutar_cache(self):
         m = {'poster': 'http://x/dead.jpg', 'name': 'x'}
@@ -426,6 +428,38 @@ class TestPosterDead(unittest.TestCase):
         with patch.object(mf, '_session', return_value=s):
             mf._poster_head('http://x/t.jpg')
         self.assertEqual(mf._POSTER_BAD['http://x/t.jpg'][0], 1)
+
+    def test_poster_dead_cuenta_solo_la_transicion(self):
+        """Re-confirmar un poster ya muerto (barrido 30min) NO re-cuenta:
+        solo la transición a muerto incrementa poster_dead."""
+        s, _ = fake_session({'status': 404})
+        n0 = mf._MF_STATS['poster_dead']
+        with patch.object(mf, '_session', return_value=s):
+            mf._poster_head('http://x/d.jpg')          # transición -> muerto
+            mf._poster_head('http://x/d.jpg')          # re-confirma: no cuenta
+        self.assertEqual(mf._MF_STATS['poster_dead'], n0 + 1)
+
+    def test_poster_dead_strikes_cuenta_al_llegar_a_2(self):
+        """Por timeouts: strike 1 no cuenta, el segundo (transición) sí,
+        el tercero ya no."""
+        s, _ = fake_session(Exception('boom'))
+        n0 = mf._MF_STATS['poster_dead']
+        with patch.object(mf, '_session', return_value=s):
+            for _ in range(3):
+                mf._poster_head('http://x/f.jpg')
+        self.assertEqual(mf._MF_STATS['poster_dead'], n0 + 1)
+        self.assertEqual(mf._POSTER_BAD['http://x/f.jpg'][0], 3)
+
+    def test_poster_resurrect_cuenta_recuperacion(self):
+        """Muerto que vuelve a dar 200 -> resurrect+1 y sale de _POSTER_BAD."""
+        mf._POSTER_BAD['http://x/r.jpg'] = (2, mf._CLOCK.time())
+        s, _ = fake_session({'status': 200})
+        n0 = mf._MF_STATS['poster_resurrect']
+        with patch.object(mf, '_session', return_value=s):
+            mf._poster_head('http://x/r.jpg')
+        self.assertEqual(mf._MF_STATS['poster_resurrect'], n0 + 1)
+        self.assertNotIn('http://x/r.jpg', mf._POSTER_BAD)
+        self.assertIn('http://x/r.jpg', mf._POSTER_OK)
 
     def test_sin_poster_no_rompe(self):
         mf._poster_probe({})

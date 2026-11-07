@@ -70,6 +70,8 @@ class TestCfgDefaults(unittest.TestCase):
         self.assertTrue(d['nntp_ssl'])
         self.assertEqual(d['nntp_connections'], 5)
         self.assertEqual(d['max_connections'], 64)
+        self.assertTrue(d['stream_light'])        # kill-switch: fuera -> key muerta
+        self.assertTrue(d['iptv_health'])         # idem (config.json la descartaba)
 
 
 class TestConstantes(unittest.TestCase):
@@ -324,6 +326,28 @@ class TestHealthPersist(unittest.TestCase):
             self.bad, self.ok = {'fresh': (2, st.CLOCK.time())}, {}
             st.health_load(p, self.bad, self.ok)
             self.assertEqual(list(self.bad), ['fresh'])   # no pisa, fusiona
+
+    def test_keep_por_dominio(self):
+        """Ventana parametrizable: IPTV cuarentena 6h — con el keep por
+        defecto (2h) una entrada de 3h se olvida al load; con keep=6h carga.
+        Y save filtra contra ESA ventana, no contra la global."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = self._tmp(d)
+            three_h = st.CLOCK.time() - 3 * 3600
+            st.health_save(p, {'q6h': (2, three_h)}, {}, throttle=0,
+                           keep=6 * 3600)
+            st.health_load(p, self.bad, self.ok)              # default 2h -> fuera
+            self.assertNotIn('q6h', self.bad)
+            st.health_load(p, self.bad, self.ok, keep=6 * 3600)
+            self.assertEqual(self.bad['q6h'][0], 2)
+            # save con keep default la habría filtrado del fichero:
+            p2 = self._tmp(d + 'x')
+            os.makedirs(d + 'x', exist_ok=True)
+            st.health_save(p2, {'q6h': (2, three_h)}, {}, throttle=0)
+            with open(p2, encoding='utf-8') as fh:
+                import json
+                self.assertEqual(json.load(fh)['bad'], {})
 
     def test_load_fusiona_sin_pisar(self):
         """Veredictos nuevos del proceso actual sobreviven al load."""
