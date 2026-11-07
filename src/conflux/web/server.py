@@ -534,7 +534,8 @@ def _launch_update_swap():
             subprocess.Popen(
                 ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
                  '-File', _SWAP_PS1],                          # noqa: S603 — script propio generado
-                creationflags=subprocess.CREATE_NO_WINDOW
+                # getattr: CREATE_NO_WINDOW no existe en POSIX (mypy/linux)
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                 if os.name == 'nt' else 0,
                 close_fds=True)
             log_ev('update_swap_launched')

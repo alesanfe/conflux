@@ -9,11 +9,12 @@ import conflux.infra.updater as U
 
 
 def _rel(tag='v2.0.0', pre=False, assets=None):
+    e = U._EXE                                    # conflux.exe | -linux | -macos
     return {'tag': tag, 'pre': pre,
             'assets': assets or {
-                'conflux.exe': 'https://x/exe',
-                'conflux.exe.sha256': 'https://x/sha',
-                'conflux.exe.sha256.sigstore.json': 'https://x/sig'}}
+                e: 'https://x/exe',
+                f'{e}.sha256': 'https://x/sha',
+                f'{e}.sha256.sigstore.json': 'https://x/sig'}}
 
 
 class TestVerKey(unittest.TestCase):
@@ -176,7 +177,7 @@ class TestUpdateTick(unittest.TestCase):
         st.assert_not_called()
 
     def test_assets_incompletos(self):
-        rel = _rel('v2.0.0', assets={'conflux.exe': 'https://x/exe'})
+        rel = _rel('v2.0.0', assets={U._EXE: 'https://x/exe'})
         with patch.object(U, '_version', return_value='1.0.0'):
             r, st = self._frozen_tick(rel, {})
         self.assertEqual(r, 0)
