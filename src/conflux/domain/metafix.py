@@ -241,41 +241,47 @@ def _fix_meta_deep(m, yt):
 _RPDB_STYLES = {'poster-default', 'poster-textless'}   # estilos del servicio
 
 
+def _tt_id(m):
+    """imdb id de un meta dict si empieza por tt (solo esos llevan RPDB)."""
+    mid = str(m.get('id') or '') if isinstance(m, dict) else ''
+    return mid if mid.startswith('tt') else ''
+
+
+def _rpdb_url(mid):
+    """URL RPDB para un imdb id: rpdb_style validado contra allowlist (la key
+    va en el path — un style inyectado rompería la URL) y ?fallback=true si
+    rpdb_fallback (default on): sin poster con rating, RPDB devuelve el
+    original en vez de 404 -> la ficha nunca se queda sin imagen."""
+    style = str(_cfgget('rpdb_style') or 'poster-default')
+    if style not in _RPDB_STYLES:
+        style = 'poster-default'
+    fb = '?fallback=true' if _cfgget('rpdb_fallback', True) else ''
+    return (f'https://api.ratingposterdb.com/{_cfgget("rpdb_key")}'
+            f'/imdb/{style}/{mid}.jpg{fb}')
+
+
 def _rpdb(d):
     """Posters con ratings (RatingPosterDB — la feature de MediaFusion): si hay
     rpdb_key configurada, los metas tt:* sirven su poster vía api.ratingposterdb.com.
     Sin key (default) no toca nada. NO destructivo: devuelve copia para no
     contaminar los caches compartidos entre perfiles (/p/, /cfg/).
-    META-002: config.rpdb_style elige el estilo (default/textless — validado
-    contra allowlist, un valor raro cae a 'poster-default': la key va en la
-    URL y un style inyectado rompería el path); config.rpdb_fallback (default
-    on) añade ?fallback=true: si RPDB no tiene poster con rating para ese
-    imdb devuelve el póster original en vez de un 404 -> la ficha nunca se
-    queda sin imagen por el servicio. META-007: rpdb_applied cuenta swaps."""
-    key = _cfgget('rpdb_key')
-    if not key or not isinstance(d, dict):
+    META-002: estilo+fallback configurables (_rpdb_url). META-007:
+    rpdb_applied cuenta swaps servidos."""
+    if not _cfgget('rpdb_key') or not isinstance(d, dict):
         return d
-    style = str(_cfgget('rpdb_style') or 'poster-default')
-    if style not in _RPDB_STYLES:
-        style = 'poster-default'
-    fb = '?fallback=true' if _cfgget('rpdb_fallback', True) else ''
-    base = f'https://api.ratingposterdb.com/{key}/imdb/{style}'
-    def _url(mid): return f'{base}/{mid}.jpg{fb}'
     out = dict(d)
+    n = 0
     for fld in ('metas', 'metasDetailed'):
         ms = out.get(fld)
         if isinstance(ms, list):
-            out[fld] = [dict(m, poster=_url(m['id']))
-                        if isinstance(m, dict) and str(m.get('id') or '').startswith('tt') else m
+            out[fld] = [dict(m, poster=_rpdb_url(m['id'])) if _tt_id(m) else m
                         for m in ms]
+            n += sum(1 for m in ms if _tt_id(m))
     m = out.get('meta')
-    if isinstance(m, dict) and str(m.get('id') or '').startswith('tt'):
-        out['meta'] = dict(m, poster=_url(m['id']))
-    _MF_STATS['rpdb_applied'] += sum(
-        1 for fld in ('metas', 'metasDetailed')
-        for m in (out.get(fld) or [])
-        if isinstance(m, dict) and str(m.get('id') or '').startswith('tt')) \
-        + bool(out.get('meta') and str(out['meta'].get('id') or '').startswith('tt'))
+    if isinstance(m, dict) and _tt_id(m):
+        out['meta'] = dict(m, poster=_rpdb_url(m['id']))
+        n += 1
+    _MF_STATS['rpdb_applied'] += n
     return out
 
 

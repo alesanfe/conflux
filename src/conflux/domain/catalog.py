@@ -125,6 +125,33 @@ def _cat_route(cid, stype):
     return base, utype, real
 
 
+def _grp_entry(cid, g):
+    """Genre -> miembro declarado del grupo (match insensible a mayúsculas);
+    None = opción no declarada (entrada inválida del cliente)."""
+    entry = _GRP[cid].get(g)
+    if entry is None:
+        low = g.lower()
+        entry = next((v for k, v in _GRP[cid].items() if k.lower() == low), None)
+    return entry
+
+
+def _grp_live_base(cid):
+    """Base del grupo: primer miembro VIVO (o el primero si todos muertos)."""
+    return next(
+        (v for k, v in _GRP[cid].items() if (cid, k.lower()) not in _DEAD_OPT),
+        next(iter(_GRP[cid].values())),
+    )
+
+
+def _grp_year_member(cid):
+    """Miembro vivo que acepta picker de año (wants), o None."""
+    return next(
+        (v for k, v in _GRP[cid].items()
+         if v[2] and (cid, k.lower()) not in _DEAD_OPT),
+        None,
+    )
+
+
 def _cat_grp_extra(cid, extra):
     """Agrupado: genre -> catálogo upstream elegido + picker año -> genre=año.
     Opción no declarada -> respuesta vacía válida (NO enruta al base en
@@ -136,30 +163,15 @@ def _cat_grp_extra(cid, extra):
         log_ev("grp_dead_opt", cid=cid, genre=g)  # fallback legítimo, medible
         g = None
     y = kv.pop("year", None)  # picker año (members con genre=año)
-    entry = _GRP[cid].get(g)
-    if entry is None and g:
-        low = g.lower()  # acepta variante de mayúsculas, rechaza lo no declarado
-        entry = next(
-            (v for k, v in _GRP[cid].items() if k.lower() == low), None
-        )
-        if entry is None:
-            log_ev("grp_bad_genre", cid=cid, genre=g)  # inválida, medible
-            return {"metas": []}
+    entry = _grp_entry(cid, g) if g else None
+    if g and entry is None:
+        log_ev("grp_bad_genre", cid=cid, genre=g)  # inválida, medible
+        return {"metas": []}
     if entry is None:  # base: primer miembro VIVO
-        entry = next(
-            (v for k, v in _GRP[cid].items() if (cid, k.lower()) not in _DEAD_OPT),
-            next(iter(_GRP[cid].values())),
-        )
+        entry = _grp_live_base(cid)
     utype, real, wants, forced = entry
     if y and not wants:  # año pedido a miembro que no lo acepta
-        yr = next(
-            (
-                v
-                for k, v in _GRP[cid].items()
-                if v[2] and (cid, k.lower()) not in _DEAD_OPT
-            ),
-            None,
-        )
+        yr = _grp_year_member(cid)
         if yr is not None:  # el miembro-año lo recibe
             utype, real, wants, forced = yr
     if wants:
