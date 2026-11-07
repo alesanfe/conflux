@@ -1,5 +1,10 @@
 # Backlog — stremio-proxy
 
+> **Estado**: backlog histórico cerrado. Los ítems de la **Épica 1**
+> (Trakt, calendario, AniList) y **4.5** ("tu Trakt") fueron **retirados del
+> producto** por decisión posterior — quedan aquí como registro, no como
+> trabajo pendiente. Lo demás quedó implementado.
+
 Objetivo: superar a AIOStreams, MediaFusion, StremThru y los addons Trakt
 manteniendo la diferenciación que ninguno tiene: feed de calendario con
 estrenos, resolución kitsu↔imdb, integración localStorage/perfil remoto,
