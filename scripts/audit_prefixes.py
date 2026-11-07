@@ -21,13 +21,12 @@ Uso: python3 scripts/audit_prefixes.py
   --live    ignora .manifests-cache.json y pide /manifest.json a cada fuente
   --strict  exit 1 ante cualquier WARN (para CI)
 """
-import json
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from conflux.core.state import _MF_CACHE, SOURCES, manifests   # noqa: E402
+from conflux.core.state import SOURCES, manifests   # noqa: E402
 from conflux.domain.manifest import build_manifest            # noqa: E402
 from conflux.domain.sources import _PREFIX_SRC, _load_manifests_cache, res_prefixes  # noqa: E402
 from conflux.infra.net import fetch                           # noqa: E402

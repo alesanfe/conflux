@@ -49,12 +49,13 @@ def _poster_head(u):
             if _POSTER_BAD.pop(u, None):
                 _MF_STATS['poster_resurrect'] += 1       # resucitó: era malo
         else:
+            if _POSTER_BAD.get(u, (0, 0))[0] < 2:        # transición a muerto
+                _MF_STATS['poster_dead'] += 1            # (re-confirmar no cuenta)
             _POSTER_BAD[u] = (2, _CLOCK.time())
-            _MF_STATS['poster_dead'] += 1
     except Exception:                                    # noqa: BLE001
         st, _ = _POSTER_BAD.get(u, (0, 0))
         _POSTER_BAD[u] = (st + 1, _CLOCK.time())
-        if st + 1 >= 2:
+        if st + 1 == 2:                                  # solo la transición
             _MF_STATS['poster_dead'] += 1                # segundo strike: muerto
     _st.health_save(_POSTERH_PATH, _POSTER_BAD, _POSTER_OK)   # META-003
     _POSTER_PEND.discard(u)
@@ -259,7 +260,7 @@ def _rpdb(d):
         style = 'poster-default'
     fb = '?fallback=true' if _cfgget('rpdb_fallback', True) else ''
     base = f'https://api.ratingposterdb.com/{key}/imdb/{style}'
-    def _url(mid): return f'{base}/{mid}.jpg{fb}'  # noqa: E731
+    def _url(mid): return f'{base}/{mid}.jpg{fb}'
     out = dict(d)
     for fld in ('metas', 'metasDetailed'):
         ms = out.get(fld)

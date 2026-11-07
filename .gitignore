@@ -51,4 +51,4 @@ soak-logs/
 .metrics-history.json
 conflux.update.json
 conflux.new.exe
-conflux-apply-update.cmd
+conflux-apply-update.ps1

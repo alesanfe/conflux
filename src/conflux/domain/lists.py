@@ -167,7 +167,7 @@ def _iptv_probe(u):
     except Exception:                                    # noqa: BLE001
         st, _ = _IPTV_BAD.get(u, (0, 0))
         _IPTV_BAD[u] = (st + 1, CLOCK.time())
-    _st.health_save(_IPTVH_PATH, _IPTV_BAD, _IPTV_OK)
+    _st.health_save(_IPTVH_PATH, _IPTV_BAD, _IPTV_OK, keep=_IPTV_Q_T)
     _IPTV_PEND.discard(u)
 
 
@@ -229,6 +229,6 @@ def _m3u_extinf(ln):
             'tvg': (m.group(1) if (m := re.search(r'tvg-id="([^"]*)"', ln)) else '')}
 
 
-_st.health_load(_IPTVH_PATH, _IPTV_BAD, _IPTV_OK)   # cuarentena del proceso anterior
+_st.health_load(_IPTVH_PATH, _IPTV_BAD, _IPTV_OK, keep=_IPTV_Q_T)  # del proceso anterior
 
 

@@ -76,7 +76,10 @@ def _hist_snapshot():
     day = time.strftime('%Y-%m-%d', time.gmtime(CLOCK.time()))
     ent = _HIST.setdefault(day, {})
     for k, v in cur.items():
-        d = v - _PREV.get(k, 0)
+        p = _PREV.get(k, 0)
+        # v < p: contador reiniciado (restart del proceso — _PREV persiste en
+        # disco): TODO v es nuevo, sin este guard el tramo se perdía entero
+        d = v - p if v >= p else v
         if d > 0:
             ent[k] = ent.get(k, 0) + d
     _PREV.clear()

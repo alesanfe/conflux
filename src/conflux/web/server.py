@@ -523,18 +523,20 @@ class _Srv(ThreadingHTTPServer):
 
 
 def _launch_update_swap():
-    """Update staged (auto_update): lanza el .cmd que reemplaza el exe cuando
+    """Update staged (auto_update): lanza el .ps1 que reemplaza el exe cuando
     el proceso muere (Windows no permite reemplazar un exe en ejecución)."""
     try:
         import os
         import subprocess
-        from conflux.infra.updater import _SWAP_CMD, _UPD_JSON
+        from conflux.infra.updater import _SWAP_PS1, _UPD_JSON
         if getattr(sys, 'frozen', False) and os.path.exists(_UPD_JSON) \
-                and os.path.exists(_SWAP_CMD):
-            subprocess.Popen(['cmd', '/c', _SWAP_CMD],        # noqa: S603 — path propio generado
-                             creationflags=subprocess.CREATE_NO_WINDOW
-                             if os.name == 'nt' else 0,
-                             close_fds=True)
+                and os.path.exists(_SWAP_PS1):
+            subprocess.Popen(
+                ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                 '-File', _SWAP_PS1],                          # noqa: S603 — script propio generado
+                creationflags=subprocess.CREATE_NO_WINDOW
+                if os.name == 'nt' else 0,
+                close_fds=True)
             log_ev('update_swap_launched')
     except Exception:                                          # noqa: BLE001 — el swap no rompe el stop
         pass

@@ -338,7 +338,8 @@ class TestIptvQuarantine(unittest.TestCase):
              patch.object(L._st, 'health_save') as sv:
             ses.return_value.get.return_value = r
             L._iptv_probe('http://x/dead')
-        sv.assert_called_once_with(L._IPTVH_PATH, L._IPTV_BAD, L._IPTV_OK)
+        sv.assert_called_once_with(L._IPTVH_PATH, L._IPTV_BAD, L._IPTV_OK,
+                                   keep=L._IPTV_Q_T)
 
 
 class TestM3UCache(unittest.TestCase):

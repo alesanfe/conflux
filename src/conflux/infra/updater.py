@@ -36,7 +36,10 @@ from conflux.infra.net import _public_url
 
 _REPO = 'alesanfe/conflux'
 _API = f'https://api.github.com/repos/{_REPO}/releases?per_page=10'
-_EXE = 'conflux.exe'
+# asset por plataforma (matrix del release workflow): exe / linux / macos
+_EXE = {'nt': 'conflux.exe', 'posix': 'conflux-linux'}.get(os.name, 'conflux.exe')
+if sys.platform == 'darwin':
+    _EXE = 'conflux-macos'
 _TICK = 24 * 3600                      # un chequeo al día (el refresher es 30min)
 
 _UPD: dict = {'last': 0.0}
@@ -55,7 +58,9 @@ def _ver_key(tag):
 
 
 def _ver_cmp(a, b):
-    """Semver-ish: pre-release < release del mismo num (1.0.0-beta < 1.0.0)."""
+    """Semver-ish: pre-release < release del mismo num (1.0.0-beta < 1.0.0).
+    Los segmentos de pre se comparan numéricamente si ambos lo son
+    (beta.10 > beta.9 — léxico puro lo ordenaría al revés)."""
     ka, kb = _ver_key(a), _ver_key(b)
     if ka is None or kb is None:
         return None
@@ -69,7 +74,16 @@ def _ver_cmp(a, b):
         return 1                          # a es release, b es pre
     if not pb:
         return -1
-    return -1 if pa < pb else 1
+    for xa, xb in zip(pa.split('.'), pb.split('.')):
+        if xa == xb:
+            continue
+        if xa.isdigit() and xb.isdigit():
+            return -1 if int(xa) < int(xb) else 1
+        return -1 if xa < xb else 1       # semver: numérico < alfanumérico
+        # (un identificador numérico siempre es menor que uno alfanumérico
+        #  según spec; aquí basta orden estable)
+    return -1 if len(pa.split('.')) < len(pb.split('.')) else \
+        (1 if len(pa.split('.')) > len(pb.split('.')) else 0)
 
 
 def _version():
@@ -80,9 +94,12 @@ def _version():
         return '0+local'
 
 
-def _dl(url, cap=40_000_000, timeout=30):
-    """GET bytes con redirect re-validado (_OPENER: SSRF por salto)."""
-    if not _public_url(url):
+def _dl(url, cap=128_000_000, timeout=30):
+    """GET bytes con redirect re-validado (_OPENER: SSRF por salto).
+    cap 128MB: un onefile PyInstaller (~15-40MB) nunca trunca — si creciera
+    más, el hash no casa y el update se rechaza (fail-safe), no se instala
+    un binario truncado."""
+    if not url or not _public_url(url):
         return None
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'conflux-upd/1.0'})
@@ -112,7 +129,8 @@ def _latest(channel):
         if not _ver_key(tag):
             continue
         assets = {a.get('name'): a.get('browser_download_url')
-                  for a in (r.get('assets') or []) if isinstance(a, dict)}
+                  for a in (r.get('assets') or []) if isinstance(a, dict)
+                  and a.get('name') and a.get('browser_download_url')}
         return {'tag': tag, 'assets': assets, 'pre': pre}
     return None
 
@@ -127,9 +145,11 @@ def _verify_hash(exe, sha_txt):
         hashlib.sha256(exe).hexdigest() == want
 
 
-def _sig_verify(exe, bundle):
-    """'verified' | 'unavailable' (sin lib sigstore) | 'failed' (firma mala)."""
-    if not bundle:
+def _sig_verify(sha_bytes, bundle):
+    """'verified' | 'unavailable' (sin lib sigstore) | 'failed' (firma mala).
+    El bundle firma el ARCHIVO .sha256 (cosign sign-blob en el workflow), no
+    el exe — verificar con los bytes del checksum, nunca con el binario."""
+    if not bundle or not sha_bytes:
         return 'unavailable'
     try:
         from sigstore.models import Bundle                        # optional dep
@@ -138,43 +158,75 @@ def _sig_verify(exe, bundle):
         return 'unavailable'
     try:
         Verifier.production().verify_artifact(
-            exe, Bundle.from_json(bundle.decode('utf-8')),
+            sha_bytes, Bundle.from_json(bundle.decode('utf-8')),
             policy.OIDCIssuer('https://token.actions.githubusercontent.com'))
         return 'verified'
     except Exception:
         return 'failed'
 
 
-_SWAP_CMD = os.path.join(
+_SWAP_PS1 = os.path.join(
     os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else _ROOT,
-    'conflux-apply-update.cmd')
+    'conflux-apply-update.ps1')
 
 
 def _stage(exe, tag, sig):
-    """Escribe conflux.new.exe + marcador de update pendiente (atómicos) y el
-    helper de swap (un exe corriendo no se puede reemplazar: el .cmd espera a
-    que el proceso muera, re-verifica el hash y mueve el nuevo binario)."""
-    _atomic_json(_UPD_JSON, {'tag': tag, 'sig': sig,
-                             'sha256': hashlib.sha256(exe).hexdigest()})
+    """Staged atómico: conflux.new.exe + marcador + helper de swap.
+
+    Windows no permite reemplazar un exe en ejecución → el .ps1 espera a que
+    el proceso muera, RE-VERIFICA sha256 contra el embebido (la ventana
+    staged→swap es una superficie de tamper: el .cmd original movía a
+    ciegas) y mueve el binario, luego relanza conflux y se auto-borra.
+    PowerShell lee el .ps1 como UTF-8 (BOM): rutas con no-ASCII no se
+    rompen — un .cmd en codepage OEM las corrompería (deuda del diseño
+    anterior). En POSIX el exe vivo ES reemplazable: swap directo aquí."""
+    sha = hashlib.sha256(exe).hexdigest()
     tmp = _NEW_EXE + '.tmp'
     with open(tmp, 'wb') as f:
         f.write(exe)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, _NEW_EXE)
-    d = os.path.dirname(_NEW_EXE)
-    with open(_SWAP_CMD, 'w', encoding='ascii', errors='replace') as f:
-        f.write(
-            '@echo off\r\n'
-            'rem swap update: espera a que conflux muera y reemplaza\r\n'
-            ':wait\r\n'
-            'tasklist /FI "IMAGENAME eq conflux.exe" | find /I "conflux.exe" >nul\r\n'
-            'if %errorlevel%==0 (timeout /t 2 /nobreak >nul & goto wait)\r\n'
-            f'move /y "{os.path.join(d, "conflux.new.exe")}" '
-            f'"{os.path.join(d, "conflux.exe")}" >nul\r\n'
-            f'del "{_UPD_JSON}" >nul 2>&1\r\n'
-            f'del "%~f0" >nul 2>&1\r\n')              # se auto-borra
-    return _SWAP_CMD
+    if os.name != 'nt' and getattr(sys, 'frozen', False):
+        # POSIX frozen: el binario en ejecución se puede reemplazar en caliente
+        # (no-frozen no llega aquí: _update_tick lo gatea; tests toman la vía nt)
+        try:
+            os.replace(_NEW_EXE, sys.executable)
+            os.chmod(sys.executable, 0o755)
+            log_ev('update_applied', tag=tag)
+        except OSError as e:
+            log_ev('update_stage_err', err=str(e)[:80])
+        return None
+    _atomic_json(_UPD_JSON, {'tag': tag, 'sig': sig, 'sha256': sha})
+    exe_path = sys.executable
+    proc = os.path.splitext(os.path.basename(exe_path))[0]
+
+    def _psq(s):                              # string literal PS: ' -> ''
+        return str(s).replace("'", "''")
+    with open(_SWAP_PS1 + '.tmp', 'w', encoding='utf-8-sig') as fp:
+        fp.write(
+            "$ErrorActionPreference='SilentlyContinue'\n"
+            f"$new='{_psq(_NEW_EXE)}'\n"
+            f"$exe='{_psq(exe_path)}'\n"
+            f"$marker='{_psq(_UPD_JSON)}'\n"
+            f"while (Get-Process -Name '{_psq(proc)}' -ErrorAction SilentlyContinue)"
+            " { Start-Sleep -Seconds 2 }\n"
+            f"if ((Get-FileHash $new -Algorithm SHA256).Hash -ine '{sha}') {{\n"
+            "  Remove-Item $new -Force\n"
+            "  Remove-Item $marker -Force\n"
+            "  Remove-Item $PSCommandPath -Force\n"
+            "  exit 1\n"
+            "}\n"
+            "foreach ($i in 1..10) {\n"            # unlock del exe puede tardar un tick
+            "  try { Move-Item $new $exe -Force -ErrorAction Stop; break }\n"
+            "  catch { Start-Sleep -Seconds 2 }\n"
+            "}\n"
+            "if (Test-Path $new) { Remove-Item $marker -Force; exit 1 }\n"
+            "Remove-Item $marker -Force\n"
+            "Start-Process $exe -WindowStyle Hidden\n"
+            "Remove-Item $PSCommandPath -Force\n")
+    os.replace(_SWAP_PS1 + '.tmp', _SWAP_PS1)
+    return _SWAP_PS1
 
 
 def _update_tick():
@@ -204,10 +256,15 @@ def _update_tick():
     if not exe:
         log_ev('update_skip', reason='download falló', tag=rel['tag'])
         return 0
-    if not _verify_hash(exe, _dl(urls[f'{_EXE}.sha256'])):
+    sha = _dl(urls[f'{_EXE}.sha256'])
+    if not _verify_hash(exe, sha):
         log_ev('update_rejected', reason='sha256 mismatch', tag=rel['tag'])
         return 0
-    sig = _sig_verify(exe, _dl(urls[f'{_EXE}.sha256.sigstore.json']))
-    _stage(exe, rel['tag'], sig)
+    sig = _sig_verify(sha, _dl(urls[f'{_EXE}.sha256.sigstore.json']))
+    try:
+        _stage(exe, rel['tag'], sig)
+    except OSError as e:                      # dir del exe no escribible (Program Files)
+        log_ev('update_skip', reason=f'stage: {str(e)[:80]}', tag=rel['tag'])
+        return 0
     log_ev('update_staged', tag=rel['tag'], sig=sig)
     return 1

@@ -170,25 +170,32 @@ class TestUpdateTick(unittest.TestCase):
 
 
 class TestStage(unittest.TestCase):
-    def test_escribe_marker_exe_cmd(self):
+    def test_escribe_marker_exe_ps1(self):
         import os
         import tempfile
         exe = b'EXE' * 100
+        sha = hashlib.sha256(exe).hexdigest()
         with tempfile.TemporaryDirectory() as td:
             new = os.path.join(td, 'conflux.new.exe')
             mj = os.path.join(td, 'u.json')
-            cmd = os.path.join(td, 'swap.cmd')
+            ps1 = os.path.join(td, 'swap.ps1')
             with patch.object(U, '_NEW_EXE', new), \
                     patch.object(U, '_UPD_JSON', mj), \
-                    patch.object(U, '_SWAP_CMD', cmd):
+                    patch.object(U, '_SWAP_PS1', ps1), \
+                    patch.object(U.sys, 'executable', os.path.join(td, 'conflux.exe')):
                 U._stage(exe, 'v2.0.0', 'unavailable')
                 with open(new, 'rb') as f:
                     self.assertEqual(f.read(), exe)
                 with open(mj, encoding='utf-8') as f:
                     marker = json.load(f)
                 self.assertEqual(marker['tag'], 'v2.0.0')
-                self.assertEqual(marker['sha256'], hashlib.sha256(exe).hexdigest())
-                self.assertTrue(os.path.exists(cmd))              # swap helper generado
+                self.assertEqual(marker['sha256'], sha)
+                self.assertTrue(os.path.exists(ps1))              # swap helper generado
+                with open(ps1, encoding='utf-8-sig') as f:
+                    body = f.read()
+                self.assertIn(sha, body)                          # hash embebido
+                self.assertIn('Get-FileHash', body)               # re-verifica
+                self.assertIn('conflux.exe', body)                # proceso/exe real
 
 
 if __name__ == '__main__':

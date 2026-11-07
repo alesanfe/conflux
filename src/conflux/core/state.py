@@ -285,7 +285,8 @@ _CFG_DEFAULTS = {'m3u_path': '', 'debrid_provider': '', 'debrid_key': '',
                  'sabnzbd_url': '', 'sabnzbd_key': '', 'scraper_rss': [],
                  'log_level': '', 'config_version': 1,
                  'stremio_authkey': '', 'authkey_scrape': True,
-                 'auto_update': False, 'update_channel': 'stable'}
+                 'auto_update': False, 'update_channel': 'stable',
+                 'stream_light': True, 'iptv_health': True}
 
 CFG: dict[str, Any] = dict(_CFG_DEFAULTS)
 
@@ -357,10 +358,13 @@ _HEALTH_KEEP = 1800 * 4        # conserva veredictos hasta 2h (reintento 30min x
 _HEALTH_SAVE: dict = {}        # path -> ts del último save (throttle por fichero)
 
 
-def health_load(path, bad, ok):
+def health_load(path, bad, ok, keep=None):
     """Rellena bad/ok in-situ desde el fichero persistido (si existe y no está
     corrupto). Entradas caducadas o malformadas se descartan silenciosamente:
-    un veredicto perdido solo repite un HEAD, nunca rompe el arranque."""
+    un veredicto perdido solo repite un HEAD, nunca rompe el arranque.
+    `keep` (default _HEALTH_KEEP=2h) debe >= la ventana del dominio — IPTV
+    cuarentena 6h: con el default la entrada se olvidaba a las 2h."""
+    keep = keep or _HEALTH_KEEP
     try:
         if not os.path.exists(path):
             return
@@ -374,19 +378,20 @@ def health_load(path, bad, ok):
                 st, ts = int(v[0]), float(v[1])
             except (TypeError, ValueError, IndexError):
                 continue
-            if now - ts < _HEALTH_KEEP:
+            if now - ts < keep:
                 bad[u] = (st, ts)
         for u, ts in (data.get('ok') or {}).items():
-            if isinstance(ts, (int, float)) and now - ts < _HEALTH_KEEP:
+            if isinstance(ts, (int, float)) and now - ts < keep:
                 ok[u] = float(ts)
     except Exception:
         pass
 
 
-def health_save(path, bad, ok, throttle=60):
+def health_save(path, bad, ok, throttle=60, keep=None):
     """Persiste {bad, ok} atómicamente con throttle (los workers HEAD pueden
     terminar en ráfaga — un save por veredicto haría churn de disco).
     Solo se guardan veredictos aún vigentes: el fichero no crece con basura."""
+    keep = keep or _HEALTH_KEEP
     now = CLOCK.time()
     if now - _HEALTH_SAVE.get(path, 0.0) < throttle:
         return
@@ -395,9 +400,9 @@ def health_save(path, bad, ok, throttle=60):
         _atomic_json(path, {
             'bad': {u: list(v) for u, v in bad.items()
                     if isinstance(v, (list, tuple)) and len(v) == 2
-                    and now - v[1] < _HEALTH_KEEP},
+                    and now - v[1] < keep},
             'ok': {u: ts for u, ts in ok.items()
-                   if isinstance(ts, (int, float)) and now - ts < _HEALTH_KEEP},
+                   if isinstance(ts, (int, float)) and now - ts < keep},
         })
     except Exception:
         pass
