@@ -1,6 +1,7 @@
 """GET /stream: colección paralela, dedup, debrid-mark, url-health."""
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import os
 import re
 import threading
 import urllib.parse
@@ -29,7 +30,7 @@ from conflux.core.state import (
 )
 from conflux.domain.lists import _M3U, _m3u_metas
 from conflux.domain.sources import _resolve_sid
-from conflux.domain.text import RANK, _ad_link, _qscore, _skip_manifest, _spam, build_display, norm_stream
+from conflux.domain.text import RANK, _ad_link, _playable, _qscore, _skip_manifest, _spam, build_display, norm_stream
 from conflux.infra.debrid import _debrid_mark
 from conflux.infra.net import _session, fetch
 from conflux.infra.easynews import _easynews
@@ -81,11 +82,11 @@ def _collect_one(i, stype, sid, dis):
         _health(name, True, 'cuota agotada → espera 12h', 0)
         return name, [], 0
     _collect_health(name, d, ss)
-    return name, ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+    return name, ss, sum(1 for s in ss if not _skip_stream(s))
 
 def _collect_health(name, d, ss):
     """Health + cooldown por racha de fallos (o nada si responde bien)."""
-    usable = sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+    usable = sum(1 for s in ss if not _skip_stream(s))
     _health(name, d is not None, '' if d is not None else 'timeout/error', usable)
     if d is None and HEALTH[name]['streak'] >= FAIL_STREAK:        # racha de fallos: descanso
         COOLDOWN[name] = (_st.CLOCK.time() + FAIL_CD_T, 'fallos')
@@ -108,10 +109,16 @@ def _merge_key(s):
     return str(k).lower() if k else None          # infoHash: Ytztvio usa MAYÚSCULAS
 
 
+def _skip_stream(s):
+    """Filtro de entrada unificado (merge + contrib): no-dict, spam, promo
+    externalUrl-only o stream sin localizador reproducible (STM-001)."""
+    return not isinstance(s, dict) or _spam(s) or _ad_link(s) or not _playable(s)
+
+
 def _collect_merge(state, name, streams):
     """Merge dedup + norm de los streams de la fuente en state."""
     for s in streams:
-        if not isinstance(s, dict) or _spam(s) or _ad_link(s):
+        if _skip_stream(s):
             continue
         k = _merge_key(s)
         if not k or k in state['seen']:
@@ -131,7 +138,7 @@ def _collect_tz(stype, sid):
     except Exception as e:                              # noqa: BLE001 — indexer local nunca tumba el collect
         log_ev('src_worker', err=repr(e)[:100])
         return 'Torznab', [], 0
-    return 'Torznab', ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+    return 'Torznab', ss, sum(1 for s in ss if not _skip_stream(s))
 
 
 def _collect_zl(stype, sid):
@@ -141,7 +148,7 @@ def _collect_zl(stype, sid):
     except Exception as e:                              # noqa: BLE001 — indexer local nunca tumba el collect
         log_ev('src_worker', err=repr(e)[:100])
         return 'Zilean', [], 0
-    return 'Zilean', ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+    return 'Zilean', ss, sum(1 for s in ss if not _skip_stream(s))
 
 
 def _collect_nz(stype, sid):
@@ -151,7 +158,7 @@ def _collect_nz(stype, sid):
     except Exception as e:                              # noqa: BLE001 — indexer nunca tumba el collect
         log_ev('src_worker', err=repr(e)[:100])
         return 'Newznab', [], 0
-    return 'Newznab', ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+    return 'Newznab', ss, sum(1 for s in ss if not _skip_stream(s))
 
 
 def _collect_en(stype, sid):
@@ -161,7 +168,7 @@ def _collect_en(stype, sid):
     except Exception as e:                              # noqa: BLE001 — fuente nunca tumba el collect
         log_ev('src_worker', err=repr(e)[:100])
         return 'Easynews', [], 0
-    return 'Easynews', ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+    return 'Easynews', ss, sum(1 for s in ss if not _skip_stream(s))
 
 
 def _collect_sc(name, stype, sid):
@@ -171,7 +178,7 @@ def _collect_sc(name, stype, sid):
     except Exception as e:                              # noqa: BLE001 — scraper nunca tumba el collect
         log_ev('src_worker', err=repr(e)[:100])
         return name, [], 0
-    return name, ss, sum(1 for s in ss if isinstance(s, dict) and not _spam(s))
+    return name, ss, sum(1 for s in ss if not _skip_stream(s))
 
 
 def _collect(key, state):
@@ -324,10 +331,28 @@ def _pref_boost(out):
         ' '.join(str(out.get(k) or '') for k in _STREAM_TEXT)) else 0
 
 
+_LIGHT_GB = 15.0   # <=15GB = stream "ligero" (STR-001): cabe en conexiones normales
+
+
+def _size_band(sz):
+    """Penalización de tamaño (STR-002) por bandas — un REMUX de 80GB no gana a
+    un WEB-DL de 8GB solo por 'más bytes = más bitrate'. Dentro de la misma
+    banda sigue ganando el mayor (proxy de bitrate); tamaño desconocido = 0.
+    Sort ascendente -> penalización positiva: 0 ligero/desconocido, 1 medio,
+    3 enorme."""
+    if not sz:
+        return 0
+    if sz <= _LIGHT_GB:
+        return 0
+    if sz <= 40:
+        return 1
+    return 3
+
+
 _SORT_FNS = {'res': lambda r: -RANK.get(r[1], 0), 'cached': lambda r: -r[4],
              'quality': lambda r: -r[5],
              'seeds': lambda r: -(r[2] + _pref_boost(r[0])),   # ES ya va en r[2] (lang_rows)
-             'size': lambda r: -r[3]}
+             'size': lambda r: (_size_band(r[3]), -r[3])}
 _SORT_DEF = ('res', 'cached', 'quality', 'seeds', 'size')
 
 
@@ -345,9 +370,9 @@ def _sort_order():
 
 def _rowkey(r):
     """Orden: resolución > debrid-cached > calidad(rip/hdr/codec/audio) >
-    seeds(con boost es del global) > size."""
+    seeds(con boost es del global) > size (bandas: ligero > medio > enorme)."""
     return (-RANK.get(r[1], 0), -r[4], -_qscore(r[5] if len(r) > 5 else {}),
-            -_seed_score(r), -r[3])
+            -_seed_score(r), (_size_band(r[3]), -r[3]))
 
 
 def _lang_rows(rows):
@@ -376,6 +401,22 @@ def _lang_rows(rows):
     return rr
 
 
+def _light_pass(rr):
+    """Pase ligero (STR-001): si el top-3 visible son solo archivos >15GB, el
+    mejor stream ligero conocido sube al puesto 2 — el usuario ve una opción
+    viable para conexiones limitadas sin perder el #1 de máxima calidad.
+    Tamaño desconocido no cuenta como 'ligero' ni como 'pesado'.
+    `stream_light: false` en config desactiva el pase."""
+    if not cfg._cfgget('stream_light', True) or len(rr) < 3:
+        return rr
+    if not all(r[3] and r[3] > _LIGHT_GB for r in rr[:3]):
+        return rr                                # ya hay ligero o desconocido arriba
+    i = next((i for i, r in enumerate(rr) if r[3] and r[3] <= _LIGHT_GB), None)
+    if i is None:
+        return rr
+    return rr[:1] + [rr[i]] + rr[1:i] + rr[i + 1:]
+
+
 def _rows_out(rows):
     rr = _lang_rows(rows)
     mx = cfg._cfgget('stream_max_gb', 0) or 0              # 0 = sin límite; policy knob
@@ -383,7 +424,7 @@ def _rows_out(rows):
         rr = [r for r in rr if not r[3] or r[3] <= mx]   # size desconocido -> no castigar
     order = _sort_order()
     rr.sort(key=lambda r: tuple(_SORT_FNS[o](r) for o in order))
-    return [r[0] for r in rr]
+    return [r[0] for r in _light_pass(rr)]
 
 
 def handle_stream(stype, sid):
@@ -417,6 +458,14 @@ _URL_BAD: dict = {}        # url -> ts marcado muerto (reintento a los 30min)
 
 _URL_OK: dict = {}        # url -> ts verificado vivo
 
+_URLH_PATH = os.path.join(_st._ROOT, '.url-health.json')   # veredictos persistidos
+
+
+def _urlh_save():
+    """Veredictos -> disco atómico (META-001): una url muerta no vuelve a
+    servirse ni a costar otro HEAD en el arranque siguiente."""
+    _st.health_save(_URLH_PATH, _URL_BAD, _URL_OK)
+
 def _url_todo(streams, now):
     """urls externas http sin veredicto reciente -> candidatas a HEAD (máx 15).
     Las marcadas malas también reentran pasados 30min: un timeout transitorio
@@ -439,6 +488,7 @@ def _url_head(u):
     except Exception:                                    # noqa: BLE001 — timeout/SSL/cualquiera = strike
         st, _ = _URL_BAD.get(u, (0, 0))
         _URL_BAD[u] = (st + 1, _st.CLOCK.time())                # timeout: strike
+    _urlh_save()
 
 
 def _url_prune():
@@ -462,3 +512,6 @@ def _url_health(streams):
         streams[:] = [s for s in streams if s.get('url') not in dead]
     for u in todo:
         _POOL_BG.submit(_url_head, u)
+
+
+_st.health_load(_URLH_PATH, _URL_BAD, _URL_OK)   # veredictos del proceso anterior

@@ -20,7 +20,7 @@ import unicodedata
 import urllib.request
 import defusedxml.ElementTree as ET   # XML descargado: defused (igual que torznab)
 
-from conflux.core.state import CLOCK, _POOL_BG, _ROOT, _atomic_json, _log, CFG
+from conflux.core.state import CLOCK, _POOL_BG, _ROOT, _atomic_json, _log, log_ev, CFG
 from conflux.infra.net import _public_url
 
 _EPG_FILE = os.path.join(_ROOT, 'epg-cache.json')
@@ -132,9 +132,14 @@ def _build(m3u_metas):
     if not want:
         return None
     days = _epg_programmes(ET.parse(io.BytesIO(data)).getroot(), want)
+    nprog = sum(len(p) for d in days.values() for p in d.values())
+    withp = len({c for d in days.values() for c in d})
+    stats = {'channels': len(m3u_metas), 'mapped': len(ch_map),
+             'with_programmes': withp, 'programmes': nprog}
+    log_ev('epg_match', **stats)                       # EPG-002: matching medible
     _log.info('epg: %d canales mapeados, %d dias, %d programas', len(ch_map),
-              len(days), sum(len(p) for d in days.values() for p in d.values()))
-    return {'map': ch_map, 'days': days}
+              len(days), nprog)
+    return {'map': ch_map, 'days': days, 'stats': stats}
 
 
 def _reload():
@@ -158,12 +163,20 @@ def _reload():
         built = _build(metas)
         if built:
             _STATE['map'], _STATE['days'] = built['map'], built['days']
+            _STATE['stats'] = built['stats']
             _STATE['fetched'] = CLOCK.time()
             _atomic_json(_EPG_FILE, _STATE)
     except Exception as e:                           # noqa: BLE001 — bg: nunca romper
         _log.warning('epg reload: %r', e)
     finally:
         _LOADING[0] = False
+
+
+def epg_stats():
+    """Último matching canal↔programa (EPG-001/002): {'channels': m3u,
+    'mapped': con epg_id, 'with_programmes': con >=1 prog, 'programmes': n}.
+    {} si aún no se ha construido — el dashboard distingue 'sin EPG' de '0'."""
+    return _STATE.get('stats') or {}
 
 
 def epg_kick():

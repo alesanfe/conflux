@@ -85,7 +85,7 @@ def _prio(found, order):
 
 
 def parse_size(t):
-    """'1.4 GB'/'700 MB' en texto libre -> bytes."""
+    """'1.4 GB'/'700 MB' en texto libre -> GB (float)."""
     m = RE_SIZE.search(t)
     if not m:
         return None
@@ -246,6 +246,32 @@ class _FmtSafe(dict):
         return ''
 
 
+def _strip_seps(out):
+    """Separadores huérfanos fuera (UX-001): ' · ' repetido -> uno; un ' · '
+    pegado a un borde de línea (token vacío adyacente) se come; líneas que
+    quedan vacías se colapsan. Sin esto un template con campos ausentes
+    renderizaba '· ·' y líneas que empiezan por '· '."""
+    out = re.sub(r'( · )?( · )+', ' · ', out)             # ' ·  · ' -> ' · '
+    out = re.sub(r'(?:^|\n) · | · (?=\n|$)', '', out)     # separador al borde
+    return re.sub(r'\n{2,}', '\n', out).strip(' ·\n')     # líneas vacías fuera
+
+
+def _clip_lines(s, budget):
+    """Presupuesto por línea (UX-006): corta en el último separador antes del
+    límite; sin separador, corte duro + '…'. stremio-web clipea de todos
+    modos — cortar en el separador deja una línea que termina limpia."""
+    if not budget or budget <= 0:
+        return s
+    out = []
+    for ln in s.split('\n'):
+        if len(ln) <= budget:
+            out.append(ln)
+            continue
+        cut = ln.rfind(' · ', 0, budget)
+        out.append((ln[:cut] if cut > 20 else ln[:budget - 1] + '…'))
+    return '\n'.join(out)
+
+
 def _display_name(f):
     tmpl = _cfgget('stream_format', '')                  # formatter configurable (estilo AIOStreams)
     if tmpl:
@@ -255,7 +281,7 @@ def _display_name(f):
                 audio=f.get('audio', ''), lang=f.get('lang', ''),
                 rip=f.get('srctype', ''), title=f.get('text', ''),
                 es='ES' if f.get('es') else ''))
-            out = re.sub(r'( · )?( · )+', ' · ', out).strip(' ·\n')  # tokens vacíos -> separadores sueltos
+            out = _strip_seps(out)
             if out:
                 return out
         except Exception:                                # noqa: BLE001 — template roto -> formato normal
@@ -268,10 +294,13 @@ def _display_name(f):
 
 
 def build_display(f, short):
-    """Campos parseados → (name, title) en el formato compacto de 2+2 líneas."""
+    """Campos parseados → (name, title) en el formato compacto de 2+2 líneas;
+    stream_max_chars (default 200, 0=off) es presupuesto POR LÍNEA (UX-006)."""
     idx = _indexer_of(f, short)
-    return _display_name(f), \
-           '\n'.join(' · '.join(x) for x in [_display_t1(f), _display_t2(f, short, idx)] if x)
+    b = _cfgget('stream_max_chars', 200) or 0
+    return _clip_lines(_display_name(f), b), \
+           _clip_lines('\n'.join(' · '.join(x)
+                                 for x in [_display_t1(f), _display_t2(f, short, idx)] if x), b)
 
 
 def _san_fileidx(out):
@@ -337,6 +366,23 @@ def _ad_link(s):
     paypal). Con url/infoHash/ytId presentes el stream es real y pasa."""
     return 'externalUrl' in s and not (
         s.get('infoHash') or s.get('url') or s.get('ytId'))
+
+
+_RE_BTIH = re.compile(r'[0-9a-f]{40}', re.IGNORECASE)
+
+
+def _playable(s):
+    """¿Tiene localizador reproducible? (STM-001) Sin él, la card en Stremio es
+    una fila muerta que el cliente no puede abrir. Válidos: infoHash BTIH
+    40-hex, url http(s)/magnet, o ytId. Un infoHash malformado NO invalida una
+    url directa válida (debrid). externalUrl solo NO es reproducible (→ _ad_link)."""
+    if s.get('ytId'):
+        return True
+    u = s.get('url')
+    if isinstance(u, str) and (u.startswith('http') or u.startswith('magnet:')):
+        return True
+    h = s.get('infoHash')
+    return isinstance(h, str) and bool(_RE_BTIH.fullmatch(h))
 
 
 def _skip_manifest(m, stype, sid):

@@ -8,6 +8,7 @@ from contextlib import suppress
 
 from conflux.core.state import _POOL_BG, log_ev
 from conflux.domain.catalog import handle_catalog
+from conflux.domain.lists import _iptv_sweep
 from conflux.domain.manifest import build_manifest
 from conflux.domain.sources import refresh_manifests
 from conflux.infra.epg import epg_kick
@@ -58,6 +59,20 @@ def _refresher():
             epg_kick()                            # EPG fresco sin esperar petición
         except Exception as e:
             log_ev('epg_err', err=repr(e)[:100])
+        try:
+            _iptv_sweep()                         # IPTV: cuarentena + resucitación
+        except Exception as e:
+            log_ev('iptv_err', err=repr(e)[:100])
+        try:
+            from conflux.infra.updater import _update_tick   # local: solo si auto_update
+            _update_tick()                                   # (tick diario propio)
+        except Exception as e:
+            log_ev('update_err', err=repr(e)[:100])
+        try:
+            from conflux.app.obs import _hist_snapshot       # OBS-002: rollup diario
+            _hist_snapshot()                                 # persistido atómico
+        except Exception as e:
+            log_ev('hist_err', err=repr(e)[:100])
         try:
             _mem_trim()                           # piso de memoria bajo control
         except Exception as e:

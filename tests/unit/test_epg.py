@@ -343,7 +343,8 @@ class TestReloadDiscoYLoading(unittest.TestCase):
                 um.patch('conflux.domain.lists._m3u_metas',
                          return_value=[{'id': 'c', 'tvg': 'x'}]), \
                 um.patch.object(E, '_build',
-                                return_value={'days': {}, 'map': {}}) as bd, \
+                                return_value={'days': {}, 'map': {},
+                                              'stats': {}}) as bd, \
                 um.patch.object(E, '_atomic_json'):
             E._reload()
         bd.assert_called_once()
@@ -452,6 +453,94 @@ class TestKick(unittest.TestCase):
         E._LOADING[0] = True                        # sigue en vuelo
         E.epg_kick()                                # no duplica
         self.assertEqual(self.enviados, [E._reload])
+
+
+class TestEpgMatchE2E(unittest.TestCase):
+    """EPG-001/002: matching canal<->programa validado de punta a punta —
+    invariantes sobre el resultado de _build + la métrica expuesta."""
+
+    def setUp(self):
+        self._cfg = dict(E.CFG)
+        self._open = E._OPENER.open
+        self._pub = E._public_url
+        E._public_url = lambda u: True
+        E.CFG['epg_url'] = 'https://epg.test/x.xml'
+
+    def tearDown(self):
+        E.CFG.clear(); E.CFG.update(self._cfg)
+        E._OPENER.open = self._open
+        E._public_url = self._pub
+
+    def _build(self, metas, progs, canales):
+        import unittest.mock as um
+        xml = _xmltv(progs, canales=canales)
+        E._OPENER.open = lambda req, timeout=0: io.BytesIO(xml)
+        with um.patch.object(E, '_log'), um.patch.object(E, 'log_ev'):
+            return E._build(metas)
+
+    def test_matching_end_to_end(self):
+        """Cadena completa: XMLTV real-shape -> metas -> videos protocolares.
+        tvg-id exacto, nombre normalizado y desconocido se clasifican bien."""
+        import time as _t
+        now = _t.time()
+        dia = _t.strftime('%Y-%m-%d', _t.gmtime(now))
+        metas = [{'id': 'm3u:1', 'tvg': 'la1.es', 'name': 'La 1'},
+                 {'id': 'm3u:2', 'tvg': '', 'name': 'La Sexta'},      # match por nombre
+                 {'id': 'm3u:3', 'tvg': 'cnn.int', 'name': 'CNN'}]   # sin match
+        progs = [('la1.es', _ts(now), _ts(now + 60), 'T1', '', ''),
+                 ('la1.es', _ts(now + 60), _ts(now + 120), 'T2', '', ''),
+                 ('lasexta.es', _ts(now), _ts(now + 60), 'S1', '', ''),
+                 ('otro.es', _ts(now), _ts(now + 60), 'X', '', '')]  # no mapeado
+        out = self._build(metas, progs, ('la1.es', 'lasexta.es', 'otro.es'))
+        self.assertIsNotNone(out)
+        # invariante 1: solo canales mapeados tienen programas
+        self.assertEqual(set(out['map']), {'m3u:1', 'm3u:2'})
+        cids = {c for d in out['days'].values() for c in d}
+        self.assertTrue(cids <= set(out['map']))
+        # invariante 2: cada programa cae en el bucket de SU canal y día
+        self.assertEqual([p['title'] for p in out['days'][dia]['m3u:1']],
+                         ['T1', 'T2'])
+        self.assertEqual([p['title'] for p in out['days'][dia]['m3u:2']], ['S1'])
+        self.assertNotIn('m3u:3', cids)
+        # invariante 3: videos emitidos apuntan a su canal, start<stop
+        for cid in cids:
+            for v in E._videos(cid, dia):
+                self.assertTrue(v['id'].startswith(cid + ':'))
+                self.assertLess(v['startTime'], v['endTime'])
+
+    def test_stats_y_metrica(self):
+        """EPG-002: stats coherentes con el matching + evento epg_match."""
+        import time as _t
+        import unittest.mock as um
+        now = _t.time()
+        metas = [{'id': 'm3u:1', 'tvg': 'la1.es', 'name': 'La 1'},
+                 {'id': 'm3u:2', 'tvg': 'cnn.int', 'name': 'CNN'}]
+        progs = [('la1.es', _ts(now), _ts(now + 60), 'T', '', '')]
+        xml = _xmltv(progs, canales=('la1.es',))
+        E._OPENER.open = lambda req, timeout=0: io.BytesIO(xml)
+        with um.patch.object(E, '_log'), um.patch.object(E, 'log_ev') as ev:
+            out = E._build(metas)
+        st = out['stats']
+        self.assertEqual(st['channels'], 2)
+        self.assertEqual(st['mapped'], 1)
+        self.assertEqual(st['with_programmes'], 1)
+        self.assertEqual(st['programmes'], 1)
+        ev.assert_called_once_with('epg_match', **st)
+
+    def test_epg_stats_getter_y_metricas(self):
+        """epg_stats() refleja _STATE; /metrics expone conflux_epg_match."""
+        old = dict(E._STATE)
+        try:
+            E._STATE['stats'] = {'channels': 10, 'mapped': 8,
+                                 'with_programmes': 6, 'programmes': 100}
+            self.assertEqual(E.epg_stats()['with_programmes'], 6)
+            from conflux.web.metrics import _metrics_text
+            txt = _metrics_text()
+            self.assertIn('conflux_epg_match{kind="with_programmes"} 6', txt)
+        finally:
+            E._STATE.clear(); E._STATE.update(old)
+        E._STATE['stats'] = {}
+        self.assertEqual(E.epg_stats(), {})
 
 
 class TestRedirectSSRF(unittest.TestCase):

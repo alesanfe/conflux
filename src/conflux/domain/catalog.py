@@ -17,6 +17,7 @@ from conflux.core.state import (
     _cset,
     _cstale,
     as_dict,
+    log_ev,
     manifests,
 )
 from conflux.domain.lists import _list_metas, _m3u_metas
@@ -125,13 +126,25 @@ def _cat_route(cid, stype):
 
 
 def _cat_grp_extra(cid, extra):
-    """Agrupado: genre -> catálogo upstream elegido + picker año -> genre=año."""
+    """Agrupado: genre -> catálogo upstream elegido + picker año -> genre=año.
+    Opción no declarada -> respuesta vacía válida (NO enruta al base en
+    silencio): el cliente solo manda opciones del manifest; un valor fuera
+    de la lista es entrada inválida, no "quiero el catálogo base"."""
     kv = dict(urllib.parse.parse_qsl(extra or ""))
     g = kv.pop("genre", None)
     if g and (cid, g.lower()) in _DEAD_OPT:  # label muerta -> base del grupo
+        log_ev("grp_dead_opt", cid=cid, genre=g)  # fallback legítimo, medible
         g = None
     y = kv.pop("year", None)  # picker año (members con genre=año)
     entry = _GRP[cid].get(g)
+    if entry is None and g:
+        low = g.lower()  # acepta variante de mayúsculas, rechaza lo no declarado
+        entry = next(
+            (v for k, v in _GRP[cid].items() if k.lower() == low), None
+        )
+        if entry is None:
+            log_ev("grp_bad_genre", cid=cid, genre=g)  # inválida, medible
+            return {"metas": []}
     if entry is None:  # base: primer miembro VIVO
         entry = next(
             (v for k, v in _GRP[cid].items() if (cid, k.lower()) not in _DEAD_OPT),
@@ -212,7 +225,10 @@ def _cat_resolve(cid, stype, extra, key):
     Devuelve dict-respuesta si un sintético respondió directo."""
     base, utype, real = _cat_route(cid, stype)
     if cid in _GRP:  # agrupado: genre -> catálogo upstream
-        utype, real, extra = _cat_grp_extra(cid, extra)
+        r = _cat_grp_extra(cid, extra)
+        if isinstance(r, dict):  # opción inválida -> respuesta vacía directa
+            return r
+        utype, real, extra = r
     elif cid in _SYNTH:  # sintético: ruta upstream predefinida
         resp, utype, real, extra = _cat_synth(cid, utype, extra, key)
         if resp is not None:
@@ -263,6 +279,7 @@ def _cat_fix_extra(base, utype, real, extra):
     if not g or not base or _cat_genre_ok(base, utype, real, g):
         return extra
     kv.pop("genre")
+    log_ev("extra_dropped", cid=f"{utype}_{real}", genre=g)  # fallback, medible
     return urllib.parse.urlencode(kv, safe=",")
 
 

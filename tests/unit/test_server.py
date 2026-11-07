@@ -206,6 +206,87 @@ class TestLogin(unittest.TestCase):
             undo()
 
 
+class TestAuthRateLimit(unittest.TestCase):
+    """SEC-002: _authd fallos (header/cookie) también cuentan — el rate-limit
+    de /login no servía contra brute-force directo de X-Admin-Token."""
+
+    def setUp(self):
+        self._tries = {k: list(v) for k, v in srv._AUTH_TRIES.items()}
+        srv._AUTH_TRIES.clear()
+
+    def tearDown(self):
+        srv._AUTH_TRIES.clear()
+        for k, v in self._tries.items():
+            srv._AUTH_TRIES[k] = __import__('collections').deque(v)
+
+    def _h(self, tok=None):
+        h = srv.H.__new__(srv.H)                    # instancia real, métodos vivos
+        h.headers = {}
+        if tok:
+            h.headers['X-Admin-Token'] = tok
+        h.client_address = ('127.0.0.1', 0)
+        h.reply = MagicMock()
+        h._html = MagicMock()
+        return h
+
+    def test_diez_fallos_then_429(self):
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            h = self._h()
+            for _ in range(10):
+                self.assertEqual(h._auth_gate(), 'fail')
+            self.assertEqual(h._auth_gate(), 'limit')
+            h.reply.assert_called_once()
+            self.assertEqual(h.reply.call_args[0][1], 429)
+        finally:
+            undo()
+
+    def test_auth_ok_no_cuenta(self):
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            h = self._h(tok='secreto')
+            for _ in range(20):
+                self.assertIsNone(h._auth_gate())    # nunca 'limit'
+        finally:
+            undo()
+
+    def test_ventana_expira(self):
+        """Fallos >60s no cuentan: la deque se poda por ts."""
+        from collections import deque
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            h = self._h()
+            srv._AUTH_TRIES['127.0.0.1'] = deque(
+                [srv.time.time() - 120] * 15)            # viejos, fuera de ventana
+            self.assertEqual(h._auth_gate(), 'fail')
+        finally:
+            undo()
+
+    def test_sin_token_no_cuenta(self):
+        _, undo = cfg_swap(admin_token='')
+        try:
+            h = self._h()
+            for _ in range(20):
+                self.assertIsNone(h._auth_gate())
+            self.assertEqual(len(srv._AUTH_TRIES), 0)
+        finally:
+            undo()
+
+    def test_pages_429(self):
+        """GET /admin bloqueado -> 429 enviado, no el form de login."""
+        from collections import deque
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            h = self._h()
+            srv._AUTH_TRIES['127.0.0.1'] = deque([srv.time.time()] * 15)
+            h._pages('/admin')
+            h.reply.assert_called_once()
+            self.assertEqual(h.reply.call_args[0][1], 429)
+            h._html.assert_not_called()
+        finally:
+            undo()
+
+
 class TestCfgUrlKeys(unittest.TestCase):
     """Whitelist de tipos por clave en /cfg/<b64>/."""
 

@@ -432,6 +432,70 @@ class TestCatGrpExtraAno(unittest.TestCase):
         self.assertEqual(real, "real_pop")
 
 
+class TestCatGrpGenreInvalido(unittest.TestCase):
+    """CAT-001: opción genre NO declarada -> respuesta vacía válida + evento,
+    NO fallback silencioso al miembro base. El cliente solo manda opciones
+    declaradas en el manifest; un valor fuera de lista es entrada inválida."""
+
+    def setUp(self):
+        import conflux.core.state as st
+
+        self._dead = set(st._DEAD_OPT)
+        self._grp = dict(C._GRP)
+        C._GRP["sg_tst_bad"] = collections.OrderedDict(
+            [
+                ("Popular", ("movie", "real_pop", False, None)),
+                ("Action", ("movie", "real_act", False, "Action")),
+            ]
+        )
+
+    def tearDown(self):
+        import conflux.core.state as st
+
+        st._DEAD_OPT.clear()
+        st._DEAD_OPT.update(self._dead)
+        C._GRP.clear()
+        C._GRP.update(self._grp)
+
+    def test_genre_no_declarado_devuelve_vacio(self):
+        r = C._cat_grp_extra("sg_tst_bad", "genre=Comedy")  # no es label
+        self.assertEqual(r, {"metas": []})
+
+    def test_genre_valido_sigue_funcionando(self):
+        ut, real, extra = C._cat_grp_extra("sg_tst_bad", "genre=Action")
+        self.assertEqual(real, "real_act")
+        self.assertIn("genre=Action", extra)
+
+    def test_genre_case_insensitive_acepta(self):
+        """'action' en minúsculas es la misma opción declarada."""
+        ut, real, extra = C._cat_grp_extra("sg_tst_bad", "genre=action")
+        self.assertEqual(real, "real_act")
+
+    def test_genre_vacio_no_es_invalido(self):
+        """Sin genre -> base normal (no es una opción inválida)."""
+        ut, real, extra = C._cat_grp_extra("sg_tst_bad", "skip=50")
+        self.assertEqual(real, "real_pop")
+        self.assertIn("skip=50", extra)
+
+    def test_bad_genre_no_envenena_dead_opt(self):
+        """La inválida NO marca nada en _DEAD_OPT (no es una opción muerta)."""
+        import conflux.core.state as st
+
+        C._cat_grp_extra("sg_tst_bad", "genre=Basura")
+        self.assertNotIn(("sg_tst_bad", "basura"), st._DEAD_OPT)
+
+    def test_handle_catalog_genre_invalida_vacio(self):
+        """Integración: handle_catalog sirve la vacía directa, sin fetch."""
+        cid = "sg_tst_bad"
+        C._GRP[cid] = collections.OrderedDict(
+            [("Popular", ("movie", "real_pop", False, None))]
+        )
+        with patch.object(C, "fetch") as f:
+            d = C.handle_catalog("movie", cid, "genre=Nope")
+        self.assertEqual(d, {"metas": []})
+        f.assert_not_called()
+
+
 class TestSynthM3u(unittest.TestCase):
     """_synth_m3u: date -> guía EPG del día; sin date -> lista canales."""
 

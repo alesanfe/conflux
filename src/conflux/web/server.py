@@ -42,7 +42,7 @@ from conflux.domain.catalog import handle_catalog
 from conflux.domain.sources import _load_manifests_cache, _persist_manifests, refresh_manifests
 from conflux.infra.debrid import _db_resolve, _db_stream, _db_usenet
 from conflux.infra.newznab import _sab_add
-from conflux.web.metrics import _metrics_text
+from conflux.web.metrics import _diag_json, _metrics_text
 from conflux.web.pages import (
     _admin_page,
     _configure_page,
@@ -108,6 +108,30 @@ class H(BaseHTTPRequestHandler):
             if k == 'conflux_auth' and hmac.compare_digest(tok, v):
                 return True
         return False
+    def _auth_fail(self):
+        """Un intento _authd fallido -> cuenta contra la IP; True cuando ya
+        excede el rate (SEC-002): sin esto el header X-Admin-Token era
+        brute-forceable sin pasar por el rate-limit de /login."""
+        ip = getattr(self, 'client_address', ('local',))[0]
+        now = time.time()
+        tries = _AUTH_TRIES.setdefault(ip, deque())
+        while tries and now - tries[0] > 60:
+            tries.popleft()
+        tries.append(now)
+        if len(tries) > 10:
+            log_ev('auth_ratelimit', ip=ip, n=len(tries))
+            return True
+        return False
+    def _auth_gate(self):
+        """_authd con rate-limit: None ok | 'fail' responde caller | 'limit' ya
+        respondió 429. Con admin_token vacío nunca cuenta (gate desactivado)."""
+        if self._authd():
+            return None
+        if self._auth_fail():
+            self.reply({'err': 'too many auth attempts',
+                        'code': 'CFX-AUTH-011'}, 429)
+            return 'limit'
+        return 'fail'
     # claves permitidas en la cfg de la URL (nada de paths/URLs -> SSRF;
     # nada de admin/tls/keys de servidor -> fuera de scope)
     _CFG_URL_KEYS = frozenset({
@@ -193,9 +217,16 @@ class H(BaseHTTPRequestHandler):
     # pylint: disable=too-many-return-statements
     def _pages(self, p):
         """Rutas fijas GET (manifest/health/páginas). True si las sirvió."""
-        if p in ('/admin', '/configure') and not self._authd():
-            self._html(_login_page(p), 401)                     # form login -> cookie HttpOnly
-            return True
+        if p in ('/admin', '/configure', '/admin/diag'):
+            g = self._auth_gate()
+            if g == 'limit':
+                return True                                     # 429 ya enviado
+            if g == 'fail':
+                self._html(_login_page(p), 401)                 # form login -> cookie HttpOnly
+                return True
+            if p == '/admin/diag':                              # OBS-008/009: snapshot JSON
+                self.reply(_diag_json())
+                return True
         if p == '/health/live':                                 # proceso responde (cheap)
             self.reply({'status': 'alive', 'version': _version()})
             return True
@@ -336,8 +367,12 @@ class H(BaseHTTPRequestHandler):
                                'code': 'CFX-HTTP-002'}, 415)
         if p == '/login':                                        # fuera del gate: es el gate
             return self._login()
-        if p in ('/reload', '/configure') and not self._authd():
-            return self.reply({'err': 'forbidden'}, 403)
+        if p in ('/reload', '/configure'):
+            g = self._auth_gate()
+            if g == 'limit':
+                return                                          # 429 ya enviado
+            if g == 'fail':
+                return self.reply({'err': 'forbidden'}, 403)
         if p == '/reload':
             load_config()
             _cache.clear()
@@ -402,6 +437,8 @@ _SECRET_RX = re.compile(r'key|token|secret|pass|admin', re.IGNORECASE)
 _TOK_SAFE = re.compile(r'[^A-Za-z0-9._~+-]')            # cookie/header: solo charset de token
 
 _LOGIN_TRIES: dict = {}                                 # ip -> deque(ts) — rate limit /login
+
+_AUTH_TRIES: dict = {}                                  # ip -> deque(ts) — fallos header/cookie
 _STARTED = time.time()
 
 
@@ -485,6 +522,24 @@ class _Srv(ThreadingHTTPServer):
             self._sem.release()
 
 
+def _launch_update_swap():
+    """Update staged (auto_update): lanza el .cmd que reemplaza el exe cuando
+    el proceso muere (Windows no permite reemplazar un exe en ejecución)."""
+    try:
+        import os
+        import subprocess
+        from conflux.infra.updater import _SWAP_CMD, _UPD_JSON
+        if getattr(sys, 'frozen', False) and os.path.exists(_UPD_JSON) \
+                and os.path.exists(_SWAP_CMD):
+            subprocess.Popen(['cmd', '/c', _SWAP_CMD],        # noqa: S603 — path propio generado
+                             creationflags=subprocess.CREATE_NO_WINDOW
+                             if os.name == 'nt' else 0,
+                             close_fds=True)
+            log_ev('update_swap_launched')
+    except Exception:                                          # noqa: BLE001 — el swap no rompe el stop
+        pass
+
+
 def main():
     """Arranque: manifests cacheados si hay -> refresh bg; si no, fetch en vivo."""
     from conflux.core.cfg import ensure_admin_token
@@ -515,9 +570,16 @@ def main():
         log_ev('tls', cert=cert)
     if threading.current_thread() is threading.main_thread():
         def _bye(*_a):
-            """SIGTERM (systemd stop): persiste el caché de manifests y sale limpio."""
+            """SIGTERM (systemd stop): persiste el caché de manifests; si hay
+            update staged lanza el swap helper y sale limpio."""
             log_ev('shutdown')
             _atomic_json(_MF_CACHE, _persist_manifests())
+            try:
+                from conflux.app.obs import _hist_snapshot       # OBS-002
+                _hist_snapshot()                                # rollup final del día
+            except Exception:                                   # noqa: BLE001
+                pass
+            _launch_update_swap()
             raise SystemExit(0)                   # no srv.shutdown(): deadlocked en el hilo principal
         signal.signal(signal.SIGTERM, _bye)
     srv.serve_forever()

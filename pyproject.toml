@@ -69,5 +69,13 @@ check_untyped_defs = true
 
 [tool.mutmut]
 source_paths = ["src", "proxy.py", "tests"]
-only_mutate = ["src/conflux/app/subs.py"]
-pytest_add_cli_args_test_selection = ["tests/unit/test_subs.py"]
+# QUAL-001: cobertura ampliada — módulos con tests anotados para mutantes
+# (los comentarios Or@/Sub@/not-elim@ en test_subs/test_metafix/test_lists
+# documentan qué mutante mata cada assert). mutmut corre la selección
+# completa por mutante: más lento, kill rate honesto.
+only_mutate = ["src/conflux/app/subs.py",
+               "src/conflux/domain/metafix.py",
+               "src/conflux/domain/lists.py"]
+pytest_add_cli_args_test_selection = ["tests/unit/test_subs.py",
+                                      "tests/unit/test_metafix.py",
+                                      "tests/unit/test_lists.py"]

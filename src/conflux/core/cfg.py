@@ -4,6 +4,7 @@
 import json
 import os
 import re
+import sys
 import threading
 import urllib.parse
 
@@ -60,18 +61,61 @@ def _check_version(raw):
     return True
 
 
+# Registro de migraciones (CFG-001): version_origen -> fn(raw)->raw que sube
+# el archivo UN paso (N -> N+1). Contrato de cada migración:
+#   - pura: recibe una copia de raw, devuelve el dict transformado
+#   - idempotente: aplicarla dos veces da el mismo resultado (la segunda carga
+#     del archivo ya migrado no la dispara — pero una fn no idempotente haría
+#     irreversible un doble-arranque con crash entre medias)
+#   - renombra/transforma claves; nunca toca disco ni red
+# Al añadir una: _CONFIG_VERSION += 1 y _MIGRATIONS[vieja] = fn.
+_MIGRATIONS: dict = {}
+
+
+def _migrate(raw):
+    """-> (raw_migrado, migró?). Encadena migraciones config_version N -> N+1
+    hasta _CONFIG_VERSION. Salto sin fn registrada o fn que lanza -> ({}, F):
+    interpretar mal una cfg vieja es peor que volver a defaults."""
+    v = raw.get('config_version', 1)
+    if not isinstance(v, int) or v < 1:
+        return {}, False
+    migrated = v < _CONFIG_VERSION
+    while v < _CONFIG_VERSION:
+        fn = _MIGRATIONS.get(v)
+        if fn is None:
+            _log.warning('config_version %d sin migración registrada — defaults', v)
+            return {}, False
+        try:
+            raw = dict(fn(dict(raw)))
+        except Exception as e:                             # noqa: BLE001
+            _log.warning('migración config %d->%d falló: %r — defaults', v, v + 1, e)
+            return {}, False
+        v += 1
+        raw['config_version'] = v
+    return raw, migrated
+
+
 def load_config():
-    """Carga config.json sobre defaults; re-deriva _DISABLED y RE_ES."""
+    """Carga config.json sobre defaults; re-deriva _DISABLED y RE_ES.
+    Una cfg de versión vieja se migra en cadena y se re-persiste."""
     CFG.clear()
     CFG.update(_CFG_DEFAULTS)                  # reset: borrar el archivo = defaults
+    if getattr(sys, 'frozen', False):          # build congelada: auto-update ON
+        CFG['auto_update'] = True              # salvo que config.json lo fije
+    migrated = False
     try:
         raw = json.load(_open(_CFG_FILE))
         if not _check_version(raw):
             raw = {}
+        else:
+            raw, migrated = _migrate(raw)
         unk = sorted(k for k in raw if k not in _CFG_DEFAULTS)
         if unk:                                       # observabilidad: keys huérfanas/stale
             _log.info('config.json: claves desconocidas ignoradas: %s', ', '.join(unk))
         CFG.update({k: _coerce(k, v) for k, v in raw.items() if k in CFG})
+        if migrated:
+            _save_cfg()                                   # archivo ya en schema nuevo
+            _log.info('config.json migrado a config_version %d', _CONFIG_VERSION)
     except (OSError, ValueError) as e:
         _log.warning('config.json ilegible (%s) — defaults', e)
     _CFG_ENV_REF.clear()

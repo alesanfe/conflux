@@ -45,3 +45,10 @@ dist/
 build/
 *.spec
 soak-logs/
+.iptv-health.json
+.poster-health.json
+.url-health.json
+.metrics-history.json
+conflux.update.json
+conflux.new.exe
+conflux-apply-update.cmd

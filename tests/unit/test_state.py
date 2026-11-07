@@ -279,6 +279,144 @@ class TestAtomicJson(unittest.TestCase):
             self.assertTrue(os.path.exists(p))
 
 
+class TestHealthPersist(unittest.TestCase):
+    """META-001/003 + RES-001: veredictos url/poster sobreviven reinicio,
+    write atómico, entradas caducadas y fichero corrupto no rompen nada."""
+
+    def setUp(self):
+        self._saved = dict(st._HEALTH_SAVE)
+        self._fake = st.CLOCK.fake(1_700_000_000.0)
+        self.bad, self.ok = {}, {}
+
+    def tearDown(self):
+        st._HEALTH_SAVE.clear()
+        st._HEALTH_SAVE.update(self._saved)
+        st.CLOCK.reset()
+
+    def _tmp(self, d):
+        import os
+        return os.path.join(d, 'h.json')
+
+    def test_save_load_roundtrip(self):
+        import json, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = self._tmp(d)
+            bad = {'u1': (2, st.CLOCK.time()), 'u2': (1, st.CLOCK.time() - 60)}
+            ok = {'u3': st.CLOCK.time() - 120}
+            st.health_save(p, bad, ok, throttle=0)
+            st.health_load(p, self.bad, self.ok)
+            self.assertEqual(self.bad['u1'][0], 2)
+            self.assertEqual(self.bad['u2'], (1, bad['u2'][1]))
+            self.assertEqual(self.ok['u3'], ok['u3'])
+            with open(p, encoding='utf-8') as fh:
+                self.assertEqual(json.load(fh)['bad']['u1'][0], 2)
+
+    def test_caducados_no_se_guardan_ni_se_cargan(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = self._tmp(d)
+            old = st.CLOCK.time() - st._HEALTH_KEEP - 1
+            st.health_save(p, {'old': (2, old)}, {'oldok': old}, throttle=0)
+            with open(p, encoding='utf-8') as fh:
+                import json
+                data = json.load(fh)
+            self.assertEqual(data, {'bad': {}, 'ok': {}})
+            self.bad, self.ok = {'fresh': (2, st.CLOCK.time())}, {}
+            st.health_load(p, self.bad, self.ok)
+            self.assertEqual(list(self.bad), ['fresh'])   # no pisa, fusiona
+
+    def test_load_fusiona_sin_pisar(self):
+        """Veredictos nuevos del proceso actual sobreviven al load."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = self._tmp(d)
+            st.health_save(p, {'a': (2, st.CLOCK.time())}, {}, throttle=0)
+            self.bad['nuevo'] = (1, st.CLOCK.time())
+            st.health_load(p, self.bad, self.ok)
+            self.assertIn('nuevo', self.bad)
+            self.assertIn('a', self.bad)
+
+    def test_load_fichero_corrupto_no_rompe(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = self._tmp(d)
+            with open(p, 'w', encoding='utf-8') as fh:
+                fh.write('{not json')
+            st.health_load(p, self.bad, self.ok)   # no lanza
+            self.assertEqual(self.bad, {})
+            # ni dict, ni lista suelta
+            with open(p, 'w', encoding='utf-8') as fh:
+                fh.write('[1,2]')
+            st.health_load(p, self.bad, self.ok)
+            self.assertEqual(self.bad, {})
+
+    def test_load_entradas_malformadas_salta(self):
+        import json, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = self._tmp(d)
+            with open(p, 'w', encoding='utf-8') as fh:
+                json.dump({'bad': {'ok': [2, 99], 'x1': 'str', 'x2': [1],
+                                   'x3': [1, 'x'], 'x4': None},
+                           'ok': {'g': 5.0, 's': 'nope'}}, fh)
+            st.CLOCK.fake(100.0)               # 99 y 5.0 están "caducados"
+            st.health_load(p, self.bad, self.ok)
+            self.assertEqual(self.bad, {'ok': (2, 99.0)})
+            self.assertEqual(self.ok, {'g': 5.0})
+
+    def test_throttle(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            p = self._tmp(d)
+            calls = []
+            orig = st._atomic_json
+            with mock.patch.object(st, '_atomic_json',
+                                   side_effect=lambda *a: calls.append(a) or orig(*a)):
+                st.health_save(p, {}, {})
+                st.health_save(p, {'u': (2, st.CLOCK.time())}, {})   # <60s: skip
+            self.assertEqual(len(calls), 1)
+
+    def test_save_error_tragado(self):
+        st.health_save('/no/such/dir/x.json', {'u': (2, 1)}, {}, throttle=0)
+
+
+class TestUrlHealthPersist(unittest.TestCase):
+    """_url_head persiste el veredicto tras cada probe (META-001)."""
+
+    def test_url_head_llama_save(self):
+        import conflux.app.stream as S
+        from unittest import mock
+        with mock.patch.object(S._st, 'health_save') as sv, \
+             mock.patch.object(S, '_session') as ses:
+            ses.return_value.head.side_effect = OSError('down')
+            S._url_head('http://x.test/a')
+        sv.assert_called_once_with(S._URLH_PATH, S._URL_BAD, S._URL_OK)
+        self.assertIn('http://x.test/a', S._URL_BAD)
+        S._URL_BAD.pop('http://x.test/a', None)
+
+    def test_veredicto_muerto_sobrevive_reinicio(self):
+        """Simula proceso nuevo: load desde fichero -> la url sale filtrada."""
+        import conflux.app.stream as S
+        import os, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'h.json')
+            S._st._HEALTH_SAVE.clear()                      # resetea throttle
+            S._st.health_save(p, {'http://x.test/dead': (2, S._st.CLOCK.time())}, {},
+                              throttle=0)
+            bad, ok = {}, {}
+            S._st.health_load(p, bad, ok)
+            old_bad, old_ok = dict(S._URL_BAD), dict(S._URL_OK)
+            try:
+                S._URL_BAD.update(bad)
+                streams = [{'url': 'http://x.test/dead'}, {'url': 'http://y.test/live'}]
+                S._url_health(streams)
+                self.assertEqual([s['url'] for s in streams],
+                                 ['http://y.test/live'])
+            finally:
+                S._URL_BAD.clear(); S._URL_BAD.update(old_bad)
+                S._URL_OK.clear(); S._URL_OK.update(old_ok)
+
+
 class TestClock(unittest.TestCase):
     def tearDown(self):
         st.CLOCK.reset()

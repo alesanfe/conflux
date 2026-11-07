@@ -137,6 +137,54 @@ class TestRpdb(unittest.TestCase):
         finally:
             undo()
 
+    def test_style_textless(self):
+        """META-002: rpdb_style='poster-textless' cambia el path del poster."""
+        _, undo = __import__('tests').cfg_swap(rpdb_key='k9',
+                                             rpdb_style='poster-textless')
+        try:
+            out = mf._rpdb({'meta': {'id': 'tt5'}})
+        finally:
+            undo()
+        self.assertIn('/poster-textless/tt5.jpg', out['meta']['poster'])
+
+    def test_style_invalido_cae_a_default(self):
+        """Style fuera de allowlist -> 'poster-default' (guard: la key va en
+        la URL — un style inyectado no puede romper el path)."""
+        _, undo = __import__('tests').cfg_swap(rpdb_key='k9',
+                                             rpdb_style='../../evil')
+        try:
+            out = mf._rpdb({'meta': {'id': 'tt5'}})
+        finally:
+            undo()
+        self.assertIn('/poster-default/tt5.jpg', out['meta']['poster'])
+        self.assertNotIn('evil', out['meta']['poster'])
+
+    def test_fallback_flag(self):
+        """META-002: rpdb_fallback on -> ?fallback=true; off -> sin query."""
+        _, undo = __import__('tests').cfg_swap(rpdb_key='k9', rpdb_fallback=True)
+        try:
+            self.assertIn('?fallback=true',
+                          mf._rpdb({'meta': {'id': 'tt5'}})['meta']['poster'])
+        finally:
+            undo()
+        _, undo = __import__('tests').cfg_swap(rpdb_key='k9', rpdb_fallback=False)
+        try:
+            self.assertNotIn('fallback',
+                             mf._rpdb({'meta': {'id': 'tt5'}})['meta']['poster'])
+        finally:
+            undo()
+
+    def test_rpdb_applied_metric(self):
+        """META-007: cada swap de poster cuenta en _MF_STATS."""
+        _, undo = __import__('tests').cfg_swap(rpdb_key='k9')
+        try:
+            before = mf.poster_stats()['rpdb_applied']
+            mf._rpdb({'metas': [{'id': 'tt1'}, {'id': 'kitsu:9'}],
+                      'meta': {'id': 'tt9'}})
+            self.assertEqual(mf.poster_stats()['rpdb_applied'], before + 2)
+        finally:
+            undo()
+
 
 class TestFixMetasDeepGate(unittest.TestCase):
     def test_sin_deep_no_llama_deep(self):

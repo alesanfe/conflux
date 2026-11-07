@@ -136,5 +136,48 @@ class TestFanOutBudget(unittest.TestCase):
             S._cache.clear()
 
 
+class TestParseBudget(unittest.TestCase):
+    """Parseos calientes acotados: un .m3u gordo o un XMLTV de un proveedor
+    grande no pueden bloquear el hilo de refresco."""
+
+    def test_m3u_500_canales(self):
+        """500 líneas EXTINF parsean < 200ms (tripwire 2s)."""
+        from unittest.mock import mock_open, patch
+        import conflux.domain.lists as L
+        m3u = '#EXTM3U\n' + ''.join(
+            f'#EXTINF:-1 tvg-logo="http://l/{i}.png" group-title="G{i%7}",'
+            f'Canal {i}\nhttp://stream/{i}\n' for i in range(500))
+        _, undo = __import__('tests').cfg_swap(m3u_path='/tmp/big.m3u')
+        try:
+            with patch.object(L, '_open', mock_open(read_data=m3u)):
+                t0 = time.perf_counter()
+                metas = L._m3u_metas()
+                dt = time.perf_counter() - t0
+        finally:
+            undo()
+            L._M3U.clear()
+        self.assertEqual(len(metas), 500)
+        self.assertLess(dt, 2.0, f'parseo m3u {dt*1000:.0f}ms')
+
+    def test_catalog_caliente(self):
+        """Catálogo cacheado: < 50ms p95 (tripwire 500ms) — el picker del
+        cliente no puede esperar por un metas ya visto."""
+        key = ('movie', 'sfoo_movie_top', '')
+        st._cset(C._cat_c, key, {'metas': [
+            {'id': f'tt{i}', 'name': f'x{i}', 'type': 'movie'}
+            for i in range(40)]})
+        try:
+            ts = []
+            for _ in range(50):
+                t0 = time.perf_counter()
+                d = C.handle_catalog('movie', 'sfoo_movie_top', '')
+                ts.append(time.perf_counter() - t0)
+            self.assertEqual(len(d['metas']), 40)          # sirvió el hit
+            self.assertLess(sorted(ts)[int(len(ts) * .95)], 0.5,
+                            f'p95 cat caliente {sorted(ts)[-3]*1000:.0f}ms')
+        finally:
+            C._cat_c.pop(key, None)
+
+
 if __name__ == '__main__':
     unittest.main()

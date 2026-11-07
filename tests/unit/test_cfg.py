@@ -299,6 +299,21 @@ class TestLoadConfigFile(unittest.TestCase):
         finally:
             self._restore(snap)
 
+    def test_auto_update_default_frozen(self):
+        """Build congelada -> auto_update ON por defecto; un 'false' explícito
+        en config.json gana al default; fuente -> OFF siempre."""
+        snap = self._snapshot()
+        try:
+            with mock.patch.object(cfg.sys, 'frozen', True, create=True):
+                self._load({})
+                self.assertTrue(cfg.CFG['auto_update'])             # default frozen
+                self._load({'auto_update': False})
+                self.assertFalse(cfg.CFG['auto_update'])            # user gana
+            self._load({})
+            self.assertFalse(cfg.CFG['auto_update'])                # fuente -> off
+        finally:
+            self._restore(snap)
+
     def test_claves_desconocidas_log(self):
         """horizon_days y restos stale: se ignoran pero quedan registradas."""
         snap = self._snapshot()
@@ -311,6 +326,93 @@ class TestLoadConfigFile(unittest.TestCase):
             self.assertNotIn('debrid_key', logged)
         finally:
             self._restore(snap)
+
+
+class TestMigrate(unittest.TestCase):
+    """CFG-001: migraciones versionadas encadenadas, idempotentes y con
+    persistencia; salto ausente o fallo -> defaults."""
+
+    def setUp(self):
+        self._ver = cfg._CONFIG_VERSION
+        self._mig = dict(cfg._MIGRATIONS)
+        self._cfg = dict(cfg.CFG)
+        self._ref = dict(cfg._CFG_ENV_REF)
+
+    def tearDown(self):
+        cfg._CONFIG_VERSION = self._ver
+        cfg._MIGRATIONS.clear(); cfg._MIGRATIONS.update(self._mig)
+        cfg.CFG.clear(); cfg.CFG.update(self._cfg)
+        cfg._CFG_ENV_REF.clear(); cfg._CFG_ENV_REF.update(self._ref)
+
+    def test_encadena_pasos(self):
+        cfg._CONFIG_VERSION = 3
+        cfg._MIGRATIONS[1] = lambda r: {**r, 'stream_langs': ['es']}
+        cfg._MIGRATIONS[2] = lambda r: {**r, 'stream_max_gb': 40}
+        raw, mig = cfg._migrate({'config_version': 1, 'debrid_key': 'k'})
+        self.assertTrue(mig)
+        self.assertEqual(raw['config_version'], 3)
+        self.assertEqual(raw['stream_langs'], ['es'])
+        self.assertEqual(raw['stream_max_gb'], 40)
+        self.assertEqual(raw['debrid_key'], 'k')          # claves intactas
+
+    def test_idempotente_segunda_carga_no_migra(self):
+        """El archivo ya en _CONFIG_VERSION no vuelve a migrar."""
+        cfg._CONFIG_VERSION = 2
+        cfg._MIGRATIONS[1] = lambda r: {**r, 'x': 1}
+        raw, mig = cfg._migrate({'config_version': 2})
+        self.assertFalse(mig)
+        self.assertEqual(raw, {'config_version': 2})
+
+    def test_sin_migracion_registrada_defaults(self):
+        cfg._CONFIG_VERSION = 2                        # falta _MIGRATIONS[1]
+        raw, mig = cfg._migrate({'config_version': 1, 'debrid_key': 'k'})
+        self.assertEqual((raw, mig), ({}, False))
+
+    def test_migracion_que_lanza_defaults(self):
+        cfg._CONFIG_VERSION = 2
+        cfg._MIGRATIONS[1] = lambda r: 1/0
+        raw, mig = cfg._migrate({'config_version': 1})
+        self.assertEqual((raw, mig), ({}, False))
+
+    def test_no_muta_entrada(self):
+        cfg._CONFIG_VERSION = 2
+        cfg._MIGRATIONS[1] = lambda r: r.update(a=1) or r   # fn que muta
+        src = {'config_version': 1}
+        cfg._migrate(src)
+        self.assertNotIn('a', src)                        # recibió copia
+
+    def test_version_no_int_defaults(self):
+        self.assertEqual(cfg._migrate({'config_version': 'x'}), ({}, False))
+        self.assertEqual(cfg._migrate({'config_version': 0}), ({}, False))
+
+    def test_load_persiste_migracion(self):
+        """load_config migra el archivo y lo re-escribe en schema nuevo."""
+        import io, json
+        from unittest import mock
+        cfg._CONFIG_VERSION = 2
+        cfg._MIGRATIONS[1] = lambda r: {**r, 'stream_langs': ['es', 'latam']}
+        saved = {}
+        with mock.patch.object(cfg, '_open',
+                               return_value=io.StringIO(json.dumps(
+                                   {'config_version': 1}))), \
+             mock.patch.object(cfg, '_atomic_json',
+                               lambda _p, d: saved.update(d)):
+            cfg.load_config()
+        self.assertEqual(cfg.CFG['stream_langs'], ['es', 'latam'])
+        self.assertEqual(saved.get('config_version'), 2)
+
+    def test_load_migracion_rota_defaults(self):
+        """Migración que lanza durante load_config -> defaults, sin romper."""
+        import io, json
+        from unittest import mock
+        cfg._CONFIG_VERSION = 2
+        cfg._MIGRATIONS[1] = lambda r: (_ for _ in ()).throw(RuntimeError('x'))
+        with mock.patch.object(cfg, '_open',
+                               return_value=io.StringIO(json.dumps(
+                                   {'config_version': 1,
+                                    'stream_max_gb': 99}))):
+            cfg.load_config()
+        self.assertEqual(cfg.CFG['stream_max_gb'], 0)     # default, no 99
 
 
 class TestSaveCfg(unittest.TestCase):

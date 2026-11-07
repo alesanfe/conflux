@@ -321,6 +321,61 @@ class TestStreamFormat(unittest.TestCase):
             undo()
 
 
+class TestUxSepBudget(unittest.TestCase):
+    """UX-001: separadores huérfanos · UX-006: stream_max_chars por línea."""
+
+    def test_sep_orfano_borde_linea(self):
+        """Token vacío junto a \\n o borde: el ' · ' NO queda colgado."""
+        from conflux.domain.text import _strip_seps
+        self.assertEqual(_strip_seps('A · \nB'), 'A\nB')
+        self.assertEqual(_strip_seps(' · A'), 'A')
+        self.assertEqual(_strip_seps('A · '), 'A')
+        self.assertEqual(_strip_seps('A ·  · B'), 'A · B')
+        self.assertEqual(_strip_seps('A\n\n\nB'), 'A\nB')
+        self.assertEqual(_strip_seps(' · \n · '), '')
+
+    def test_template_sep_orfano_medio(self):
+        """'{res}\\n · {hdr} \\n· {audio}' con campos vacíos -> sin '· ' al
+        inicio de línea ni líneas vacías de relleno."""
+        from tests import cfg_swap
+        from conflux.domain.text import _display_name, extract_fields
+        f = extract_fields({'title': 'F.2024.1080p.WEB-DL'})
+        _, undo = cfg_swap(stream_format='{res}\n · {hdr} \n· {audio}')
+        try:
+            self.assertEqual(_display_name(f), '1080p')
+        finally:
+            undo()
+
+    def test_char_budget_corta_en_sep(self):
+        """Línea > stream_max_chars corta en el último ' · ' (UX-006)."""
+        from tests import cfg_swap
+        from conflux.domain.text import _clip_lines
+        ln = 'uno · dos · tres · cuatro · cinco · seis · siete · ocho · nueve'
+        _, undo = cfg_swap(stream_max_chars=40)
+        try:
+            out = _clip_lines(ln, 40)
+        finally:
+            undo()
+        self.assertLessEqual(len(out), 40)
+        self.assertFalse(out.endswith('·'))
+        self.assertEqual(_clip_lines(ln, 0), ln)          # 0 = sin presupuesto
+        hard = 'x' * 300
+        self.assertEqual(_clip_lines(hard, 60), 'x' * 59 + '…')
+
+    def test_build_display_budget(self):
+        """build_display aplica el presupuesto a name Y title."""
+        from tests import cfg_swap
+        from conflux.domain.text import build_display, extract_fields
+        f = extract_fields({'title': 'x' * 250})
+        _, undo = cfg_swap(stream_max_chars=60)
+        try:
+            _n, t = build_display(f, 'Src')
+        finally:
+            undo()
+        for ln in t.split('\n'):
+            self.assertLessEqual(len(ln), 61)            # +1 por '…' en corte duro
+
+
 class TestNewznab(unittest.TestCase):
     """infra.newznab — items NZB -> streams /nzb/<b64>; gate torbox."""
 
@@ -675,6 +730,80 @@ class TestStreamMaxGb(unittest.TestCase):
             undo()
 
 
+class TestLightPass(unittest.TestCase):
+    """STR-001/002/003: bandas de tamaño + pase ligero <15GB en producto."""
+
+    @staticmethod
+    def _row(size, name='n', res='2160P', seeds=10):
+        return ({'name': name, 'title': 't'}, res, seeds, size, 0,
+                {'es': False}, 's')                        # (out,res,seeds,gb,cached,f,short)
+
+    def test_banda_pesada_castiga(self):
+        """60GB pierde contra 8GB a igualdad total de calidad (STR-002)."""
+        rows = [self._row(60.0, 'big'), self._row(8.0, 'light')]
+        self.assertEqual(S._rows_out(rows)[0]['name'], 'light')
+
+    def test_dentro_de_banda_gana_mayor(self):
+        """14GB vs 8GB (misma banda ≤15): gana el mayor (proxy de bitrate)."""
+        rows = [self._row(8.0, 's8'), self._row(14.0, 's14')]
+        self.assertEqual(S._rows_out(rows)[0]['name'], 's14')
+
+    def test_size_desconocido_neutro(self):
+        """Size 0/ausente no castiga: banda 0 por encima de >40GB."""
+        rows = [self._row(0, 'unk'), self._row(60.0, 'big')]
+        self.assertEqual(S._rows_out(rows)[0]['name'], 'unk')
+
+    def test_banda_media_leve(self):
+        """30GB (-1) gana a 60GB (-3) pero pierde contra 8GB (0)."""
+        rows = [self._row(60.0, 'b60'), self._row(30.0, 'b30'),
+                self._row(8.0, 'b8')]
+        out = S._rows_out(rows)
+        self.assertEqual([r['name'] for r in out], ['b8', 'b30', 'b60'])
+
+    def test_light_pass_promociona_ligero(self):
+        """Top-3 todo >15GB (porque ganan por res) -> mejor ≤15GB al puesto 2."""
+        rows = [self._row(80.0, 'a'), self._row(70.0, 'b'),
+                self._row(50.0, 'c'),
+                self._row(10.0, 'light', res='1080P')]
+        out = S._rows_out(rows)
+        names = [r['name'] for r in out]
+        self.assertEqual(names[0], 'a')        # el mejor pesado conserva el #1
+        self.assertEqual(names[1], 'light')    # ligero promocionado
+        self.assertEqual(names[2:], ['b', 'c'])
+
+    def test_light_pass_noop_ligero_ya_visible(self):
+        """Un ligero en top-3 por sort normal -> no se reordena nada."""
+        rows = [self._row(80.0, 'a'), self._row(10.0, 'light'),
+                self._row(70.0, 'b')]
+        out = S._rows_out(rows)
+        self.assertEqual([r['name'] for r in out], ['light', 'a', 'b'])
+
+    def test_light_pass_noop_sin_ligeros(self):
+        """Ningún stream ≤15GB conocido -> orden intacto."""
+        rows = [self._row(80.0, 'a'), self._row(70.0, 'b'),
+                self._row(50.0, 'c'), self._row(0, 'unk')]
+        out = S._rows_out(rows)
+        self.assertEqual([r['name'] for r in out[:3]], ['unk', 'a', 'b'])
+
+    def test_light_pass_dos_filas_no_toca(self):
+        rows = [self._row(80.0, 'a'), self._row(10.0, 'light')]
+        out = S._rows_out(rows)
+        self.assertEqual(len(out), 2)
+
+    def test_stream_light_off_desactiva(self):
+        """`stream_light: false` -> el ligero queda en su puesto por sort."""
+        from tests import cfg_swap
+        rows = [self._row(80.0, 'a'), self._row(70.0, 'b'),
+                self._row(50.0, 'c'),
+                self._row(10.0, 'light', res='1080P')]
+        _, undo = cfg_swap(stream_light=False)
+        try:
+            out = S._rows_out(rows)
+            self.assertEqual([r['name'] for r in out], ['a', 'b', 'c', 'light'])
+        finally:
+            undo()
+
+
 _Src = collections.namedtuple('_Src', 'name base')
 
 
@@ -787,7 +916,7 @@ class TestCollectOne(unittest.TestCase):
         h.assert_called_once_with('Foo', True, 'cuota agotada → espera 12h', 0)
 
     def test_usable_excluye_spam_y_no_dicts(self):
-        ss = [{'title': 'ok 1080p'}, {'title': 'upgrade to premium'}, 'rueda', 7]
+        ss = [{'title': 'ok 1080p', 'url': 'http://x/1'}, {'title': 'upgrade to premium'}, 'rueda', 7]
         with mock.patch.object(S, 'SOURCES', [_Src('Foo', 'http://b')]), \
              mock.patch.object(S, '_collect_skip', return_value=None), \
              mock.patch.object(S, '_collect_fetch', return_value=('Foo', {}, ss)), \
@@ -811,7 +940,7 @@ class TestCollectHealth(unittest.TestCase):
         st.HEALTH['Foo'] = {'streak': 99}
         with mock.patch.object(S, '_health') as h:
             S._collect_health('Foo', {'streams': []},
-                              [{'title': 'a'}, {'title': 'upgrade premium'}, 'x'])
+                              [{'title': 'a', 'url': 'http://x/a'}, {'title': 'upgrade premium'}, 'x'])
         h.assert_called_once_with('Foo', True, '', 1)      # usable sin spam
         self.assertNotIn('Foo', st.COOLDOWN)               # d!=None: nunca cooldown
 
@@ -914,7 +1043,7 @@ class TestCollectWorkers(unittest.TestCase):
             self.assertEqual(len(lg.call_args[1]['err']), 100)   # repr[:100]
 
     def test_usable_sin_spam(self):
-        ss = [{'title': 'ok'}, {'title': 'free trial premium'}, 'x']
+        ss = [{'title': 'ok', 'url': 'http://x/ok'}, {'title': 'free trial premium'}, 'x']
         for worker, dep, name in self.WORKERS:
             with self.subTest(worker=worker), \
                  mock.patch.object(S, dep, return_value=ss):
@@ -1257,7 +1386,7 @@ class TestScoringContrato(unittest.TestCase):
         self.assertEqual(k[0], -RANK['1080P'])
         self.assertEqual(k[1], -1)                     # cached
         self.assertEqual(k[3], -(7 + 500))             # seeds + es boost
-        self.assertEqual(k[4], -2.0)                   # size
+        self.assertEqual(k[4], (0, -2.0))              # size: (banda, -gb)
 
 
 class TestLangRows(unittest.TestCase):
@@ -1377,7 +1506,7 @@ class TestContratoFino(unittest.TestCase):
         st._SERVED.clear(); st._SERVED.update(self._sv)
 
     def test_usable_solo_dicts_validos(self):
-        ss = [{'title': 'ok1'}, {'title': 'ok2'}]        # 0 spam: cuenta != filtro
+        ss = [{'title': 'ok1', 'url': 'http://x/1'}, {'title': 'ok2', 'url': 'http://x/2'}]  # playable: cuenta
         for worker, dep, name in TestCollectWorkers.WORKERS:
             with self.subTest(worker=worker), \
                  mock.patch.object(S, dep, return_value=ss):
@@ -1643,7 +1772,7 @@ class TestCollectScMut(unittest.TestCase):
     def test_usable_filtra_spam_y_no_dicts(self):
         """sum(isinstance and not _spam): 2 ok / 1 spam / 1 str -> 2
         (not-elim@175 contaría el spam; And->Or@175 contaría los str)."""
-        ss = [{'title': 'ok 1080p'}, {'title': 'ok2 720p'}, 'rueda',
+        ss = [{'title': 'ok 1080p', 'url': 'http://x/1'}, {'title': 'ok2 720p', 'url': 'http://x/2'}, 'rueda',
               {'title': 'upgrade to premium'}]
         with mock.patch.object(S, '_scraper', return_value=ss):
             name, out, usable = S._collect_sc('YTS', 'movie', 'tt1')

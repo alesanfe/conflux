@@ -2,20 +2,25 @@
 # pylint: disable=broad-exception-caught,line-too-long
 
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
+import os
 import re
+import urllib.parse
 from contextlib import suppress
 
 import requests
 
+from conflux.core import state as _st
 from conflux.core.state import (
     _POOL_BG,
     CFG,
     SOURCES,
+    CLOCK,
     _cat_c,
     _cget,
     _cset,
     _open,
     as_dict,
+    log_ev,
 )
 from conflux.infra.net import _session, fetch
 
@@ -132,15 +137,88 @@ def _m3u_metas():
     _M3U.update(idx)
     _M3U_TXT[0] = txt
     _M3U_METAS[:] = metas
+    _iptv_sweep()                                   # canales nuevos: verificar en bg
     return _m3u_out(metas)
 
 
+# ---- cuarentena de canales IPTV muertos (IPTV-001/002) ----
+_IPTV_BAD: dict = {}        # url -> (strikes, ts) — mismo contrato que _URL_BAD
+_IPTV_OK: dict = {}         # url -> ts última prueba viva
+_IPTV_PEND: set = set()     # probes en vuelo (dedupe + cap)
+_IPTV_Q_T = 6 * 3600        # cuarentena: 6h oculto; el barrido re-prueba a 3h
+_IPTV_MAX_PEND = 24         # m3u8 ~4s timeout: cap para no fundir _POOL_BG
+_IPTVH_PATH = os.path.join(_st._ROOT, '.iptv-health.json')
+
+
+def _iptv_probe(u):
+    """GET streaming (HEAD suele dar 405 en servidores m3u8): <400 vivo;
+    4xx/5xx muerto confirmado; timeout/conexión -> strike."""
+    try:
+        r = _session(urllib.parse.urlsplit(u).netloc).get(u, timeout=4, stream=True)
+        try:
+            ok = r.status_code < 400
+        finally:
+            r.close()
+        if ok:
+            _IPTV_OK[u] = CLOCK.time()
+            _IPTV_BAD.pop(u, None)
+        else:
+            _IPTV_BAD[u] = (2, CLOCK.time())
+    except Exception:                                    # noqa: BLE001
+        st, _ = _IPTV_BAD.get(u, (0, 0))
+        _IPTV_BAD[u] = (st + 1, CLOCK.time())
+    _st.health_save(_IPTVH_PATH, _IPTV_BAD, _IPTV_OK)
+    _IPTV_PEND.discard(u)
+
+
+def _iptv_dead(u):
+    """Canal en cuarentena: muerto confirmado hace <6h (después se re-prueba)."""
+    st, ts = _IPTV_BAD.get(u, (0, 0))
+    return st >= 2 and CLOCK.time() - ts < _IPTV_Q_T
+
+
+def _iptv_due(u, now):
+    """¿Toca probe? cuarentena re-prueba a media ventana (recuperación);
+    strike suelto a 30min; vivos se re-verifican a 6h."""
+    st, bts = _IPTV_BAD.get(u, (0, 0))
+    if st >= 2:
+        return now - bts > _IPTV_Q_T // 2
+    return (now - bts > 1800 and now - _IPTV_OK.get(u, 0) > _IPTV_Q_T)
+
+
+def _iptv_sweep():
+    """Barrido proactivo (IPTV-001/002): encola probes de canales sin
+    veredicto fresco. Cap de pendientes: un .m3u de 500 canales no dispara
+    500 sockets a la vez — el resto entra en el siguiente barrido (30min).
+    `iptv_health: false` en config lo desactiva."""
+    if not _M3U or CFG.get('iptv_health', True) is False:
+        return 0
+    now = CLOCK.time()
+    n = 0
+    for u in set(_M3U.values()):
+        if len(_IPTV_PEND) >= _IPTV_MAX_PEND:
+            break
+        if not u.startswith('http') or u in _IPTV_PEND or not _iptv_due(u, now):
+            continue
+        _IPTV_PEND.add(u)
+        try:
+            _POOL_BG.submit(_iptv_probe, u)
+            n += 1
+        except Exception:                                # noqa: BLE001 — pool cerrado
+            _IPTV_PEND.discard(u)
+    if n:
+        log_ev('iptv_sweep', probes=n)
+    return n
+
+
 def _m3u_out(metas):
-    """parental: fuera canales con etiquetas adultas en nombre/grupo."""
+    """parental: fuera canales con etiquetas adultas; cuarentena IPTV: fuera
+    los confirmados muertos — reaparecen solos si el barrido los revive."""
+    out = [m for m in metas if not _iptv_dead(_M3U.get(m['id'], ''))]
     if not CFG.get('parental'):
-        return metas
+        return out
     from conflux.core.cfg import RE_ADULT           # local: cfg importa lists (circular)
-    return [m for m in metas
+    return [m for m in out
             if not RE_ADULT.search(f"{m.get('name', '')} {m.get('description', '')}")]
 
 def _m3u_extinf(ln):
@@ -149,5 +227,8 @@ def _m3u_extinf(ln):
             'logo': (m.group(1) if (m := re.search(r'tvg-logo="([^"]*)"', ln)) else ''),
             'group': (m.group(1) if (m := re.search(r'group-title="([^"]*)"', ln)) else ''),
             'tvg': (m.group(1) if (m := re.search(r'tvg-id="([^"]*)"', ln)) else '')}
+
+
+_st.health_load(_IPTVH_PATH, _IPTV_BAD, _IPTV_OK)   # cuarentena del proceso anterior
 
 

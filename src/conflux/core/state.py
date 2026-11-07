@@ -264,9 +264,11 @@ _CFG_DEFAULTS = {'m3u_path': '', 'debrid_provider': '', 'debrid_key': '',
                  'torznab_url': '', 'torznab_key': '', 'mdblist_key': '',
                  'catalog_lists': '', 'source_order': [], 'catalogs_disabled': [],
                  'stream_exclude': [], 'rpdb_key': '',
+                 'rpdb_style': 'poster-default', 'rpdb_fallback': True,
                  'opensubtitles_key': '', 'opensubtitles_user': '', 'opensubtitles_pass': '',
                  'admin_token': '', 'tls_cert': '', 'tls_key': '',
                  'stream_max_gb': 0, 'stream_prefetch': True,
+                 'stream_max_chars': 200,
                  'stream_sort': [], 'stream_required': [], 'stream_format': '',
                  'zilean_url': '', 'debrid_proxy': False,
                  'newznab_url': '', 'newznab_key': '',
@@ -282,7 +284,8 @@ _CFG_DEFAULTS = {'m3u_path': '', 'debrid_provider': '', 'debrid_key': '',
                  'max_connections': 64,
                  'sabnzbd_url': '', 'sabnzbd_key': '', 'scraper_rss': [],
                  'log_level': '', 'config_version': 1,
-                 'stremio_authkey': '', 'authkey_scrape': True}
+                 'stremio_authkey': '', 'authkey_scrape': True,
+                 'auto_update': False, 'update_channel': 'stable'}
 
 CFG: dict[str, Any] = dict(_CFG_DEFAULTS)
 
@@ -340,6 +343,63 @@ def _atomic_json(path, obj):
         finally:
             os.close(dfd)
     except OSError:                        # fsync de dir no existe en win32/algunos fs
+        pass
+
+
+# ---- veredictos de salud persistidos (META-001/003, RES-001) ----
+# Contrato compartido por _URL_BAD/_URL_OK (streams) y _POSTER_BAD/_POSTER_OK
+# (posters): bad = {url: (strikes, ts)}, ok = {url: ts}. Se guarda un fichero
+# JSON por mapa, atómico vía _atomic_json. Los lectores ya ignoran entradas
+# más viejas que su TTL, así que solo se guardan veredictos aún accionables.
+# Multi-proceso: NO soportado (un solo proceso Conflux por instalación —
+# dos instancias escribiendo el mismo fichero pisarían veredictos).
+_HEALTH_KEEP = 1800 * 4        # conserva veredictos hasta 2h (reintento 30min x4)
+_HEALTH_SAVE: dict = {}        # path -> ts del último save (throttle por fichero)
+
+
+def health_load(path, bad, ok):
+    """Rellena bad/ok in-situ desde el fichero persistido (si existe y no está
+    corrupto). Entradas caducadas o malformadas se descartan silenciosamente:
+    un veredicto perdido solo repite un HEAD, nunca rompe el arranque."""
+    try:
+        if not os.path.exists(path):
+            return
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return
+        now = CLOCK.time()
+        for u, v in (data.get('bad') or {}).items():
+            try:
+                st, ts = int(v[0]), float(v[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if now - ts < _HEALTH_KEEP:
+                bad[u] = (st, ts)
+        for u, ts in (data.get('ok') or {}).items():
+            if isinstance(ts, (int, float)) and now - ts < _HEALTH_KEEP:
+                ok[u] = float(ts)
+    except Exception:
+        pass
+
+
+def health_save(path, bad, ok, throttle=60):
+    """Persiste {bad, ok} atómicamente con throttle (los workers HEAD pueden
+    terminar en ráfaga — un save por veredicto haría churn de disco).
+    Solo se guardan veredictos aún vigentes: el fichero no crece con basura."""
+    now = CLOCK.time()
+    if now - _HEALTH_SAVE.get(path, 0.0) < throttle:
+        return
+    _HEALTH_SAVE[path] = now
+    try:
+        _atomic_json(path, {
+            'bad': {u: list(v) for u, v in bad.items()
+                    if isinstance(v, (list, tuple)) and len(v) == 2
+                    and now - v[1] < _HEALTH_KEEP},
+            'ok': {u: ts for u, ts in ok.items()
+                   if isinstance(ts, (int, float)) and now - ts < _HEALTH_KEEP},
+        })
+    except Exception:
         pass
 
 

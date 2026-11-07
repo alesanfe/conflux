@@ -207,13 +207,25 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_win.ps1 -Env env-backup-*
   inválido se salta y queda logueado, no tumba el pipeline. `stream_max_gb` descarta
   por tamaño (un 4K de 80GB no siempre gana); `stream_prefetch: false`
   desactiva la precarga al abrir fichas. `rpdb_key` sirve
-  posters con rating (ratingposterdb.com, gratis) estilo MediaFusion.
+  posters con rating (ratingposterdb.com, gratis) estilo MediaFusion —
+  `rpdb_style` elige el estilo (`poster-default`/`poster-textless`) y
+  `rpdb_fallback` (default on) pide a RPDB el poster original si no tiene
+  uno con rating para ese id (nunca un hueco sin imagen).
 - **Ranking consciente de calidad** — `res>cached>_qscore>seeds(+ES)>size`:
   `_qscore` pondera rip (REMUX>BluRay>WEB-DL>HDTV), HDR (DV>HDR10+>HLG),
-  codec (AV1>HEVC>AVC) y audio (Atmos>DTS:X>TrueHD). `stream_sort` reordena
+  codec (AV1>HEVC>AVC) y audio (Atmos>DTS:X>TrueHD). El tamaño puntúa por
+  bandas (≤15GB neutro, 15–40GB leve, >40GB castigado — dentro de banda gana
+  el mayor como proxy de bitrate): un REMUX de 80GB no aplasta a un WEB-DL
+  de 8GB a igualdad de calidad. **Pase ligero**: si el top-3 son solo
+  archivos >15GB, el mejor stream ≤15GB conocido sube al puesto 2 — opción
+  viable para conexiones limitadas sin perder el #1 de máxima calidad
+  (`stream_light: false` lo desactiva). `stream_sort` reordena
   el stack por perfil (`seeds,quality` pone seeds primero — sort-stacks de
   AIOStreams); `stream_format` es el formatter (`{res} {hdr} {codec} {audio}
-  {lang} {rip} {title} {es}` → nombre del stream a tu gusto).
+  {lang} {rip} {title} {es}` → nombre del stream a tu gusto — separadores
+  huérfanos por tokens vacíos se limpian solos); `stream_max_chars`
+  (default 200, 0=off) corta líneas largas en el último separador — las
+  tarjetas del cliente nunca renderizan una línea interminable.
 - **Subtítulos** — con `opensubtitles_key`: recurso `subtitles` ES-first,
   redirect `/s/<file_id>` al CDN. La descarga exige cuenta de usuario
   (`opensubtitles_user`/`pass` — registro gratis en opensubtitles.com, cuota

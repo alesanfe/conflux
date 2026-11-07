@@ -3,6 +3,11 @@
 Diagnóstico primero: `conflux doctor` (o `--json`). Los errores llevan
 código `CFX-*` y correlation id (`X-Request-Id` / `rid` en logs).
 
+Observabilidad: `/metrics` (Prometheus), `/admin/diag` (snapshot JSON
+completo: fuentes/latencias/caches/pósters/epg + histórico 30d — mismo
+auth que `/admin`), `.metrics-history.json` (rollup diario de contadores,
+anillo de 90 días — se rellena en el refresher y en shutdown).
+
 ## El servicio no arranca
 - `doctor` → `service` FAIL y `port` "ocupado": ya hay una instancia viva
   (el log registra `bind_fail`). Mata el proceso o usa otra instancia.

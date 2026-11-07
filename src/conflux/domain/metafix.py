@@ -1,12 +1,14 @@
 """Normalización y enriquecimiento de metas Stremio (poster/logo/awards/vídeos)."""
 # pylint: disable=broad-exception-caught,line-too-long
 import html as _html
+import os as _os
 import re as _re
 import urllib.parse as _urlparse
 
 import requests
 
 from conflux.core.cfg import _cfgget
+from conflux.core import state as _st
 from conflux.core.state import CLOCK as _CLOCK, _POOL, _POOL_BG
 from conflux.infra.net import _session
 from conflux.infra.wikidata import _wikidata
@@ -28,6 +30,14 @@ _POSTER_BAD: dict = {}        # url -> (strikes, ts) — mismo contrato que _URL
 _POSTER_OK: dict = {}         # url -> ts
 _POSTER_PEND: set = set()     # urls con HEAD en vuelo (dedupe + cap de ráfaga)
 _POSTER_FB = 'https://i.imgur.com/tTCuczU.png'   # el placeholder de los m3u
+_POSTERH_PATH = _os.path.join(_st._ROOT, '.poster-health.json')   # persistidos
+_MF_STATS = {'poster_dead': 0, 'poster_replaced': 0, 'poster_resurrect': 0,
+             'rpdb_applied': 0}                          # META-007
+
+
+def poster_stats():
+    """Snapshot de contadores de salud de pósters/rpdb para /metrics."""
+    return dict(_MF_STATS)
 
 
 def _poster_head(u):
@@ -36,12 +46,17 @@ def _poster_head(u):
         r = _session(_urlparse.urlsplit(u).netloc).head(u, timeout=3, allow_redirects=True)
         if r.status_code < 400:
             _POSTER_OK[u] = _CLOCK.time()
-            _POSTER_BAD.pop(u, None)
+            if _POSTER_BAD.pop(u, None):
+                _MF_STATS['poster_resurrect'] += 1       # resucitó: era malo
         else:
             _POSTER_BAD[u] = (2, _CLOCK.time())
+            _MF_STATS['poster_dead'] += 1
     except Exception:                                    # noqa: BLE001
         st, _ = _POSTER_BAD.get(u, (0, 0))
         _POSTER_BAD[u] = (st + 1, _CLOCK.time())
+        if st + 1 >= 2:
+            _MF_STATS['poster_dead'] += 1                # segundo strike: muerto
+    _st.health_save(_POSTERH_PATH, _POSTER_BAD, _POSTER_OK)   # META-003
     _POSTER_PEND.discard(u)
 
 
@@ -88,6 +103,7 @@ def _posters_view(d):
             dead.add(p)
     if not dead:
         return d
+    _MF_STATS['poster_replaced'] += len(dead)
     out = dict(d)
     for k in ('meta', 'metas', 'metasDetailed'):
         v = d.get(k)
@@ -221,24 +237,44 @@ def _fix_meta_deep(m, yt):
 
 
 
+_RPDB_STYLES = {'poster-default', 'poster-textless'}   # estilos del servicio
+
+
 def _rpdb(d):
     """Posters con ratings (RatingPosterDB — la feature de MediaFusion): si hay
     rpdb_key configurada, los metas tt:* sirven su poster vía api.ratingposterdb.com.
     Sin key (default) no toca nada. NO destructivo: devuelve copia para no
-    contaminar los caches compartidos entre perfiles (/p/, /cfg/)."""
+    contaminar los caches compartidos entre perfiles (/p/, /cfg/).
+    META-002: config.rpdb_style elige el estilo (default/textless — validado
+    contra allowlist, un valor raro cae a 'poster-default': la key va en la
+    URL y un style inyectado rompería el path); config.rpdb_fallback (default
+    on) añade ?fallback=true: si RPDB no tiene poster con rating para ese
+    imdb devuelve el póster original en vez de un 404 -> la ficha nunca se
+    queda sin imagen por el servicio. META-007: rpdb_applied cuenta swaps."""
     key = _cfgget('rpdb_key')
     if not key or not isinstance(d, dict):
         return d
+    style = str(_cfgget('rpdb_style') or 'poster-default')
+    if style not in _RPDB_STYLES:
+        style = 'poster-default'
+    fb = '?fallback=true' if _cfgget('rpdb_fallback', True) else ''
+    base = f'https://api.ratingposterdb.com/{key}/imdb/{style}'
+    def _url(mid): return f'{base}/{mid}.jpg{fb}'  # noqa: E731
     out = dict(d)
     for fld in ('metas', 'metasDetailed'):
         ms = out.get(fld)
         if isinstance(ms, list):
-            out[fld] = [dict(m, poster=f'https://api.ratingposterdb.com/{key}/imdb/poster-default/{m["id"]}.jpg')
+            out[fld] = [dict(m, poster=_url(m['id']))
                         if isinstance(m, dict) and str(m.get('id') or '').startswith('tt') else m
                         for m in ms]
     m = out.get('meta')
     if isinstance(m, dict) and str(m.get('id') or '').startswith('tt'):
-        out['meta'] = dict(m, poster=f'https://api.ratingposterdb.com/{key}/imdb/poster-default/{m["id"]}.jpg')
+        out['meta'] = dict(m, poster=_url(m['id']))
+    _MF_STATS['rpdb_applied'] += sum(
+        1 for fld in ('metas', 'metasDetailed')
+        for m in (out.get(fld) or [])
+        if isinstance(m, dict) and str(m.get('id') or '').startswith('tt')) \
+        + bool(out.get('meta') and str(out['meta'].get('id') or '').startswith('tt'))
     return out
 
 
@@ -286,3 +322,6 @@ def _dead_videos(vids):
             return None
     fs = [_POOL.submit(chk, v) for v in vids[:40]]               # primera página visible
     return {f.result() for f in fs if f.result()}
+
+
+_st.health_load(_POSTERH_PATH, _POSTER_BAD, _POSTER_OK)   # veredictos del proceso anterior
