@@ -194,8 +194,9 @@ def _stage(exe, tag, sig):
         # POSIX frozen: el binario en ejecución se puede reemplazar en caliente
         # (no-frozen no llega aquí: _update_tick lo gatea; tests toman la vía nt)
         try:
+            mode = os.stat(sys.executable).st_mode   # preserva permisos del binario
             os.replace(_NEW_EXE, sys.executable)
-            os.chmod(sys.executable, 0o755)
+            os.chmod(sys.executable, mode)
             log_ev('update_applied', tag=tag)
         except OSError as e:
             log_ev('update_stage_err', err=str(e)[:80])
