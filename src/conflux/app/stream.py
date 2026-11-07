@@ -439,6 +439,7 @@ def handle_stream(stype, sid):
     if hit is not None:
         out = _adult_out(_req_out(_rex_req_out(_rex_ex_out(_ex_out(_rows_out(hit))))))
         _debrid_mark(out)                          # debrid marca copias: fuera del caché
+        _url_health(out)                           # veredicto muerto filtra también el caché
         _hash_health(out)                          # veredictos scrape: filtran también el caché
         return {'streams': out}
     state = _ensure_collect(key)

@@ -15,6 +15,12 @@ class TestPickFile(unittest.TestCase):
         self.assertIsNone(db._pick_file(['a'], 5))
         self.assertEqual(db._pick_file(['a'], 5, 'd'), 'd')
 
+    def test_indice_negativo_no_envuelve(self):
+        """fi=-1 no debe servir fs[-1] (último fichero): cae al default —
+        un ?fi=-1 en /r/ pedía silenciosamente el fichero equivocado."""
+        self.assertIsNone(db._pick_file(['a', 'b'], -1))
+        self.assertEqual(db._pick_file(['a', 'b'], -1, 'd'), 'd')
+
 
 class TestMarkOne(unittest.TestCase):
     def test_marca_y_reescribe(self):

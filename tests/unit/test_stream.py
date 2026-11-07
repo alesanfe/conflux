@@ -62,6 +62,21 @@ class TestHandleStream(unittest.TestCase):
         self.assertEqual(S.handle_stream('movie', 'tt1'), {'streams': [{'name': 'x'}]})
         S._cache.clear()
 
+    def test_cache_hit_filtra_urls_muertas(self):
+        """El path cacheado también pasa _url_health: una url confirmada muerta
+        no se sirve aunque la fila siga en _cache (antes solo filtraba el
+        collect fresco — el veredicto se ignoraba hasta expirar el TTL)."""
+        key = ('movie', 'tt1', tuple(sorted(S._eff_disabled_for('movie'))))
+        st._cset(S._cache, key, [{'name': 'x', 'url': 'http://dead.cdn/f.mkv'},
+                                {'name': 'y', 'url': 'http://ok.cdn/g.mkv'}])
+        S._URL_BAD['http://dead.cdn/f.mkv'] = (2, time.time())
+        try:
+            d = S.handle_stream('movie', 'tt1')
+        finally:
+            S._cache.clear()
+            S._URL_BAD.pop('http://dead.cdn/f.mkv', None)
+        self.assertEqual([s['name'] for s in d['streams']], ['y'])
+
     def test_cache_clave_discrimina_fuentes_desactivadas(self):
         """Un perfil con sources_disabled no puede servir el caché del base
         (ni envenenarlo): las claves difieren por el set efectivo."""

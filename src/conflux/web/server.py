@@ -283,12 +283,18 @@ class H(BaseHTTPRequestHandler):
             except (ValueError, UnicodeDecodeError, binascii.Error):
                 link = ''
             u, pw = CFG.get('easynews_user', ''), CFG.get('easynews_pass', '')
-            if link.startswith('http') and u and pw:
+            try:
                 sp = urllib.parse.urlsplit(link)
+            except ValueError:                     # b64 arbitrario -> url rota
+                sp = None
+            if link and u and pw and link.startswith('http') and sp and \
+                    sp.hostname and (sp.hostname == 'easynews.com'
+                                     or sp.hostname.endswith('.easynews.com')):
                 cred = f'{urllib.parse.quote(u, safe="")}:{urllib.parse.quote(pw, safe="")}@'
                 link = f'{sp.scheme}://{cred}{sp.netloc}{sp.path}'
             else:
-                link = ''                                     # sin creds -> 404
+                link = ''               # sin creds u host ajeno: las credenciales
+                                        # easynews NUNCA viajan a un host arbitrario
             return self._redir(link if link.startswith('http') else None)
         if p.startswith('/s/'):                                        # subtitle redirect
             return self._redir(_sub_download(p.rsplit('/', 1)[-1]))

@@ -227,8 +227,9 @@ _VIDEO_EXT = ('.mp4', '.mkv', '.avi', '.m4v', '.webm')
 
 
 def _pick_file(fs, fi, default=None):
-    """file_idx del stream -> fichero del torrent; fuera de rango = default."""
-    return fs[int(fi)] if int(fi) < len(fs) else default
+    """file_idx del stream -> fichero del torrent; fuera de rango = default.
+    fi negativo NO vale: fs[-1] serviría el último fichero sin pedirlo."""
+    return fs[int(fi)] if 0 <= int(fi) < len(fs) else default
 
 
 def _db_rd(k, h, fi):
@@ -240,7 +241,7 @@ def _db_rd(k, h, fi):
     tid = t['id']
     inf = s.get(f'https://api.real-debrid.com/rest/1.0/torrents/info/{tid}', headers=h_, timeout=8).json()
     fs = [f for f in inf.get('files', []) if f.get('name', '').lower().endswith(_VIDEO_EXT)]
-    fsel = fs[int(fi)] if int(fi) < len(fs) else max(fs, key=lambda f: f.get('bytes', 0))
+    fsel = fs[int(fi)] if 0 <= int(fi) < len(fs) else max(fs, key=lambda f: f.get('bytes', 0))
     s.post(f'https://api.real-debrid.com/rest/1.0/torrents/selectFiles/{tid}',
            data={'files': fsel['id']}, headers=h_, timeout=8)
     inf = s.get(f'https://api.real-debrid.com/rest/1.0/torrents/info/{tid}', headers=h_, timeout=8).json()
@@ -292,7 +293,7 @@ def _db_pm(k, h, fi):
     fs = [f for f in (d.get('content') or []) if str(f.get('path', '')).lower().endswith(_VIDEO_EXT)]
     if not fs:
         return None
-    fsel = fs[int(fi)] if int(fi) < len(fs) else max(fs, key=lambda f: f.get('size', 0))
+    fsel = fs[int(fi)] if 0 <= int(fi) < len(fs) else max(fs, key=lambda f: f.get('size', 0))
     return fsel.get('link')
 
 
@@ -303,7 +304,7 @@ def _db_ed(k, h, fi):
                json={'url': f'magnet:?xt=urn:btih:{h}'}, headers=h_, timeout=10).json()
     files = _video_links(d.get('files') or d.get('data') or [])
     if files:
-        fsel = files[int(fi)] if int(fi) < len(files) else files[0]
+        fsel = files[int(fi)] if 0 <= int(fi) < len(files) else files[0]
         return fsel.get('url') or fsel.get('link')
     return d.get('url') or d.get('link')
 
@@ -362,7 +363,7 @@ def _db_pio(k, h, fi):
                params={'parent_id': root or 0, 'per_page': 200},
                headers=h_, timeout=10).json().get('files') or []
     vids = [f for f in fs if str(f.get('name', '')).lower().endswith(_VIDEO_EXT)]
-    fsel = vids[int(fi)] if int(fi) < len(vids) else \
+    fsel = vids[int(fi)] if 0 <= int(fi) < len(vids) else \
         (max(vids, key=lambda f: f.get('size', 0)) if vids else None)
     if not fsel:
         return None

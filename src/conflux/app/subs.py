@@ -81,7 +81,7 @@ def _os_login_now(key, user, pw):
             'https://api.opensubtitles.com/api/v1/login',
             json={'username': user, 'password': pw},
             headers={'Api-Key': key, 'User-Agent': 'conflux 1.0'}, timeout=8).json()
-        tok = d.get('token')
+        tok = d.get('token') if isinstance(d, dict) else None   # []/str de error upstream
         if tok:
             _OS_TOK['token'], _OS_TOK['ts'] = tok, CLOCK.time()
         return tok

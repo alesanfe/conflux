@@ -255,6 +255,17 @@ class TestOsLogin(unittest.TestCase):
         finally:
             undo()
 
+    def test_respuesta_no_dict_no_crashea(self):
+        """OpenSubtitles responde JSON no-dict ([] de error) -> None, nunca
+        AttributeError propagado al handler /s/."""
+        s, _ = fake_session({'json': []})
+        _, undo = cfg_swap(**self.CREDS)
+        try:
+            with patch.object(sub, '_session', return_value=s):
+                self.assertIsNone(sub._os_login())
+        finally:
+            undo()
+
     def test_error_red_none(self):
         import requests
         s, _ = fake_session(requests.RequestException('x'))

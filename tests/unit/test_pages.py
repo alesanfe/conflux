@@ -378,6 +378,24 @@ class TestCfgDictFields(unittest.TestCase):
         self.assertEqual(cfg['source_groups'], {'movie': ['A', 'B'],
                                                 'series': ['C']})
 
+    def test_source_groups_vacio_conserva_previo(self):
+        """Una línea 'movie' sin '=' (typo) o 'movie=' vacía NO puede vaciar el
+        grupo a [] — eso desactivaría TODAS las fuentes del tipo (misma regla
+        'conserva previo' que debrid_providers)."""
+        with patch.dict(pg.CFG, {'source_groups': {'movie': ['A', 'B']}}):
+            cfg = {}
+            pg._cfg_dict_fields({'source_groups': ['movie\nseries=K']}, cfg)
+        self.assertEqual(cfg['source_groups']['movie'], ['A', 'B'])
+        self.assertEqual(cfg['source_groups']['series'], ['K'])
+
+    def test_source_groups_sin_previo_ignora(self):
+        """Línea 'movie' sin '=' y sin grupo previo se ignora — un typo no
+        debe crear un grupo vacío que silencie todas las fuentes del tipo."""
+        with patch.dict(pg.CFG, {'source_groups': {}}):
+            cfg = {}
+            pg._cfg_dict_fields({'source_groups': ['movie\nseries=K']}, cfg)
+        self.assertEqual(cfg['source_groups'], {'series': ['K']})
+
 
 class TestConfigurePageHtml(unittest.TestCase):
     def test_textareas_newlines(self):
@@ -454,6 +472,52 @@ class TestConfigurePageRender(unittest.TestCase):
         self.assertIn("value='yts'", h)
         self.assertIn('http://f/r', h)
         self.assertEqual(sg, 'movie=A,B')
+
+
+class TestHtmlEscape(unittest.TestCase):
+    """Valores de config/fuentes/errores se renderizan escapados: un ' o < en
+    m3u_path, un nombre de fuente o un mensaje de error no rompen el HTML ni
+    inyectan markup en las páginas admin."""
+
+    def test_configure_escapa_value_con_comilla(self):
+        """m3u_path con ' cerraba el atributo value -> HTML roto/inyección."""
+        with patch.dict(pg.CFG, {'m3u_path': "C:\\media\\canal'es.m3u"}):
+            h = pg._configure_page()
+        self.assertNotIn("canal'es.m3u'", h)
+        self.assertIn("canal&#x27;es.m3u", h)
+
+    def test_configure_escapa_marcado(self):
+        """stream_format con <script> no sale literal."""
+        with patch.dict(pg.CFG, {'stream_format': "<script>x</script>"}):
+            h = pg._configure_page()
+        self.assertNotIn("<script>x</script>", h)
+        self.assertIn("&lt;script&gt;", h)
+
+    def test_configure_escapa_listas(self):
+        """extra_sources con ' no rompe el value CSV."""
+        with patch.dict(pg.CFG, {'extra_sources': ["https://a/'x"]}):
+            h = pg._configure_page()
+        self.assertNotIn("https://a/'x", h)
+        self.assertIn("https://a/&#x27;x", h)
+
+    def test_admin_escapa_fuente_y_error(self):
+        """Nombre de fuente upstream y err de excepción no inyectan markup."""
+        from conflux.core.state import Source
+        with patch.dict(pg.HEALTH, {"<img src=x>": {'ok': 1, 'fail': 1,
+                                                   'err': "<b>bad"}}), \
+                patch.object(pg, 'SOURCES', [Source('<i>n</i>', 'u')]):
+            h = pg._admin_page()
+            c = pg._configure_page()
+        self.assertNotIn('<img src=x>', h)
+        self.assertNotIn('<b>bad', h)
+        self.assertIn('&lt;img src=x&gt;', h)
+        self.assertNotIn('><i>n</i><', c)
+
+    def test_landing_escapa_host(self):
+        """Host header malicioso no inyecta atributos en el deep link."""
+        h = pg._landing_page("x' onmouseover='alert(1)", tls=False)
+        self.assertNotIn("onmouseover='alert", h)
+        self.assertIn('&#x27;', h)
 
 
 if __name__ == '__main__':

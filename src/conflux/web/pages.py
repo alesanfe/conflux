@@ -2,6 +2,7 @@
 # pylint: disable=broad-exception-caught,line-too-long
 # broad-exception: resiliencia del agregador; line-too-long: regex/URLs/HTML embebido
 import threading
+from html import escape
 
 from conflux.app.bg import _prefetch_catalogs
 from conflux.core.cfg import _PROF, _save_cfg, load_config
@@ -23,6 +24,12 @@ from conflux.core.state import (
     manifests,
 )
 from conflux.domain.manifest import build_manifest
+
+
+def _h(v):
+    """Escape HTML+comillas: valores de config/fuentes/errores van a atributos
+    '…' o celdas — un ' o < sin escapar rompe el form o inyecta markup."""
+    return escape(str(v), quote=True)
 
 
 # ---- servidor ----
@@ -86,8 +93,13 @@ def _cfg_dict_fields(form, cfg):
         cfg['debrid_providers'] = {p: (v or prev.get(p, ''))
                                    for p, v in _kv_lines(form, 'debrid_providers').items()}
     if 'source_groups' in form:
-        cfg['source_groups'] = {t: [s.strip() for s in v.split(',') if s.strip()]
-                                for t, v in _kv_lines(form, 'source_groups').items()}
+        prev_g = dict(CFG.get('source_groups') or {})
+        out = {}
+        for t, v in _kv_lines(form, 'source_groups').items():
+            lst = [s.strip() for s in v.split(',') if s.strip()]
+            if lst or t in prev_g:               # valor vacío = conserva previo;
+                out[t] = lst or prev_g.get(t, [])  # sin previo, se ignora la línea
+        cfg['source_groups'] = out
 
 
 def _cfg_scalar_fields(form, cfg):
@@ -163,12 +175,12 @@ def _landing_page(host, tls):
     host viene del header HTTP: loopback, LAN o dominio público generan el
     deep link correcto para dondequiera que se abra la página."""
     scheme = 'https' if tls else 'http'
-    man = f'{scheme}://{host}/manifest.json'
+    man = _h(f'{scheme}://{host}/manifest.json')          # host = header del cliente
     return (f"<html><head><title>conflux</title>{_PAGE_CSS}</head><body>"
             f"<h1>conflux · streams unificados</h1>"
             f"<p class='dim'>Addon agregador: catálogos, streams, metas, subtítulos, "
             f"debrid, torznab y M3U — detrás de un solo manifest.</p>"
-            f"<p><a class='btn' href='stremio://{host}/manifest.json' "
+            f"<p><a class='btn' href='stremio://{_h(host)}/manifest.json' "
             f"style='font-size:19px;padding:12px 24px'>Instalar en Stremio</a></p>"
             f"<p class='dim'>¿No abre la app? Stremio → Addons → pega esta URL en el buscador:<br>"
             f"<code style='background:#1a1a24;padding:4px 8px;border-radius:6px'>{man}</code></p>"
@@ -182,11 +194,11 @@ def _landing_page(host, tls):
 def _login_page(to='/admin', err=''):
     """Form de acceso cuando admin_token está activo — el token va en una
     cookie HttpOnly+SameSite=Strict, nunca en la URL (historial/Referer)."""
-    err_h = f"<p class='bad'>{err}</p>" if err else ''
+    err_h = f"<p class='bad'>{_h(err)}</p>" if err else ''
     return (f"<html><head><title>conflux · acceso</title>{_PAGE_CSS}</head><body>"
             f"<h1>conflux · acceso</h1>{err_h}"
             f"<form method='post' action='/login'>"
-            f"<input type='hidden' name='to' value='{to}'>"
+            f"<input type='hidden' name='to' value='{_h(to)}'>"
             f"<p>Token de administrador<br>"
             f"<input type='password' name='token' autofocus style='max-width:320px'></p>"
             f"<p><button type='submit'>entrar</button></p></form>"
@@ -204,11 +216,11 @@ def _admin_page():
         last = h.get('last', 0)
         last_txt = (f"{(now - last) / 60:.0f}min" if last else '—')
         if h.get('err'):
-            last_txt += f" · {h['err'][:28]}"
-        rows.append(f"<tr><td>{n}</td><td class='ok'>{h.get('ok',0)}</td><td class='bad'>{h.get('fail',0)}</td>"
-                    f"<td>{sv['n']}</td><td class='dim'>{res_txt}</td>"
-                    f"<td class='dim'>{last_txt}</td><td>{cdtxt}</td></tr>")
-    lat = ''.join(f"<tr><td>{k}</td><td>{n2}</td><td>{t/n2:.0f}</td><td>{_pct(list(_rts.get(k,())),.5):.0f}</td>"
+            last_txt += f" · {_h(h['err'][:28])}"        # err viene de excepciones upstream
+        rows.append(f"<tr><td>{_h(n)}</td><td class='ok'>{h.get('ok',0)}</td><td class='bad'>{h.get('fail',0)}</td>"
+                    f"<td>{sv['n']}</td><td class='dim'>{_h(res_txt)}</td>"
+                    f"<td class='dim'>{last_txt}</td><td>{_h(cdtxt)}</td></tr>")
+    lat = ''.join(f"<tr><td>{_h(k)}</td><td>{n2}</td><td>{t/n2:.0f}</td><td>{_pct(list(_rts.get(k,())),.5):.0f}</td>"
                   f"<td>{_pct(list(_rts.get(k,())),.95):.0f}</td><td>{_pct(list(_rts.get(k,())),.99):.0f}</td><td>{x:.0f}</td></tr>"
                   for k, (n2, t, x) in _rtime.items())
     return (f"<html><head><title>admin</title>{_PAGE_CSS}</head><body>"
@@ -218,7 +230,7 @@ def _admin_page():
             f"<a class='btn' href='/configure'>configure</a></p>"
             f"<h2>Fuentes</h2><table><tr><th>fuente</th><th>ok</th><th>fail</th><th>streams</th><th>por calidad</th><th>último</th><th>circuito</th></tr>{''.join(rows)}</table>"
             f"<h2>Latencia por ruta (ms)</h2><table><tr><th>ruta</th><th>n</th><th>avg</th><th>p50</th><th>p95</th><th>p99</th><th>max</th></tr>{lat}</table>"
-            f"<h2>Fails por host</h2><p class='dim'>{' · '.join(f'{k}: {v[0]}' for k, v in _fails.items()) or '—'}</p></body></html>")
+            f"<h2>Fails por host</h2><p class='dim'>{' · '.join(f'{_h(k)}: {v[0]}' for k, v in _fails.items()) or '—'}</p></body></html>")
 
 
 def _debrid_html(opts):
@@ -231,31 +243,31 @@ def _debrid_html(opts):
             f" sirve; <code>provider=</code> vacío conserva la key guardada)</span><br>"
             f"<textarea name='debrid_providers' rows='2'"
             f" placeholder='torbox=&#10;real-debrid='>"
-            f"{chr(10).join(f'{p}=' for p in (CFG.get('debrid_providers') or {}))}</textarea></p>")
+            f"{_h(chr(10).join(f'{p}=' for p in (CFG.get('debrid_providers') or {})))}</textarea></p>")
 
 
 def _tuners_html(langs):
     """Bloque de tuners: idiomas, filtros, regex, orden, formato,
     límites y toggles + scrapers/pool."""
-    return (f"<p>idiomas streams <input name='stream_langs' value='{langs}' style='width:200px'></p>"
+    return (f"<p>idiomas streams <input name='stream_langs' value='{_h(langs)}' style='width:200px'></p>"
             f"<p>Filtros de stream <span class='dim'>(términos a excluir, coma — p.ej. cam,screener,ts,720p)</span><br>"
-            f"<input name='stream_exclude' value='{','.join(CFG.get('stream_exclude') or [])}' placeholder='cam, camrip, hdcam, hdts, ts, screener, telesync'>"
+            f"<input name='stream_exclude' value='{_h(','.join(CFG.get('stream_exclude') or []))}' placeholder='cam, camrip, hdcam, hdts, ts, screener, telesync'>"
             f"<input name='rpdb_key' value='' placeholder='rpdb apikey — posters con rating (ratingposterdb.com)'></p>"
             f"<p>Regex <span class='dim'>(un patrón por línea, estilo AIOStreams — exclude/required regex)</span><br>"
             f"<textarea name='stream_exclude_regex' rows='2' placeholder='(?i)\\bcam\\b|hdts'>"
-            f"{chr(10).join(CFG.get('stream_exclude_regex') or [])}</textarea>"
+            f"{_h(chr(10).join(CFG.get('stream_exclude_regex') or []))}</textarea>"
             f"<textarea name='stream_required_regex' rows='2' placeholder='(?i)español|latino'>"
-            f"{chr(10).join(CFG.get('stream_required_regex') or [])}</textarea></p>"
+            f"{_h(chr(10).join(CFG.get('stream_required_regex') or []))}</textarea></p>"
             f"<p>Términos requeridos <span class='dim'>(comma — solo pasa lo que contenga alguno: es, latino, remux…)</span><br>"
-            f"<input name='stream_required' value='{','.join(CFG.get('stream_required') or [])}' placeholder='vacío = todo pasa'>"
-            f"<input name='stream_sort' value='{','.join(CFG.get('stream_sort') or [])}' placeholder='orden: res,cached,quality,seeds,size'></p>"
+            f"<input name='stream_required' value='{_h(','.join(CFG.get('stream_required') or []))}' placeholder='vacío = todo pasa'>"
+            f"<input name='stream_sort' value='{_h(','.join(CFG.get('stream_sort') or []))}' placeholder='orden: res,cached,quality,seeds,size'></p>"
             f"<p>Preferidos <span class='dim'>(boost +300, no filtro: remux, es, atmos…)</span><br>"
-            f"<input name='stream_preferred' value='{','.join(CFG.get('stream_preferred') or [])}' placeholder='remux, es, atmos'>"
-            f"timeout por fuente <input name='source_timeout' value='{CFG.get('source_timeout',0)}' style='width:60px'>s"
+            f"<input name='stream_preferred' value='{_h(','.join(CFG.get('stream_preferred') or []))}' placeholder='remux, es, atmos'>"
+            f"timeout por fuente <input name='source_timeout' value='{_h(CFG.get('source_timeout',0))}' style='width:60px'>s"
             f" <span class='dim'>(0 = {4}s por defecto)</span></p>"
             f"<p>Formato de stream <span class='dim'>(template con {'{res} {hdr} {codec} {audio} {lang} {rip} {title} {es}'} — vacío = normal)</span><br>"
-            f"<input name='stream_format' value='{CFG.get('stream_format','')}' placeholder='&#123;res&#125; · &#123;hdr&#125; · &#123;codec&#125; · &#123;audio&#125; · &#123;lang&#125;'></p>"
-            f"<p>Tamaño máx. por stream <input name='stream_max_gb' value='{CFG.get('stream_max_gb',0)}' style='width:80px'> GB"
+            f"<input name='stream_format' value='{_h(CFG.get('stream_format',''))}' placeholder='&#123;res&#125; · &#123;hdr&#125; · &#123;codec&#125; · &#123;audio&#125; · &#123;lang&#125;'></p>"
+            f"<p>Tamaño máx. por stream <input name='stream_max_gb' value='{_h(CFG.get('stream_max_gb',0))}' style='width:80px'> GB"
             f" <span class='dim'>(0 = sin límite — un 4K de 80GB no siempre gana)</span> · "
             f"precargar streams al abrir ficha <input type='hidden' name='stream_prefetch' value='0'>"
             f"<input type='checkbox' name='stream_prefetch' value='1'"
@@ -278,49 +290,49 @@ def _tuners_html(langs):
             f" <span class='dim'>(scrape de trackers: fuera infoHash con 0 seeds y sin hints — swarms inalcanzables)</span></p>"
             f"<p>Scrapers directos <span class='dim'>(indexers públicos sin addon, coma:"
             f" yts,eztv,nyaa,tpb — vacío = off)</span><br>"
-            f"<input name='scrapers' value='{','.join(CFG.get('scrapers') or [])}' placeholder='yts,eztv,nyaa,tpb'>"
-            f" conexiones máx. <input name='max_connections' value='{CFG.get('max_connections',64)}' style='width:80px'>"
+            f"<input name='scrapers' value='{_h(','.join(CFG.get('scrapers') or []))}' placeholder='yts,eztv,nyaa,tpb'>"
+            f" conexiones máx. <input name='max_connections' value='{_h(CFG.get('max_connections',64))}' style='width:80px'>"
             f" <span class='dim'>(pool acotado — el resto espera en el backlog)</span></p>"
             f"<p>Feeds RSS de indexers <span class='dim'>(URLs RSS/Atom con magnets — coma;"
             f" un worker RSS:&lt;host&gt; por feed, estilo Comet)</span><br>"
-            f"<input name='scraper_rss' value='{','.join(CFG.get('scraper_rss') or [])}'"
+            f"<input name='scraper_rss' value='{_h(','.join(CFG.get('scraper_rss') or []))}'"
             f" placeholder='https://showrss.info/allshows.rss, https://otro/feed.rss'></p>")
 
 
 def _usenet_html():
     """Bloque usenet del /configure: Newznab + NNTP nativo + Easynews."""
     return (f"<p>Newznab / Usenet <span class='dim'>(NZBHydra2, Easynews vía hydra — TorBox o NNTP nativo)</span><br>"
-            f"<input name='newznab_url' value='{CFG.get('newznab_url','')}' placeholder='https://hydra/api — vacío = off'>"
+            f"<input name='newznab_url' value='{_h(CFG.get('newznab_url',''))}' placeholder='https://hydra/api — vacío = off'>"
             f"<input name='newznab_key' type='password' value='' placeholder='apikey (no se muestra)'></p>"
             f"<p>NNTP nativo <span class='dim'>(Stremio Desktop v5 / Android TV reproduce usenet"
             f" sin backend — estilo Stremio NNTP de AIOStreams; vacío = off)</span><br>"
-            f"<input name='nntp_host' value='{CFG.get('nntp_host','')}' placeholder='news.ejemplo.com'>"
-            f"<input name='nntp_port' value='{CFG.get('nntp_port',563)}' style='width:100px'>"
-            f"<input name='nntp_user' value='{CFG.get('nntp_user','')}' placeholder='usuario'>"
+            f"<input name='nntp_host' value='{_h(CFG.get('nntp_host',''))}' placeholder='news.ejemplo.com'>"
+            f"<input name='nntp_port' value='{_h(CFG.get('nntp_port',563))}' style='width:100px'>"
+            f"<input name='nntp_user' value='{_h(CFG.get('nntp_user',''))}' placeholder='usuario'>"
             f"<input name='nntp_pass' type='password' value='' placeholder='contraseña (no se muestra)'>"
             f" SSL <input type='hidden' name='nntp_ssl' value='0'>"
             f"<input type='checkbox' name='nntp_ssl' value='1'"
             f"{' checked' if CFG.get('nntp_ssl', True) else ''} style='width:auto'>"
-            f" conexiones <input name='nntp_connections' value='{CFG.get('nntp_connections',5)}' style='width:60px'></p>"
+            f" conexiones <input name='nntp_connections' value='{_h(CFG.get('nntp_connections',5))}' style='width:60px'></p>"
             f"<p>Easynews <span class='dim'>(usenet directo — sin TorBox: busca por título y sirve su propio enlace)</span><br>"
-            f"<input name='easynews_user' value='{CFG.get('easynews_user','')}' placeholder='usuario'>"
+            f"<input name='easynews_user' value='{_h(CFG.get('easynews_user',''))}' placeholder='usuario'>"
             f"<input name='easynews_pass' type='password' value='' placeholder='contraseña (no se muestra)'></p>"
             f"<p>SABnzbd <span class='dim'>(downloader externo — envía el NZB a la cola (addurl)"
             f" y abre su UI; descarga, no playback. vacío = off)</span><br>"
-            f"<input name='sabnzbd_url' value='{CFG.get('sabnzbd_url','')}' placeholder='http://localhost:8080'>"
+            f"<input name='sabnzbd_url' value='{_h(CFG.get('sabnzbd_url',''))}' placeholder='http://localhost:8080'>"
             f"<input name='sabnzbd_key' type='password' value='' placeholder='apikey SABnzbd (no se muestra)'></p>")
 
 
 def _sg_text():
     """source_groups dict -> líneas `tipo=Fuente1,Fuente2` para el textarea."""
-    return '\n'.join('{}={}'.format(t, ','.join(v))
-                     for t, v in (CFG.get('source_groups') or {}).items())
+    return _h('\n'.join('{}={}'.format(t, ','.join(v))
+                        for t, v in (CFG.get('source_groups') or {}).items()))
 
 
 def _configure_page():
     src_chk = ''.join(
-        f"<label style='display:flex;gap:8px;padding:4px 0'><input type='checkbox' name='src' value='{s.name}'"
-        f"{' checked' if s.name not in _DISABLED else ''} style='width:auto'> {s.name}</label>"
+        f"<label style='display:flex;gap:8px;padding:4px 0'><input type='checkbox' name='src' value='{_h(s.name)}'"
+        f"{' checked' if s.name not in _DISABLED else ''} style='width:auto'> {_h(s.name)}</label>"
         for s in SOURCES)
     langs = ','.join(CFG.get('stream_langs') or [])
     opts = ''.join(f"<option value='{v}'{' selected' if CFG.get('debrid_provider')==v else ''}>{v or '— ninguno —'}</option>"
@@ -333,30 +345,30 @@ def _configure_page():
             f"<h2>Integraciones</h2>"
             f"{_debrid_html(opts)}"
             f"<p>M3U propio <span class='dim'>(ruta local, catálogo tv 'Mis canales')</span><br>"
-            f"<input name='m3u_path' value='{CFG.get('m3u_path','')}' placeholder='/home/…/canales.m3u'></p>"
+            f"<input name='m3u_path' value='{_h(CFG.get('m3u_path',''))}' placeholder='/home/…/canales.m3u'></p>"
             f"<p>EPG <span class='dim'>(guía XML/XMLTV .gz para los canales IPTV — vacío = sin guía)</span><br>"
-            f"<input name='epg_url' value='{CFG.get('epg_url','')}' placeholder='https://…/epg_ripper_ES1.xml.gz'></p>"
+            f"<input name='epg_url' value='{_h(CFG.get('epg_url',''))}' placeholder='https://…/epg_ripper_ES1.xml.gz'></p>"
             f"<p>Torznab <span class='dim'>(Prowlarr/Jackett local — fuente extra de streams)</span><br>"
-            f"<input name='torznab_url' value='{CFG.get('torznab_url','')}' placeholder='http://localhost:9696/api/v1.0/indexers/all/results/torznab'>"
+            f"<input name='torznab_url' value='{_h(CFG.get('torznab_url',''))}' placeholder='http://localhost:9696/api/v1.0/indexers/all/results/torznab'>"
             f"<input name='torznab_key' value='' placeholder='apikey (no se muestra)'>"
             f"<input name='torzapi_key' type='password' value='' placeholder='apikey indexer *arr — /torznab/api para Sonarr/Radarr (no se muestra)'></p>"
             f"<p>Zilean <span class='dim'>(self-hosted: hashlists DMM ya cacheadas en debrid — más ⚡ sin coste)</span><br>"
-            f"<input name='zilean_url' value='{CFG.get('zilean_url','')}' placeholder='http://localhost:8181 — vacío = off'></p>"
+            f"<input name='zilean_url' value='{_h(CFG.get('zilean_url',''))}' placeholder='http://localhost:8181 — vacío = off'></p>"
             f"{_usenet_html()}"
             f"<p>OpenSubtitles <span class='dim'>(búsqueda con api key; la DESCARGA exige cuenta — "
             f"registro gratis en opensubtitles.com)</span><br>"
             f"<input name='opensubtitles_key' value='' placeholder='api key — vacío = off'>"
-            f"<input name='opensubtitles_user' value='{CFG.get('opensubtitles_user','')}' placeholder='usuario (descarga)'>"
+            f"<input name='opensubtitles_user' value='{_h(CFG.get('opensubtitles_user',''))}' placeholder='usuario (descarga)'>"
             f"<input name='opensubtitles_pass' type='password' value='' placeholder='contraseña (no se muestra)'></p>"
             f"{_tuners_html(langs)}"
             f"<h2>Catálogos</h2>"
             f"<p>Listas externas <span class='dim'>(IMDb /list/ls… o mdblist:ID — separadas por coma)</span><br>"
-            f"<input name='catalog_lists' value='{CFG.get('catalog_lists','')}' placeholder='https://www.imdb.com/list/ls123456/, mdblist:1234'>"
+            f"<input name='catalog_lists' value='{_h(CFG.get('catalog_lists',''))}' placeholder='https://www.imdb.com/list/ls123456/, mdblist:1234'>"
             f"<input name='mdblist_key' value='' placeholder='mdblist apikey (solo si usas MDBList)'></p>"
             f"<p>Addons extra <span class='dim'>(URLs de addons Stremio — base o .../manifest.json, coma; marketplace-lite: cualquier addon de la comunidad entra como fuente)</span><br>"
-            f"<input name='extra_sources' value='{','.join(CFG.get('extra_sources') or [])}' placeholder='https://addon.ejemplo.com, https://otro.org/manifest.json'></p>"
+            f"<input name='extra_sources' value='{_h(','.join(CFG.get('extra_sources') or []))}' placeholder='https://addon.ejemplo.com, https://otro.org/manifest.json'></p>"
             f"<p>Catálogos ocultos <span class='dim'>(ids separados por coma — visibles en /health &gt; manifest)</span><br>"
-            f"<input name='catalogs_disabled' value='{','.join(CFG.get('catalogs_disabled') or [])}' placeholder='sid_catalogo1, sid_catalogo2'></p>"
+            f"<input name='catalogs_disabled' value='{_h(','.join(CFG.get('catalogs_disabled') or []))}' placeholder='sid_catalogo1, sid_catalogo2'></p>"
             f"<h2>Fuentes activas</h2>"
             f"<p>Grupos condicionales <span class='dim'>(estilo AIOStreams Groups: una línea por"
             f" tipo <code>tipo=Fuenta1,Fuente2</code> — movie, series, anime, tv; solo esas fuentes"
@@ -364,7 +376,7 @@ def _configure_page():
             f"<textarea name='source_groups' rows='3' placeholder='anime=Meteor,Kitsu&#10;movie=Torrentio'>"
             f"{_sg_text()}</textarea></p>"
             f"<p class='dim'>Orden en Discover (nombres separados por coma, vacío = orden fijo):<br>"
-            f"<input name='source_order' value='{','.join(CFG.get('source_order') or [])}' placeholder='Cinemeta,TMDB,Kitsu'></p>"
+            f"<input name='source_order' value='{_h(','.join(CFG.get('source_order') or []))}' placeholder='Cinemeta,TMDB,Kitsu'></p>"
             f"{src_chk}"
             f"<p><button type='submit'>Guardar</button> <a class='btn' href='/admin'>dashboard</a></p>"
             f"</form>"

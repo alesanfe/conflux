@@ -106,7 +106,7 @@ def _resolve_meta(stype, pref, base_id):
         ent = (m.get('imdb_id') or '', m.get('videos') or [])
         _cset(_idmap, key, ent)
         return ent
-    return ent[1]
+    return ent[1]                              # entrada (ts, valor): sin TTL (estable)
 
 
 def _video_se(v):

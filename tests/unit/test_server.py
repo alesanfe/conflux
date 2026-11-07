@@ -434,6 +434,32 @@ class TestRedirectsEspeciales(unittest.TestCase):
         finally:
             undo()
 
+    def test_en_host_ajeno_no_inyecta_creds(self):
+        """b64 arbitrario de un host NO easynews no recibe user:pass — antes
+        las credenciales se inyectaban a cualquier URL decodificada."""
+        import base64
+        link = base64.urlsafe_b64encode(b'https://attacker.example/x.mkv').decode().rstrip('=')
+        _, undo = cfg_swap(easynews_user='u', easynews_pass='p')
+        try:
+            h = self._h('/en/' + link)
+            h.do_GET()
+            h._redir.assert_called_with(None)       # 404, nunca creds a host ajeno
+        finally:
+            undo()
+
+    def test_en_subdominio_easynews_ok(self):
+        """Subdominios de easynews.com (dl farms/cdn) sí reciben las creds."""
+        import base64
+        link = base64.urlsafe_b64encode(b'https://cdn.easynews.com/dl/y').decode().rstrip('=')
+        _, undo = cfg_swap(easynews_user='u', easynews_pass='p')
+        try:
+            h = self._h('/en/' + link)
+            h.do_GET()
+            u = h._redir.call_args[0][0]
+            self.assertIn('u:p@cdn.easynews.com', u)
+        finally:
+            undo()
+
     def test_en_sin_creds_404(self):
         import base64
         link = base64.urlsafe_b64encode(b'https://x/y').decode().rstrip('=')
