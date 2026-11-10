@@ -23,7 +23,7 @@ jobs:
           python-version: '3.12'
       - run: pip install build
       - run: python -m build
-      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: dist/*
       - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # zizmor: ignore[superfluous-actions] v3 — multipart files+notes nativo
@@ -94,7 +94,7 @@ jobs:
             --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "dist/${{ matrix.asset }}.sha256"
-      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: dist/${{ matrix.asset }}
       - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3  # zizmor: ignore[superfluous-actions] v3 — multipart files+notes nativo
