@@ -67,7 +67,7 @@ jobs:
               sys.exit(1)
           "
           kill "$(cat srv.pid)" 2>/dev/null || true
-      - uses: actions/upload-artifact@bbbca2ddaa9fe9aa640b1b0b1e7b37e1cc3e31de  # v7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v7
         if: always()
         with:
           name: live-canary-${{ github.run_number }}
