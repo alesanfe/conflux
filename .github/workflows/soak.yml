@@ -57,7 +57,7 @@ jobs:
       - name: postmortem si falla
         if: failure()
         run: tail -200 soak-srv.log
-      - uses: actions/upload-artifact@bbbca2ddaa9fe9aa640b1b0b1e7b37e1cc3e31de  # v7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v7
         if: always()
         with:
           name: soak-report
