@@ -16,7 +16,7 @@ import base64
 import urllib.parse
 
 from conflux.core.cfg import _cfgget, _pcfg, _shared_profile
-from conflux.core.state import CFG, PORT, _health
+from conflux.core.state import CFG, _health, _public_base
 from conflux.infra.debrid import _db_key
 from conflux.infra.net import _public_url_cached, _session
 
@@ -122,7 +122,7 @@ def _nz_item(it):
     if _db_key('torbox'):
         b64 = base64.urlsafe_b64encode(link.encode()).decode().rstrip('=')
         s: dict = {'name': 'Usenet', 'title': title,
-                   'url': f'http://127.0.0.1:{PORT}/nzb/{b64}',
+                   'url': f'{_public_base()}/nzb/{b64}',
                    'behaviorHints': {'bingeGroup': 'usenet'}}
         if sz:
             s['behaviorHints']['videoSize'] = sz
@@ -138,7 +138,7 @@ def _nz_item(it):
     if _sab_cfg():
         b64 = base64.urlsafe_b64encode(link.encode()).decode().rstrip('=')
         out.append({'name': 'SABnzbd', 'title': title,
-                    'url': f'http://127.0.0.1:{PORT}/sab/{b64}',
+                    'url': f'{_public_base()}/sab/{b64}',
                     'behaviorHints': {'bingeGroup': 'usenet'}})
     return out or None
 

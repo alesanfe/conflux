@@ -65,6 +65,10 @@ scripts\setup_win.ps1                      # Windows: venv+deps+autostart (carpe
 python scripts/apply_env.py                # .env → config.json+sources.json (idempotente)
 # .env (gitignored): DEBRID_*, TORZNAB_*, OPENSUBTITLES_KEY, MDBLIST_KEY,
 # M3U_PATH, SOURCES_EXTRA="N|url;N2|url2", PROWLARR=1 (instala y autoconecta torznab)
+# modo server (Pi/NAS/VPS): bind_host cfg | CONFLUX_BIND env -> interfaz de
+#   escucha (imagen Docker: 0.0.0.0); public_base cfg | CONFLUX_BASE env ->
+#   URL externa de las urls emitidas /r/,/dp/,/nzb/,/s/,/en/,/sab/ (sin ella
+#   salen con 127.0.0.1 y el cliente remoto las resuelve contra SU loopback)
 
 ## Estructura (src-layout estándar PyPA)
 

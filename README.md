@@ -248,6 +248,27 @@ referencias `env:NOMBRE` para no guardar secretos en el archivo, y las URLs
 remotas configurables (`epg_url`, `M3U_URL`) bloquean destinos link-local
 (metadata cloud) — LAN/loopback siguen permitidos para Prowlarr y NAS.
 
+**Modo servidor** (Raspberry Pi / NAS / VPS — acceso desde una URL):
+
+- `bind_host` en `config.json` (o env `CONFLUX_BIND`): interfaz de escucha —
+  `0.0.0.0` expone el addon fuera del host. La imagen Docker ya lo fija.
+- `public_base` en `config.json` (o env `CONFLUX_BASE`): URL externa que ven
+  los clientes (`https://conflux.tu-dominio` o la URL `*.ts.net` de
+  `tailscale serve`). Sin ella las URLs emitidas (`/r/`, `/nzb/`, `/s/`…)
+  apuntan a `127.0.0.1` y solo resuelven dentro del propio host.
+
+```yaml
+# docker-compose.yml ya lleva CONFLUX_BIND=0.0.0.0 en la imagen
+environment:
+  - CONFLUX_BASE=https://conflux.example.ts.net
+```
+
+Recomendado: `tailscale serve 9700` en la Pi da HTTPS tailnet-only sin abrir
+puertos del router; para Internet abierto usa Caddy/Nginx delante o
+`tls_cert`/`tls_key`. El manifest queda en
+`<public_base>/manifest.json` y los links `/cfg/<b64>` comparten el addon con
+config de terceros sin heredar los secretos del admin.
+
 Rutas documentadas en `docs/openapi.yaml`.
 
 ## Test

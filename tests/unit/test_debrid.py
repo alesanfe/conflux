@@ -41,6 +41,20 @@ class TestMarkOne(unittest.TestCase):
         self.assertIn('/dp/putio/h', s['url'])
         self.assertNotIn('/r/putio/', s['url'])
 
+    def test_url_cuelga_de_public_base(self):
+        """Modo servidor (Raspberry/NAS/VPS): las /r/ emitidas cuelgan de
+        public_base — emitir 127.0.0.1 a un cliente remoto apuntaría el
+        resolve debrid a SU propio loopback."""
+        from tests import cfg_swap
+        _, undo = cfg_swap(public_base='https://conflux.pi.ts.net')
+        try:
+            s = {'infoHash': 'h', 'name': 'n', 'fileIdx': 2}
+            db._db_mark_one('rd', s)
+            self.assertTrue(
+                s['url'].startswith('https://conflux.pi.ts.net/r/rd/h?fi=2'))
+        finally:
+            undo()
+
 
 class TestResolve(unittest.TestCase):
     def setUp(self):

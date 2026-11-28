@@ -16,6 +16,7 @@ from conflux.core.state import (
     CFG,
     SOURCES,
     _atomic_json,
+    _base_ok,
     _log,
     _open,
 )
@@ -123,6 +124,12 @@ def load_config():
         if isinstance(v, str) and v.startswith('env:'):  # secretos fuera del archivo
             _CFG_ENV_REF[k] = (v[4:], os.environ.get(v[4:], ''))
             CFG[k] = _CFG_ENV_REF[k][1]
+    pb = str(CFG.get('public_base') or '').rstrip('/')       # modo server: base
+    if pb != CFG.get('public_base'):                         # normalizada aquí —
+        CFG['public_base'] = pb                              # _public_base la emite tal cual
+    if pb and not _base_ok(pb):
+        _log.warning('public_base %r inválida — se ignora (loopback)', pb[:60])
+        CFG['public_base'] = ''
     global RE_ES, RE_EX                                             # pylint: disable=global-statement
     _DISABLED.clear()
     _DISABLED.update(CFG.get('sources_disabled') or [])

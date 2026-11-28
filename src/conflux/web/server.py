@@ -6,6 +6,7 @@ import binascii
 import gzip
 import hmac
 import json
+import os
 import re
 import signal
 import socket
@@ -35,6 +36,7 @@ from conflux.core.state import (
     _cache,
     _cat_c,
     _meta_c,
+    _public_base,
     _rtime,
     _rts,
     log_ev,
@@ -247,8 +249,10 @@ class H(BaseHTTPRequestHandler):
             self.reply({'/manifest.json': _manifest_reply,
                         '/health': _health_page}[p]())
             return True
-        html = {'/': lambda: _landing_page(self.headers.get('Host') or f'127.0.0.1:{PORT}',
-                                           bool(CFG.get('tls_cert'))),
+        html = {'/': lambda: _landing_page(
+                    self.headers.get('Host')
+                    or urllib.parse.urlsplit(_public_base()).netloc,
+                    bool(CFG.get('tls_cert'))),
                 '/admin': _admin_page,
                 '/configure': _configure_page}.get(p)
         if html:
@@ -607,6 +611,14 @@ def _launch_update_swap():
         pass
 
 
+def _bind_addr():
+    """(host, port) de escucha: CONFLUX_BIND env > bind_host cfg > loopback.
+    '0.0.0.0' expone el addon en LAN/proxy (Raspberry/NAS/VPS); con public_base
+    las URLs emitidas apuntan a la dirección externa, no a 127.0.0.1."""
+    return (os.environ.get('CONFLUX_BIND') or CFG.get('bind_host')
+            or '127.0.0.1', PORT)
+
+
 def main():
     """Arranque: manifests cacheados si hay -> refresh bg; si no, fetch en vivo."""
     from conflux.core.cfg import ensure_admin_token
@@ -622,13 +634,15 @@ def main():
     threading.Thread(target=_refresher, daemon=True).start()
     threading.Thread(target=_prefetch_catalogs, daemon=True).start()   # caché caliente antes del 1er cliente
 
+    bind = _bind_addr()
     try:
-        srv = _Srv(('127.0.0.1', PORT), H)
+        srv = _Srv(bind, H)
     except OSError as e:
         # pythonw muere sin consola: sin esta línea un puerto ocupado no deja
         # rastro en conflux.log y el proceso viejo sigue sirviendo código stale
         log_ev('bind_fail', port=PORT, err=str(e))
         raise SystemExit(f'puerto {PORT} ocupado — ¿otra instancia viva? {e}')
+    log_ev('bind', host=bind[0], port=PORT)
     cert, key = CFG.get('tls_cert'), CFG.get('tls_key')
     if cert and key:                                   # TLS opcional (config.tls_cert/tls_key)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

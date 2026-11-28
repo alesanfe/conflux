@@ -10,7 +10,7 @@ from contextlib import suppress
 import requests
 
 from conflux.core.cfg import _cfgget, _pcfg, _shared_profile
-from conflux.core.state import PORT
+from conflux.core.state import _public_base
 from conflux.infra.net import _public_url_cached, _session
 
 # ---- debrid (Real-Debrid / TorBox) — activo solo con key en config.json/env ----
@@ -239,7 +239,7 @@ def _db_mark_one(p, s, multi=None, route=None):
     s['cached'] = True
     tag = f'[{_DB_SHORT.get(p, str(p).upper()[:4])}] ' if multi else ''
     s['name'] = '⚡ ' + tag + (s.get('name') or '')
-    s['url'] = f'http://127.0.0.1:{PORT}/{route}/{p}/{h}?fi={s.get("fileIdx", 0)}'
+    s['url'] = f'{_public_base()}/{route}/{p}/{h}?fi={s.get("fileIdx", 0)}'
     s.pop('infoHash', None)
     s.pop('sources', None)
 

@@ -663,6 +663,60 @@ class TestSourcesJsonModule(unittest.TestCase):
         self.assertNotIn('SOURCES: 0', r.stdout)
 
 
+class TestPublicBase(unittest.TestCase):
+    """Modo servidor: _public_base decide la base de las URLs emitidas
+    (/r/,/dp/,/nzb/,/s/,/en/) y _self_url marca las propias para excluirlas
+    del health-check (un HEAD a /r/ dispararía un resolve debrid)."""
+
+    def test_loopback_por_defecto(self):
+        _, undo = _cfg_swap({'public_base': ''})
+        try:
+            self.assertEqual(st._public_base(), 'http://127.0.0.1:9700')
+        finally:
+            undo()
+
+    def test_cfg_publica(self):
+        _, undo = _cfg_swap({'public_base': 'https://conflux.pi.ts.net'})
+        try:
+            self.assertEqual(st._public_base(), 'https://conflux.pi.ts.net')
+        finally:
+            undo()
+
+    def test_malformada_cae_a_loopback(self):
+        for bad in ('ftp://h', 'noesurl', 'https://h/sub?x=1', 'h://'):
+            _, undo = _cfg_swap({'public_base': bad})
+            try:
+                self.assertEqual(st._public_base(), 'http://127.0.0.1:9700', bad)
+            finally:
+                undo()
+
+    def test_env_gana_sobre_cfg(self):
+        from unittest.mock import patch
+        _, undo = _cfg_swap({'public_base': 'https://cfg.example'})
+        try:
+            with patch.object(st, '_ENV_BASE', 'https://env.example'):
+                self.assertEqual(st._public_base(), 'https://env.example')
+            with patch.object(st, '_ENV_BASE', 'mal//formada'):
+                self.assertEqual(st._public_base(), 'https://cfg.example')
+        finally:
+            undo()
+
+    def test_self_url(self):
+        _, undo = _cfg_swap({'public_base': 'https://x.ts.net'})
+        try:
+            self.assertTrue(st._self_url('http://127.0.0.1:9700/r/rd/h?fi=0'))
+            self.assertTrue(st._self_url('https://x.ts.net/r/rd/h?fi=0'))
+            self.assertFalse(st._self_url('https://x.ts.net.evil/r/h'))
+            self.assertFalse(st._self_url('https://cdn.upstream.io/f.mkv'))
+        finally:
+            undo()
+
+    def test_defaults_contrato(self):
+        """bind_host loopback por defecto; public_base vacía = modo local."""
+        self.assertEqual(st._CFG_DEFAULTS['bind_host'], '127.0.0.1')
+        self.assertEqual(st._CFG_DEFAULTS['public_base'], '')
+
+
 def _cfg_swap(kv):
     import conflux.core.state as _st
     old = dict(_st.CFG)

@@ -10,7 +10,7 @@ import base64
 import re
 import urllib.parse
 
-from conflux.core.state import CFG, PORT, _health, _meta_title
+from conflux.core.state import CFG, _health, _meta_title, _public_base
 from conflux.infra.net import _session
 
 
@@ -41,7 +41,7 @@ def _en_item(it, base_url):
     link = f'{base_url}/{urllib.parse.quote(f"{h}{ext}/{fn}{ext}")}'
     b64 = base64.urlsafe_b64encode(link.encode()).decode().rstrip('=')
     s: dict = {'name': 'Easynews', 'title': f'{fn}{ext}',
-         'url': f'http://127.0.0.1:{PORT}/en/{b64}',
+         'url': f'{_public_base()}/en/{b64}',
          'behaviorHints': {'bingeGroup': 'easynews'}}
     try:
         sz = it.get('size') or it.get('4')

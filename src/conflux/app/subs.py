@@ -6,7 +6,7 @@ import threading
 import requests
 
 from conflux.core.cfg import _cfgget
-from conflux.core.state import CLOCK, PORT, as_dict, _cget, _cset
+from conflux.core.state import CLOCK, as_dict, _cget, _cset, _public_base
 from conflux.domain.sources import _resolve_sid
 from conflux.infra.net import _session
 
@@ -38,7 +38,7 @@ def _subs_map(r):
         if not fid:
             continue
         out.append({'id': str(fid), 'lang': a.get('language') or 'es',
-                    'url': f'http://127.0.0.1:{PORT}/s/{fid}'})
+                    'url': f'{_public_base()}/s/{fid}'})
     out.sort(key=lambda s: 0 if s['lang'].startswith('es') else 1)   # ES-first  # pragma: no mutate — clave binaria, 1/2 equivalente
     return out[:20]
 

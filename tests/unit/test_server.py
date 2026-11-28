@@ -337,6 +337,8 @@ class TestCfgUrlKeys(unittest.TestCase):
         self.assertFalse(ok('stream_max_gb', 10**9))     # fuera de cota
         self.assertFalse(ok('calendar_months_ahead', 2)) # clave retirada
         self.assertFalse(ok('trakt_access_token', 'x'))  # OAuth retirado
+        self.assertFalse(ok('bind_host', '0.0.0.0'))     # server-level: un link
+        self.assertFalse(ok('public_base', 'https://x')) # no rebinda ni reemite
 
 
 class TestCfgUrlB64(unittest.TestCase):
@@ -1655,6 +1657,35 @@ class TestSigtermNoMainThread(unittest.TestCase):
                 um.patch.object(srv.signal, 'signal', sig):
             srv.main()
         sig.assert_not_called()            # solo el hilo principal maneja SIGTERM
+
+
+class TestBindAddr(unittest.TestCase):
+    """Modo servidor: _bind_addr resuelve la interfaz de escucha —
+    CONFLUX_BIND env > bind_host cfg > 127.0.0.1 (loopback seguro)."""
+
+    def test_default_loopback(self):
+        _, undo = cfg_swap(bind_host='127.0.0.1')
+        try:
+            self.assertEqual(srv._bind_addr(), ('127.0.0.1', srv.PORT))
+        finally:
+            undo()
+
+    def test_cfg_bind_host(self):
+        _, undo = cfg_swap(bind_host='0.0.0.0')
+        try:
+            self.assertEqual(srv._bind_addr(), ('0.0.0.0', srv.PORT))
+        finally:
+            undo()
+
+    def test_env_gana_sobre_cfg(self):
+        import os
+        from unittest.mock import patch
+        _, undo = cfg_swap(bind_host='192.168.1.5')
+        try:
+            with patch.dict(os.environ, {'CONFLUX_BIND': '0.0.0.0'}):
+                self.assertEqual(srv._bind_addr(), ('0.0.0.0', srv.PORT))
+        finally:
+            undo()
 
 
 class TestDobleBind(unittest.TestCase):

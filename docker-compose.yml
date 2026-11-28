@@ -3,6 +3,11 @@ services:
     build: .
     ports:
       - "9700:9700"
+    environment:
+      # base que verán los clientes en las URLs emitidas — pon tu URL pública
+      # (Tailscale/Caddy/DNS). Sin ella los /r/,/nzb/,/s/ apuntan a 127.0.0.1
+      # y solo funcionan dentro del propio host.
+      - CONFLUX_BASE=${CONFLUX_BASE:-}
     volumes:
       - ./config.json:/app/config.json:ro        # opcional: quita si no existe
       - ./sources.json:/app/sources.json:ro      # opcional

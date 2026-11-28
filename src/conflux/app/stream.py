@@ -655,7 +655,7 @@ def _url_todo(streams, now):
     Las marcadas malas también reentran pasados 30min: un timeout transitorio
     o un 4xx de CDN caduco no condenan la url para siempre."""
     return [s['url'] for s in streams
-            if s.get('url', '').startswith('http') and '127.0.0.1' not in s['url']
+            if s.get('url', '').startswith('http') and not _st._self_url(s['url'])
             and now - _URL_BAD.get(s['url'], (0, 0))[1] > 1800
             and now - _URL_OK.get(s['url'], 0) > 1800][:15]
 
@@ -704,7 +704,7 @@ def _url_health(streams):
     empty_bad = not _URL_BAD                  # sin malos: tras llenar el cupo
     for i, s in enumerate(streams):           # de probes el resto no filtra nada
         u = s.get('url')
-        if isinstance(u, str) and u.startswith('http') and '127.0.0.1' not in u:
+        if isinstance(u, str) and u.startswith('http') and not _st._self_url(u):
             v = _URL_BAD.get(u)
             if v is not None and v[0] >= 2 and now - v[1] < 1800:
                 continue                      # muerto confirmado y vigente: fuera

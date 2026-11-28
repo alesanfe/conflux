@@ -10,6 +10,7 @@ import re
 import sys
 import threading
 import time
+import urllib.parse
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -202,6 +203,37 @@ _POOL_BG = ThreadPoolExecutor(max_workers=12)   # bulkhead aparte: refresh, pref
 
 PORT = 9700
 
+_LOOP_BASE = f'http://127.0.0.1:{PORT}'
+
+_ENV_BASE = os.environ.get('CONFLUX_BASE', '').rstrip('/')
+
+
+def _base_ok(b):
+    """http(s)://host[:port] pelada — las URLs emitidas cuelgan de la base,
+    un path/query en ella deformaría cada /r/|/nzb/ servida a clientes."""
+    sp = urllib.parse.urlsplit(b)
+    return sp.scheme in ('http', 'https') and bool(sp.netloc) \
+        and not (sp.path or sp.query or sp.fragment)
+
+
+def _public_base():
+    """Base que ven los CLIENTES en las URLs emitidas (/r/,/dp/,/nzb/,/s/,
+    /en/,/sab/): CONFLUX_BASE env > public_base cfg > loopback. En modo
+    servidor (bind 0.0.0.0 + proxy/Tailscale/DNS) es obligatoria — emitir
+    127.0.0.1 a un cliente remoto apuntaría los streams a SU propio loopback."""
+    if _ENV_BASE and _base_ok(_ENV_BASE):
+        return _ENV_BASE
+    b = CFG.get('public_base') or ''
+    return b if _base_ok(b) else _LOOP_BASE
+
+
+def _self_url(u):
+    """La URL la emitió ESTE proxy (resolve /r/|/dp/|/nzb/ propio): excluida
+    del health-check — un HEAD a /r/ dispararía un resolve debrid, y con
+    public_base la url ya no lleva '127.0.0.1' como marca."""
+    return '127.0.0.1' in u or u.startswith(_public_base() + '/')
+
+
 UA = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0'}
 
 
@@ -284,6 +316,7 @@ _CFG_DEFAULTS = {'m3u_path': '', 'debrid_provider': '', 'debrid_key': '',
                  'max_connections': 64,
                  'sabnzbd_url': '', 'sabnzbd_key': '', 'scraper_rss': [],
                  'log_level': '', 'config_version': 1,
+                 'bind_host': '127.0.0.1', 'public_base': '',
                  'stremio_authkey': '', 'authkey_scrape': True,
                  'auto_update': False, 'update_channel': 'stable',
                  'stream_light': True, 'iptv_health': True}
