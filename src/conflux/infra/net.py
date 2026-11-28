@@ -12,13 +12,49 @@ import requests
 from conflux.core.state import CLOCK, _SESS, HOST_CD, HOST_OPEN, UA, _fails, _sess_lock
 
 
+_BODY_CAP = 6_000_000     # mismo tope que fetch(): upstream hostil sin OOM
+
+
+class _PubSession(requests.Session):
+    """requests sigue redirects ciegamente y bufferiza bodies sin tope:
+
+    - validar la URL inicial no basta: un upstream puede 302 a link-local/
+      metadata tras el guard — cada salto pasa por _public_url (misma
+      política que _ChkRedirect de epg sobre urllib).
+    - las ~40 llamadas .get().json()/.content de los adapters leían el body
+      entero — fetch() capa a 6MB pero ellos no pasaban por él. Forzamos
+      stream interno y lectura acotada: >cap queda vacío (descarte, igual
+      que fetch). Los callers con stream=True explícito (_db_stream,
+      _iptv_probe, fetch) no se tocan: el proxy de ficheros sí streamea.
+    """
+    def get_redirect_target(self, resp):
+        u = super().get_redirect_target(resp)
+        if u is None:
+            return None
+        u = urllib.parse.urljoin(resp.url, u)      # Location relativa -> absoluta
+        return u if _public_url(u) else None       # salto rechazado: no se sigue
+
+    def send(self, request, **kw):
+        if kw.get('stream'):
+            return super().send(request, **kw)      # stream real: intacto
+        r = super().send(request, **{**kw, 'stream': True})
+        try:
+            body = b'' if r.raw is None else \
+                r.raw.read(_BODY_CAP + 1, decode_content=True)
+            r._content = body if len(body) <= _BODY_CAP else b''  # pylint: disable=protected-access
+            r._content_consumed = True                          # pylint: disable=protected-access
+        finally:
+            r.close()
+        return r
+
+
 def _session(host):
     s = _SESS.get(host)
     if s is None:
         with _sess_lock:
             if len(_SESS) >= 64:                            # hosts de streams/CDN son
                 _SESS.clear()                               # ilimitados: recrear es barato
-            s = _SESS.setdefault(host, requests.Session())
+            s = _SESS.setdefault(host, _PubSession())
             # pool_maxsize 32: ráfagas de probes (32 posters, 40 _dead_videos)
             # al mismo host no descartan conexiones (handshake TLS por hit).
             ad = requests.adapters.HTTPAdapter(pool_maxsize=32)

@@ -297,3 +297,97 @@ class TestEpgSsrf(unittest.TestCase):
         with patch.object(E, '_public_url', return_value=False):
             self.assertIsNone(h.redirect_request(
                 MagicMock(), None, 302, '', {}, 'http://169.254.169.254/latest'))
+
+
+class TestRedirectSsrf(unittest.TestCase):
+    """requests sigue redirects sin revalidar el salto: un upstream puede
+    302 a link-local/metadata DESPUÉS de pasar la validación de la URL
+    inicial — misma brecha que _ChkRedirect cubre en epg (urllib)."""
+
+    def _resp(self, location, url='https://cdn.ejemplo.com/a'):
+        import requests
+        r = requests.Response()
+        r.status_code = 302
+        r.headers['location'] = location
+        r.url = url
+        return r
+
+    def test_redirect_link_local_no_se_sigue(self):
+        s = net._session('rd.test')
+        self.assertIsNone(s.get_redirect_target(
+            self._resp('http://169.254.169.254/latest/meta-data')))
+
+    def test_redirect_esquema_no_http_no_se_sigue(self):
+        s = net._session('rd.test')
+        self.assertIsNone(s.get_redirect_target(self._resp('file:///etc/passwd')))
+
+    def test_redirect_relativo_se_resuelve_y_sigue(self):
+        """Location relativa -> urljoin contra la URL actual; bloquearla por
+        no tener scheme rompería redirects legítimos del mismo host."""
+        s = net._session('rd.test')
+        self.assertEqual(s.get_redirect_target(self._resp('/next')),
+                         'https://cdn.ejemplo.com/next')
+
+    def test_redirect_publico_se_sigue(self):
+        s = net._session('rd.test')
+        self.assertEqual(s.get_redirect_target(self._resp('https://otro.cdn/f')),
+                         'https://otro.cdn/f')
+
+    def test_respuesta_sin_redirect_none(self):
+        import requests
+        s = net._session('rd.test')
+        r = requests.Response()
+        r.status_code = 200
+        r.url = 'https://x/'
+        self.assertIsNone(s.get_redirect_target(r))
+
+
+class TestBodyCap(unittest.TestCase):
+    """fetch() capa a 6MB, pero las ~40 llamadas s.get().json()/.content de
+    los adapters NO pasaban por él: un upstream hostil/devolviendo bodies
+    gigantes agotaba memoria. La sesión aplica el cap a todo lo no-stream."""
+
+    def _sess(self, body):
+        import io
+        import requests
+        import urllib3
+
+        class _A(requests.adapters.BaseAdapter):
+            def send(self, req, **_kw):
+                r = requests.Response()
+                r.status_code = 200
+                r.url = req.url
+                r.raw = urllib3.response.HTTPResponse(
+                    body=io.BytesIO(body), preload_content=False)
+                return r
+
+            def close(self):
+                pass
+
+        s = net._PubSession()
+        s.mount('http://', _A())
+        s.mount('https://', _A())
+        return s
+
+    def test_body_gigante_se_descarta(self):
+        s = self._sess(b'{"a":' + b' ' * 7_000_000 + b'1}')
+        r = s.get('http://h/x')
+        self.assertEqual(r.content, b'')         # >cap -> descartado entero
+        with self.assertRaises(ValueError):
+            r.json()
+
+    def test_body_en_el_borde_pasa(self):
+        s = self._sess(b'x' * 6_000_000)
+        self.assertEqual(len(s.get('http://h/x').content), 6_000_000)
+
+    def test_body_normal_intacto(self):
+        s = self._sess(b'{"a": 1}')
+        self.assertEqual(s.get('http://h/x').json(), {'a': 1})
+
+    def test_stream_explicito_no_se_corta(self):
+        """stream=True explícito (/dp/ debrid-proxy, _iptv_probe, fetch):
+        el cap NO aplica — el proxy de ficheros sí streamea cuerpos grandes."""
+        s = self._sess(b'x' * 7_000_000)
+        r = s.get('http://h/x', stream=True)
+        self.assertEqual(len(r.raw.read()), 7_000_000)
+        r.close()

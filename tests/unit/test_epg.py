@@ -198,6 +198,26 @@ class TestStateIO(unittest.TestCase):
         self.assertEqual(len(m['videos']), 2)
         self.assertEqual(E.epg_meta(None), {})
 
+    def test_epg_meta_clock_compartido(self):
+        """'hoy/mañana' deben salir de CLOCK, no del reloj real: el setUp
+        sembró el día REAL con A/B — bajo CLOCK.fake(2030) epg_meta debe
+        leer el día FAKE (H hoy + N mañana como :n), nunca el real."""
+        import conflux.core.state as st
+        fc = st.CLOCK.fake(1_900_000_000.0)                # 2030 — no hoy
+        dia = time.strftime('%Y-%m-%d', time.gmtime(fc.time()))
+        nxt = time.strftime('%Y-%m-%d', time.gmtime(fc.time() + 86400))
+        E._STATE['days'] = {
+            dia: {'la1': [{'title': 'H', 'desc': '', 'icon': '',
+                           'start': fc.time(), 'stop': fc.time() + 60}]},
+            nxt: {'la1': [{'title': 'N', 'desc': '', 'icon': '',
+                           'start': fc.time() + 86400,
+                           'stop': fc.time() + 86460}]}}
+        m = E.epg_meta({'id': 'la1'})
+        self.assertTrue(m['videos'])
+        self.assertEqual(m['videos'][0]['name'], 'H')   # no 'A' del día real
+        self.assertTrue(any(v['id'].startswith('la1:n')
+                            for v in m['videos']))
+
 
 class TestTzOffset(unittest.TestCase):
     def test_minutos_de_tz_cuentan(self):

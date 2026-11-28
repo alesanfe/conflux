@@ -23,11 +23,12 @@ from conflux.app.bg import _prefetch_catalogs, _refresher
 from conflux.app.meta import handle_meta
 from conflux.app.stream import handle_stream
 from conflux.app.subs import _sub_download, handle_subtitles
-from conflux.core.cfg import _PROF, _profile_load, load_config
+from conflux.core.cfg import _PROF, _profile_load, _shared_profile, load_config
 from conflux.core.state import (
     _MF_CACHE,
     _REQ_ID,
     CFG,
+    CLOCK,
     PORT,
     SOURCES,
     _atomic_json,
@@ -119,11 +120,8 @@ class H(BaseHTTPRequestHandler):
         excede el rate (SEC-002): sin esto el header X-Admin-Token era
         brute-forceable sin pasar por el rate-limit de /login."""
         ip = getattr(self, 'client_address', ('local',))[0]
-        now = time.time()
-        if len(_AUTH_TRIES) > 256:                      # acotado: spam multi-IP
-            for ip_, dq in list(_AUTH_TRIES.items()):   # no infla el dict —
-                if not dq:                              # las vacías se reciclan
-                    _AUTH_TRIES.pop(ip_, None)
+        now = CLOCK.time()
+        _tries_prune(_AUTH_TRIES, now)                  # acotado: spam multi-IP
         tries = _AUTH_TRIES.setdefault(ip, deque())
         while tries and now - tries[0] > 60:
             tries.popleft()
@@ -193,6 +191,7 @@ class H(BaseHTTPRequestHandler):
         pm = re.match(r'^/p/([a-zA-Z0-9_-]{1,24})(/.*)$', p)           # perfil: /p/<nombre>/…
         if pm:
             _PROF.name, _PROF.cfg = pm.group(1), _profile_load(pm.group(1))
+            _PROF.shared = False                      # persona del admin: hereda global
             return pm.group(2)
         cm = re.match(r'^/cfg/([A-Za-z0-9_=-]{8,4096})(/.*)$', p)      # cfg en URL (estilo Torrentio)
         if cm:
@@ -202,10 +201,11 @@ class H(BaseHTTPRequestHandler):
                 if isinstance(dc, dict):
                     _PROF.name = 'cfg-' + seg[:8]
                     _PROF.cfg = {k: v for k, v in dc.items() if self._cfg_url_ok(k, v)}
+                    _PROF.shared = True               # link ajeno: secretos solo del link
                     return cm.group(2)
             except (ValueError, binascii.Error):
                 pass                                                # cfg rota -> perfil normal
-        _PROF.name, _PROF.cfg = None, None
+        _PROF.name, _PROF.cfg, _PROF.shared = None, None, False
         return p
     def _timed_route(self, p):
         t0 = time.time()
@@ -280,6 +280,8 @@ class H(BaseHTTPRequestHandler):
             seg = p.split('/')
             pvd, h = (seg[2], seg[3]) if len(seg) == 4 else ('', '')
             fi = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('fi', ['0'])[0]
+            if pvd == 'putio':                    # su URL final lleva oauth_token=K:
+                return self._db_proxy(pvd, h, fi) # nunca en Location — siempre proxy
             return self._redir(_db_resolve(pvd, h, fi))
         if p.startswith('/dp/'):                                       # debrid proxy (túnel de salida)
             seg = p.split('/')
@@ -307,7 +309,10 @@ class H(BaseHTTPRequestHandler):
                 link = base64.urlsafe_b64decode(b + '=' * (-len(b) % 4)).decode()
             except (ValueError, UnicodeDecodeError, binascii.Error):
                 link = ''
-            u, pw = CFG.get('easynews_user', ''), CFG.get('easynews_pass', '')
+            u, pw = ('', '') if _shared_profile() else (
+                CFG.get('easynews_user', ''), CFG.get('easynews_pass', ''))
+            # ^ link compartido: las creds easynews del admin no viajan en el
+            # Location de terceros (easynews_* no es clave de link)
             try:
                 sp = urllib.parse.urlsplit(link)
             except ValueError:                     # b64 arbitrario -> url rota
@@ -444,7 +449,8 @@ class H(BaseHTTPRequestHandler):
         El token viaja UNA vez en el body del POST — nunca en URL/historial.
         Rate limit por IP: 10 intentos/min (fuerza bruta local)."""
         ip = getattr(self, 'client_address', ('local',))[0]
-        now = time.time()
+        now = CLOCK.time()
+        _tries_prune(_LOGIN_TRIES, now)                 # acotado: spray multi-IP
         tries = _LOGIN_TRIES.setdefault(ip, deque())
         while tries and now - tries[0] > 60:
             tries.popleft()
@@ -483,6 +489,20 @@ _TOK_SAFE = re.compile(r'[^A-Za-z0-9._~+-]')            # cookie/header: solo ch
 _LOGIN_TRIES: dict = {}                                 # ip -> deque(ts) — rate limit /login
 
 _AUTH_TRIES: dict = {}                                  # ip -> deque(ts) — fallos header/cookie
+
+
+def _tries_prune(d, now):
+    """Bound de un dict ip->deque(ts) de rate-limit: sin poda, un spray
+    multi-IP lo infla para siempre (los intentos fuera de la ventana de 60s
+    son peso muerto — no pueden re-disparar el límite) y un spray de IPs
+    frescas necesita cap duro. El checking ip aún no está: no se auto-evicta."""
+    if len(d) <= 256:
+        return
+    for ip_, dq in list(d.items()):                     # poda: vacías o stale
+        if not dq or now - dq[-1] > 60:
+            d.pop(ip_, None)
+    while len(d) > 512:                                 # cap: spray en ventana
+        d.pop(next(iter(d)), None)                      # dict orden = más viejo
 _STARTED = time.time()
 
 
@@ -498,7 +518,7 @@ def _version():
 def _ready_page():
     """Readiness (CONFLUX-026): fuentes con manifest + breakers abiertos."""
     from conflux.core.state import _fails, HEALTH, COOLDOWN
-    now = time.time()
+    now = CLOCK.time()                                  # _fails usa CLOCK — mismo reloj
     src_ok = sum(1 for m in manifests if m)
     open_brk = [h for h, (st_, ts) in _fails.items()
                 if st_ >= 4 and now - ts < 60]

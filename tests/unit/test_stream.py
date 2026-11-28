@@ -1471,6 +1471,49 @@ class TestLangRows(unittest.TestCase):
         finally:
             _PROF.cfg = None
 
+    def test_stream_format_perfil_reetiqueta(self):
+        """El display horneado por norm_stream lleva la firma de knobs del
+        hilo que lo produjo (el collect corre en hilo propio, sin _PROF ->
+        formato GLOBAL). Bajo un perfil con stream_format propio la fila
+        compartida debe re-etiquetarse — el formato global no puede llegar
+        al link /p/x."""
+        from tests import cfg_swap
+        from conflux.core.cfg import _PROF
+        _, undo = cfg_swap(stream_format='G:{title}')
+        try:
+            r = S.norm_stream({'title': 'F.2024.1080p', 'url': 'http://x',
+                               'name': 'n'}, 't')
+            self.assertTrue(r[0]['name'].startswith('G:'))
+            _PROF.cfg = {'stream_format': 'P:{title}'}
+            try:
+                rr = S._lang_rows([r])[0]
+                self.assertTrue(rr[0]['name'].startswith('P:'))  # no 'G:'
+            finally:
+                _PROF.cfg = None
+        finally:
+            undo()
+
+    def test_rows_pipe_formato_no_memoiza_ajeno(self):
+        """_OUT_C firma el pipeline de salida; stream_format/max_chars no
+        estaban en _pipe_sig: el out formateado del perfil A se servía al
+        perfil B por hit de firma (mismo key, mismas filas)."""
+        from conflux.core.cfg import _PROF
+        r = S.norm_stream({'title': 'F.2024.1080p', 'url': 'http://x',
+                           'name': 'n'}, 't')
+        rows = [r]
+        key = ('movie', 'tt1', ())
+        S._OUT_C.clear()
+        _PROF.cfg = {'stream_format': 'A:{title}'}
+        try:
+            a = S._rows_pipe(rows, key)[0]['name']
+            _PROF.cfg = {'stream_format': 'B:{title}'}
+            b = S._rows_pipe(rows, key)[0]['name']
+            self.assertNotEqual(a, b)
+            self.assertTrue(b.startswith('B:'))
+        finally:
+            _PROF.cfg = None
+            S._OUT_C.clear()
+
 
 class TestRowsOutMaxGb(unittest.TestCase):
     """stream_max_gb en el borde: size<=mx pasa, 0/desconocido pasa, >mx no."""
@@ -1845,3 +1888,95 @@ class TestRowkeyMut(unittest.TestCase):
         k = S._rowkey(('out', '1080P', 7, 2.0, 1, f))
         self.assertEqual(k[2], -_qscore(f))
         self.assertNotEqual(k[2], 0)
+
+
+class TestCollectFinally(unittest.TestCase):
+    """El finally de _collect ordena con _rowkey y LUEGO hace _inflight.pop +
+    done.set(): si el sort lanza, la key queda en _inflight PARA SIEMPRE (sin
+    TTL) con done sin set — cada request posterior a esa key espera el budget
+    entero y sirve filas parciales stale. La limpieza debe sobrevivir al sort."""
+
+    def _state(self):
+        return {'rows': [], 'seen': set(), 'contrib': {},
+                'done': threading.Event(), 'lock': threading.Lock()}
+
+    class _Pool:
+        """submit sin ejecutar nada: futures ya resueltos con aporte vacio."""
+        def submit(self, _fn, *a, **k):
+            import concurrent.futures as cf
+            f = cf.Future()
+            f.set_result(('fake', [], 0))
+            return f
+
+    def test_sort_roto_no_envenena_inflight(self):
+        key = ('movie', 'tt_finally', ())
+        stt = self._state()
+        stt['rows'].append(('fila_malformada',))          # _rowkey -> IndexError
+        S._inflight[key] = stt
+        try:
+            with mock.patch.object(S, '_POOL', self._Pool()), \
+                 mock.patch.object(S, '_scraper_names', return_value=[]):
+                S._collect(key, stt)
+        except Exception:
+            pass                                          # el fallo no debe propagarse
+        self.assertNotIn(key, S._inflight)                  # pop siempre
+        self.assertTrue(stt['done'].is_set())               # waiters despiertan
+        S._inflight.pop(key, None)
+        S._cache.pop(key, None)
+
+
+class TestNntpMark(unittest.TestCase):
+    """'servers' NNTP se ata por request sobre copia — las filas cacheadas
+    llevan solo el marcador '_nntp' (sin creds horneadas)."""
+
+    def test_ata_servers_efectivo(self):
+        out = [{'name': 'Usenet SN', 'nzbUrl': 'u', '_nntp': True},
+               {'name': 'x', 'url': 'v'}]
+        with mock.patch.object(S, '_nntp_server',
+                               return_value='nntps://u:p@h:563/5'):
+            S._nntp_mark(out)
+        self.assertEqual(out[0]['servers'], ['nntps://u:p@h:563/5'])
+        self.assertNotIn('_nntp', out[0])
+        self.assertEqual(out[1], {'name': 'x', 'url': 'v'})
+
+    def test_sin_srv_descarta_variante(self):
+        """Sin nntp efectivo (link /cfg/ sin claves propias): la variante SN
+        es inútil -> fuera, no con los servers del admin."""
+        out = [{'name': 'Usenet SN', 'nzbUrl': 'u', '_nntp': True}]
+        with mock.patch.object(S, '_nntp_server', return_value=None):
+            S._nntp_mark(out)
+        self.assertEqual(out, [])
+
+    def test_no_muta_la_fila_cacheada(self):
+        """Attach sobre COPIA: las filas compartidas del _cache no se
+        contaminan con servers del requester."""
+        row = {'name': 'Usenet SN', 'nzbUrl': 'u', '_nntp': True}
+        out = [row]
+        with mock.patch.object(S, '_nntp_server',
+                               return_value='nntps://u:p@h:563/5'):
+            S._nntp_mark(out)
+        self.assertIn('_nntp', row)               # la fila original intacta
+        self.assertNotIn('servers', row)
+
+
+class TestCollectNzPerfil(unittest.TestCase):
+    """El worker nz corre en el pool (_PROF thread-local): sin propagar el
+    perfil capturado en el request, las claves del link no aplicarían."""
+
+    def tearDown(self):
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg, _PROF.shared = None, None, False
+
+    def test_worker_ve_perfil_propagado(self):
+        seen = {}
+        def _fake(*a):
+            from conflux.core.cfg import _PROF
+            seen.update(name=_PROF.name, cfg=_PROF.cfg,
+                        shared=getattr(_PROF, 'shared', False))
+            return []
+        with mock.patch.object(S, '_newznab', side_effect=_fake):
+            S._collect_nz('movie', 'tt1', ('cfg-z', {'nntp_host': 'h'}, True))
+        self.assertEqual(seen, {'name': 'cfg-z', 'cfg': {'nntp_host': 'h'},
+                                'shared': True})
+        from conflux.core.cfg import _PROF          # y restaura tras el worker
+        self.assertIsNone(_PROF.cfg)

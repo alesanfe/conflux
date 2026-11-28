@@ -171,6 +171,42 @@ class TestCacheBordes(unittest.TestCase):
             self.assertEqual(st._cstale(c, 'k2'), 'v')
 
 
+class _MidIter(dict):
+    """items() devuelve un iterador que muta el dict tras el primer elemento —
+    inserción concurrente mid-sort (otro hilo HTTP en _cset)."""
+    def items(self):
+        it = iter(super().items())
+        d = self
+
+        class _I:
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                d['raced'] = (0.0, 0)   # la 1ª mutación rompe el iterador real
+                return next(it)
+
+        return _I()
+
+
+class TestCacheConcurrencia(unittest.TestCase):
+    """ThreadingHTTPServer: varios hilos llaman _cset a la vez. La evicción
+    itera cache.items() — una inserción concurrente mid-sort lanzaba
+    RuntimeError (dict changed size) -> 500 en mitad de un request."""
+
+    def test_evict_raza_insercion_no_500(self):
+        c = _MidIter({f'k{i}': (0.0, i) for i in range(450)})
+        st._cset(c, 'new', 1)                # no debe lanzar
+        self.assertIn('new', c)              # y el set SIEMPRE aterriza
+
+    def test_evict_raza_pop_no_500(self):
+        """Lo mismo con pop concurrente: la entrada ya no existe al evictar."""
+        c = _MidIter({f'k{i}': (0.0, i) for i in range(450)})
+        c.pop('k0')
+        st._cset(c, 'new', 1)
+        self.assertIn('new', c)
+
+
 class TestHealthStreak(unittest.TestCase):
     def test_streak_cuenta_y_reset(self):
         """streak = fails consecutivos (Add@220: -1 iría a negativo)."""

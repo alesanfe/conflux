@@ -286,6 +286,43 @@ class TestAuthRateLimit(unittest.TestCase):
         finally:
             undo()
 
+    def test_poda_ips_stale(self):
+        """Bound de _AUTH_TRIES: un spray de IPs que no vuelve deja deques con
+        ts fuera de ventana — peso muerto que JAMAS se poda (la condicion
+        `if not dq` solo recicla deques vacias, y una deque stale nunca se
+        vacia porque la IP no regresa). Regla del repo: dicts sin crecimiento
+        acotado prohibidos."""
+        from collections import deque
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            old = srv.time.time() - 120                       # fuera de ventana 60s
+            for i in range(300):                              # spray de IPs muertas
+                srv._AUTH_TRIES[f'10.0.{i // 256}.{i % 256}'] = deque([old])
+            h = self._h()
+            h._auth_fail()
+            self.assertLessEqual(len(srv._AUTH_TRIES), 8)
+        finally:
+            undo()
+
+    def test_poda_ips_frescas_cap_duro(self):
+        """Spray de IPs con intentos FRESCOS: ninguna es podable por staleness
+        (estan dentro de la ventana), asi que sin cap duro el dict crece sin
+        limite mientras el atacante siga rotando IPs."""
+        from collections import deque
+        _, undo = cfg_swap(admin_token='secreto')
+        try:
+            now = srv.time.time()
+            for i in range(600):                              # spray activo
+                srv._AUTH_TRIES[f'10.{i // 65536}.{(i // 256) % 256}.{i % 256}'] = \
+                    deque([now])
+            h = self._h()
+            h._auth_fail()
+            # 512 = cap duro tras podar; +1 = la deque de la IP viva que
+            # setdefault añade DESPUÉS del prune — el dict queda acotado.
+            self.assertLessEqual(len(srv._AUTH_TRIES), 513)
+        finally:
+            undo()
+
 
 class TestCfgUrlKeys(unittest.TestCase):
     """Whitelist de tipos por clave en /cfg/<b64>/."""
@@ -470,6 +507,32 @@ class TestRedirectsEspeciales(unittest.TestCase):
             h._redir.assert_called_with(None)       # sin creds no se sirve el link
         finally:
             undo()
+
+    def test_en_shared_no_inyecta_creds(self):
+        """Link /cfg/ compartido: las creds easynews del admin NO viajan en
+        el Location — el cliente de un tercero recibiría la cuenta entera
+        (misma clase que el leak NNTP: shared = solo lo del link)."""
+        import base64
+        link = base64.urlsafe_b64encode(b'https://members.easynews.com/dl/x.mkv').decode().rstrip('=')
+        cfg64 = base64.urlsafe_b64encode(b'{"stream_prefetch":true}').decode().rstrip('=')
+        _, undo = cfg_swap(easynews_user='u', easynews_pass='p')
+        try:
+            h = self._h(f'/cfg/{cfg64}/en/{link}')
+            h.do_GET()
+            u = h._redir.call_args[0][0] if h._redir.call_args else None
+            self.assertNotIn('u:p@', str(u))           # 404 o sin creds
+        finally:
+            undo()
+
+    def test_r_putio_proxea_no_redirige(self):
+        """Put.io devuelve .../download?oauth_token=K — el token del admin
+        NO puede viajar en Location: /r/putio/ debe proxear (_db_proxy), no
+        redirigir. Crafteado o marcado, el leak es el mismo."""
+        h = self._h('/r/putio/abc123?fi=0')
+        h._db_proxy = MagicMock(return_value=None)
+        h.do_GET()
+        h._db_proxy.assert_called_once_with('putio', 'abc123', '0')
+        h._redir.assert_not_called()                   # ningún Location con token
 
     def test_nzb_link_valido_llama_resolver(self):
         import base64

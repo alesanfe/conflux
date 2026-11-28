@@ -32,6 +32,15 @@ class TestMarkOne(unittest.TestCase):
         self.assertNotIn('infoHash', s)
         self.assertNotIn('sources', s)
 
+    def test_marca_putio_siempre_dp(self):
+        """_db_pio devuelve .../download?oauth_token=K — marcado como /r/
+        el token del admin viajaría en el Location del cliente. Put.io
+        SIEMPRE proxea (/dp/), independientemente de debrid_proxy."""
+        s = {'infoHash': 'h', 'name': 'n', 'fileIdx': 0}
+        db._db_mark_one('putio', s, multi=False, route=None)
+        self.assertIn('/dp/putio/h', s['url'])
+        self.assertNotIn('/r/putio/', s['url'])
+
 
 class TestResolve(unittest.TestCase):
     def setUp(self):
@@ -194,19 +203,34 @@ class TestDbResolvers(_DbBase):
             self.assertEqual(db._db_rd('k', self.H, 1), 'https://rd/dl')
 
     def test_db_rd_segundo_video_link_correcto(self):
-        """fi=1 con 2 vídeos: unrestrict recibe links[1] (fs.index), no [0]
-        (mutantes Or/In@252 caían a links[0])."""
+        """fi=1 con 2 vídeos: selectFiles(b) -> links solo de seleccionados;
+        unrestrict recibe ese link, no el del primer vídeo."""
         s, calls = fake_session(
             {'json': {'id': 't1'}},
             {'json': {'files': [{'id': 1, 'name': 'a.mkv', 'bytes': 1},
                                 {'id': 2, 'name': 'b.mkv', 'bytes': 2}]}},
             {'json': {}},
-            {'json': {'links': ['L0', 'L2']}},
+            {'json': {'links': ['L_b']}},            # RD: links = seleccionados
             {'json': {'download': 'https://rd/dl2'}})
         with patch.object(db, '_session', return_value=s):
             out = db._db_rd('k', self.H, 1)
         self.assertEqual(out, 'https://rd/dl2')
-        self.assertEqual(calls[4][2]['data']['link'], 'L2')   # unrestrict/link
+        self.assertEqual(calls[4][2]['data']['link'], 'L_b')   # unrestrict/link
+
+    def test_db_rd_link_del_seleccionado_no_indexa_fs(self):
+        """selectFiles con UN file_id -> links tiene 1 entrada. Indexarla por
+        posición en la lista filtrada de vídeos (fs.index) es IndexError con
+        fi>0 o cuando fsel no es el primer vídeo del torrent."""
+        s, _ = fake_session(
+            {'json': {'id': 't1'}},
+            {'json': {'files': [{'id': 1, 'name': 'a.mkv', 'bytes': 1},
+                                {'id': 2, 'name': 'n.txt', 'bytes': 9},
+                                {'id': 3, 'name': 'b.mkv', 'bytes': 2}]}},
+            {'json': {}},
+            {'json': {'links': ['L_sel']}},           # 1 link: el seleccionado
+            {'json': {'download': 'https://rd/dl2'}})
+        with patch.object(db, '_session', return_value=s):
+            self.assertEqual(db._db_rd('k', self.H, 1), 'https://rd/dl2')
 
     def test_db_tb(self):
         s, calls = fake_session(
@@ -416,6 +440,16 @@ class TestUsenet(_DbBase):
         s, _ = fake_session({'json': {'data': {}}})
         with patch.object(db, '_session', return_value=s):
             self.assertIsNone(db._db_usenet('https://x/y.nzb'))
+
+    def test_link_entrada_no_publica_none(self):
+        """El nzb_url lo descarga TORBOX (server-side): /nzb/<b64> acepta
+        b64 arbitrario — link-local/reservado no debe llegar a
+        createusenetdownload bajo la key pagada del admin."""
+        st.CFG['debrid_provider'] = 'torbox'
+        s, calls = fake_session({'json': {'data': {'usenetdownload_id': 7}}})
+        with patch.object(db, '_session', return_value=s):
+            self.assertIsNone(db._db_usenet('http://169.254.169.254/x.nzb'))
+        self.assertEqual(calls, [])
 
 
 class TestDbStream(_DbBase):
@@ -832,10 +866,12 @@ class TestDbCfgEdge(_DbBase):
     def test_db_ok_exacto_5000_no_purga(self):
         """Exactamente 5000 -> NO purga: la cota es >5000 no >=5000 (Gt@169)."""
         db._DB_OK.update({'%040x' % i: 'rd' for i in range(5000)})
-        s, _ = fake_session({'json': {}})
-        with patch.object(db, '_session', return_value=s):
+        def _eval(k, miss, out):                     # provider 'p' evalúa de verdad
+            for h in miss:
+                out[h] = False
+        with unittest.mock.patch.dict(db._DB_CHECK, {'p': _eval}):
             db._db_avail_map(['b' * 40])
-        self.assertEqual(len(db._DB_OK), 5001)       # 5000 + el nuevo
+        self.assertEqual(len(db._DB_OK), 5001)       # 5000 + el nuevo evaluado
 
 
 class TestMarkEdge(_DbBase):
@@ -846,3 +882,150 @@ class TestMarkEdge(_DbBase):
         s = {'infoHash': 'h', 'name': 'YTS', 'fileIdx': 0}
         db._db_mark_one('torbox', s)
         self.assertTrue(s['name'].endswith('YTS'))
+
+
+class TestAvailMapPins(_DbBase):
+    """_db_avail_map solo debe pinchar veredictos para hashes EVALUADOS:
+    un False sobre un hash nunca consultado es un falso negativo que
+    persiste en _DB_OK hasta el clear de 5000."""
+
+    def test_no_evaluados_no_pinchan_false(self):
+        """El checker evalúa miss[:40] (o [:20]) — los que quedan fuera del
+        lote no deben quedar cacheados como 'no-cacheado' sin consulta."""
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='k',
+                      debrid_providers={})
+        def _solo_dos(k, miss, out):
+            for h in miss[:2]:                      # evalúa solo 2 de 3
+                out[h] = False
+        with unittest.mock.patch.dict(db._DB_CHECK, {'real-debrid': _solo_dos}):
+            db._db_avail_map(['h1', 'h2', 'h3'])
+        self.assertIn('h1', db._DB_OK)              # evaluado: pin OK
+        self.assertIn('h2', db._DB_OK)
+        self.assertNotIn('h3', db._DB_OK)           # nunca consultado: sin pin
+
+    def test_provider_caido_no_pinchan_negativos(self):
+        """Checker que lanza (API caída/JSON raro) no debe dejar todos los
+        hashes pinchados a False: serían 'no-cacheados' sin veredicto real."""
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='k',
+                      debrid_providers={})
+        def _caido(k, miss, out):
+            raise ValueError('api rota')
+        with unittest.mock.patch.dict(db._DB_CHECK, {'real-debrid': _caido}):
+            db._db_avail_map(['h1', 'h2'])
+        self.assertNotIn('h1', db._DB_OK)
+        self.assertNotIn('h2', db._DB_OK)
+
+    def test_json_no_dict_no_propaga_crash(self):
+        """API debrid devolviendo JSON no-dict ([] de error): AttributeError
+        en .get no debe cruzar ex.map hasta _debrid_mark -> 500 en /stream."""
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='k',
+                      debrid_providers={})
+        s, _ = fake_session({'json': []})
+        with patch.object(db, '_session', return_value=s):
+            self.assertEqual(db._db_avail_map(['h' * 40]), {})
+
+
+class TestDebridPerfil(_DbBase):
+    """Claves debrid de perfil/link: whitelisteadas para /cfg/ — deben aplicar
+    en los paths del request (mark/resolve). Y un link compartido SIN debrid
+    propio no debe heredar las globales del admin (cuota/credenciales)."""
+
+    def tearDown(self):
+        super().tearDown()
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg, _PROF.shared = None, None, False
+
+    def test_cfgs_perfil_propio(self):
+        """debrid_provider/key del propio perfil (cfg.<name>.json o link /cfg/)
+        deben construir [(provider,key)] aunque el global esté vacío."""
+        st.CFG.update(debrid_provider='', debrid_key='', debrid_providers={})
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg = 'kids', {'debrid_provider': 'real-debrid',
+                                        'debrid_key': 'USERK'}
+        self.assertEqual(db._db_cfgs(), [('real-debrid', 'USERK')])
+
+    def test_cfgs_providers_dict_perfil(self):
+        """debrid_providers del perfil también aplica (multi-debrid por link)."""
+        st.CFG.update(debrid_provider='', debrid_key='', debrid_providers={})
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg = 'cfg-x', {'debrid_providers': {'torbox': 'tk'}}
+        self.assertEqual(db._db_cfgs(), [('torbox', 'tk')])
+
+    def test_shared_sin_claves_no_hereda_global(self):
+        """Link /cfg/ ajeno sin debrid propio: NO debe resolver con la key
+        global del admin — quemaría su cuota a petición de terceros."""
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='ADMIN',
+                      debrid_providers={})
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg, _PROF.shared = 'cfg-x', {}, True
+        self.assertEqual(db._db_cfgs(), [])
+
+    def test_persona_named_si_hereda(self):
+        """Perfil /p/<name> (persona del admin) SÍ hereda el debrid global —
+        mismo dominio de confianza que la cfg raíz."""
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='ADMIN',
+                      debrid_providers={})
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg, _PROF.shared = 'kids', {}, False
+        self.assertEqual(db._db_cfgs(), [('real-debrid', 'ADMIN')])
+
+    def test_shared_con_debrid_propio_lo_usa(self):
+        """Link /cfg/ con su propio debrid: usa SUS claves, no las globales."""
+        st.CFG.update(debrid_provider='real-debrid', debrid_key='ADMIN',
+                      debrid_providers={})
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg, _PROF.shared = 'cfg-x', {
+            'debrid_provider': 'torbox', 'debrid_key': 'USERK'}, True
+        self.assertEqual(db._db_cfgs(), [('torbox', 'USERK')])
+
+
+class TestResolveUrlValidada(unittest.TestCase):
+    """La URL que devuelve el provider va a Location (/r/) o al socket (/dp/):
+    debe ser pública — un debrid malicioso/caído no puede convertirnos en
+    redirect a link-local ni gopher."""
+
+    def test_resolve_url_no_publica_none(self):
+        m = unittest.mock.Mock(return_value='http://169.254.169.254/x')
+        with patch('conflux.infra.debrid._db_key', return_value='k'), \
+                unittest.mock.patch.dict(db._DB_RESOLVE, {'real-debrid': m}):
+            self.assertIsNone(db._db_resolve('real-debrid', 'h', 0))
+
+    def test_resolve_url_no_http_none(self):
+        m = unittest.mock.Mock(return_value='gopher://evil/x')
+        with patch('conflux.infra.debrid._db_key', return_value='k'), \
+                unittest.mock.patch.dict(db._DB_RESOLVE, {'real-debrid': m}):
+            self.assertIsNone(db._db_resolve('real-debrid', 'h', 0))
+
+    def test_resolve_url_publica_pasa(self):
+        m = unittest.mock.Mock(return_value='https://cdn.ej.com/f')
+        with patch('conflux.infra.debrid._db_key', return_value='k'), \
+                unittest.mock.patch.dict(db._DB_RESOLVE, {'real-debrid': m}):
+            self.assertEqual(db._db_resolve('real-debrid', 'h', 0),
+                             'https://cdn.ej.com/f')
+
+
+class TestDbUsenetUrlValidada(unittest.TestCase):
+    """_db_usenet también devuelve URL de provider -> /nzb/ la pone en Location."""
+
+    def setUp(self):
+        self._old = dict(st.CFG)
+        st.CFG['debrid_providers'] = {'torbox': 'k'}
+
+    def tearDown(self):
+        st.CFG.clear(); st.CFG.update(self._old)
+
+    def test_usenet_url_no_publica_none(self):
+        s, _ = fake_session(
+            {'json': {'data': {'usenetdownload_id': 7}}},
+            {'json': {'data': [{'usenetdownload_id': 7, 'files': []}]}},
+            {'json': {'data': 'http://169.254.169.254/dl'}})
+        with patch.object(db, '_session', return_value=s):
+            self.assertIsNone(db._db_usenet('http://nz.b/x'))
+
+    def test_usenet_url_publica_pasa(self):
+        s, _ = fake_session(
+            {'json': {'data': {'usenetdownload_id': 7}}},
+            {'json': {'data': [{'usenetdownload_id': 7, 'files': []}]}},
+            {'json': {'data': 'https://tb.dl/f'}})
+        with patch.object(db, '_session', return_value=s):
+            self.assertEqual(db._db_usenet('http://nz.b/x'), 'https://tb.dl/f')

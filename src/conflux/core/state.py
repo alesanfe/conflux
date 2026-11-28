@@ -441,9 +441,12 @@ def _health(name, ok, err='', n=0):
 
 def _cset(cache, key, val):
     if len(cache) > 400:
-        for k, _ in sorted(cache.items(), key=lambda kv: kv[1][0])[:100]:
-            cache.pop(k, None)
-    cache[key] = (CLOCK.time(), val)
+        try:
+            for k, _ in sorted(cache.items(), key=lambda kv: kv[1][0])[:100]:
+                cache.pop(k, None)
+        except RuntimeError:                # inserción concurrente mid-sort
+            pass                            # (ThreadingHTTPServer): la próxima
+    cache[key] = (CLOCK.time(), val)        # poda reintenta; el set aterriza siempre
 
 
 def _cget(cache, key):

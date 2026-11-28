@@ -326,3 +326,41 @@ class TestStage(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestSigFailedBlocks(TestUpdateTick):
+    """UPD: sig='failed' (bundle presente pero INVÁLIDO) debe abortar el stage.
+    'unavailable' (lib sigstore no instalada) es degradado explícito; 'failed'
+    es adulteración: un atacante que sustituya exe+sha256+sigstore.json en el
+    release casa el hash pero NO la firma — staged = auto-instalación del
+    binario troyanizado."""
+
+    def test_sig_failed_no_stage(self):
+        exe = b'NEW_EXE'
+        sha = (hashlib.sha256(exe).hexdigest() + '  conflux.exe').encode()
+        dl = {'https://x/exe': exe, 'https://x/sha': sha, 'https://x/sig': b'BAD'}
+        with patch.object(U, '_cfgget', return_value=True), \
+                patch.object(U.sys, 'frozen', True, create=True), \
+                patch.object(U, '_latest', return_value=_rel('v2.0.0')), \
+                patch.object(U, '_dl', side_effect=lambda u, **_k: dl.get(u)), \
+                patch.object(U, '_version', return_value='1.0.0'), \
+                patch.object(U, '_stage', return_value='/tmp/x') as st, \
+                patch.object(U, '_sig_verify', return_value='failed'):
+            r = U._update_tick()
+        self.assertEqual(r, 0)
+        st.assert_not_called()
+
+    def test_sig_verified_stagea(self):
+        exe = b'NEW_EXE'
+        sha = (hashlib.sha256(exe).hexdigest() + '  conflux.exe').encode()
+        dl = {'https://x/exe': exe, 'https://x/sha': sha, 'https://x/sig': b'OK'}
+        with patch.object(U, '_cfgget', return_value=True), \
+                patch.object(U.sys, 'frozen', True, create=True), \
+                patch.object(U, '_latest', return_value=_rel('v2.0.0')), \
+                patch.object(U, '_dl', side_effect=lambda u, **_k: dl.get(u)), \
+                patch.object(U, '_version', return_value='1.0.0'), \
+                patch.object(U, '_stage', return_value='/tmp/x') as st, \
+                patch.object(U, '_sig_verify', return_value='verified'):
+            r = U._update_tick()
+        self.assertEqual(r, 1)
+        st.assert_called_once()

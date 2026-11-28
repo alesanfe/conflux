@@ -241,6 +241,13 @@ def _pcfg():
     return getattr(_PROF, 'cfg', None)
 
 
+def _shared_profile():
+    """El contexto es un link /cfg/ de un tercero (no una persona /p/ del
+    admin): los secretos del global NO se heredan — servirles la key debrid
+    del admin o meter sus creds NNTP/SAB en sus streams sería una fuga."""
+    return bool(getattr(_PROF, 'shared', False))
+
+
 def _cfgget(k, default=None):
     """Valor efectivo: perfil > global, con guardia de tipos — un override con
     tipo distinto al global se ignora (p.ej. lists como str iteraría chars)."""

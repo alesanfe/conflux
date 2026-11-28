@@ -15,6 +15,7 @@ Los items son NZB — Stremio no reproduce NZB directo, hay tres vías:
 import base64
 import urllib.parse
 
+from conflux.core.cfg import _cfgget, _pcfg, _shared_profile
 from conflux.core.state import CFG, PORT, _health
 from conflux.infra.debrid import _db_key
 from conflux.infra.net import _public_url_cached, _session
@@ -38,20 +39,22 @@ def _num(v):
 
 
 def _nntp_server():
-    """URL `nntp(s)://user:pass@host:port/conns` del SDK, o None sin config."""
-    host, user = CFG.get('nntp_host', ''), CFG.get('nntp_user', '')
-    pw = CFG.get('nntp_pass', '')
+    """URL `nntp(s)://user:pass@host:port/conns` del SDK, o None sin config.
+    Claves EFECTIVAS (perfil>global — nntp_* es whitelist /cfg/); bajo link
+    compartido solo cuentan las del propio link — las creds del admin no
+    salen en streams de terceros."""
+    get = (_pcfg() or {}).get if _shared_profile() else _cfgget
+    host, user = get('nntp_host', ''), get('nntp_user', '')
+    pw = get('nntp_pass', '')
     if not (host and user and pw):
         return None
-    scheme = 'nntps' if CFG.get('nntp_ssl', True) else 'nntp'
-    port = CFG.get('nntp_port', 563)
+    scheme = 'nntps' if get('nntp_ssl', True) else 'nntp'
     try:
-        port = int(port)
+        port = int(get('nntp_port', 563))
     except (TypeError, ValueError):
         port = 563
-    conns = CFG.get('nntp_connections', 5)
     try:
-        conns = max(1, int(conns))
+        conns = max(1, int(get('nntp_connections', 5)))
     except (TypeError, ValueError):
         conns = 5
     cred = f'{urllib.parse.quote(user, safe="")}:{urllib.parse.quote(pw, safe="")}@'
@@ -59,7 +62,10 @@ def _nntp_server():
 
 
 def _sab_cfg():
-    """(url, apikey) de SABnzbd o None — downloader externo, no playback."""
+    """(url, apikey) de SABnzbd o None — downloader externo, no playback.
+    No es whitelist /cfg/: un link ajeno no invoca el downloader del admin."""
+    if _shared_profile():
+        return None
     url, key = CFG.get('sabnzbd_url', '').rstrip('/'), CFG.get('sabnzbd_key', '')
     return (url, key) if url and key and _public_url_cached(url) else None
 
@@ -67,8 +73,9 @@ def _sab_cfg():
 def _sab_add(nzb_url):
     """SABnzbd mode=addurl -> URL de la UI si el NZB entra en cola, o None."""
     cfg = _sab_cfg()
-    if not cfg or not nzb_url.startswith('http'):
-        return None
+    if (not cfg or not nzb_url.startswith('http')
+            or not _public_url_cached(nzb_url)):    # el SAB descarga la URL:
+        return None                                 # link-local = SSRF vía downloader
     url, key = cfg
     try:
         r = _session(urllib.parse.urlsplit(url).netloc).get(
@@ -120,14 +127,13 @@ def _nz_item(it):
         if sz:
             s['behaviorHints']['videoSize'] = sz
         out.append(s)
-    srv = _nntp_server()
-    if srv:
+    if _nntp_server():
         s2: dict = {'name': 'Usenet SN', 'title': title,
-                    'nzbUrl': link, 'servers': [srv],
-                    'fileMustInclude': _NZ_VIDEO,
-                    'behaviorHints': {'bingeGroup': 'usenet'}}
-        if sz:
-            s2['behaviorHints']['videoSize'] = sz
+                    'nzbUrl': link, '_nntp': True,          # 'servers' se ata
+                    'fileMustInclude': _NZ_VIDEO,            # por request: los
+                    'behaviorHints': {'bingeGroup': 'usenet'}}  # creds no se
+        if sz:                                               # hornean en el
+            s2['behaviorHints']['videoSize'] = sz            # caché compartido
         out.append(s2)
     if _sab_cfg():
         b64 = base64.urlsafe_b64encode(link.encode()).decode().rstrip('=')

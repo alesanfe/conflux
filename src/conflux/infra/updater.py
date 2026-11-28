@@ -271,6 +271,12 @@ def _update_tick():
         log_ev('update_rejected', reason='sha256 mismatch', tag=rel['tag'])
         return 0
     sig = _sig_verify(sha, _dl(urls[f'{_EXE}.sha256.sigstore.json']))
+    if sig == 'failed':
+        # 'unavailable' (sin lib sigstore) = degradado explícito documentado;
+        # 'failed' = bundle inválido = adulteración (exe+sha256 sustituidos
+        # casarían el hash — la firma es lo único que los delata): NO instalar.
+        log_ev('update_rejected', reason='sigstore failed', tag=rel['tag'])
+        return 0
     try:
         _stage(exe, rel['tag'], sig)
     except OSError as e:                      # dir del exe no escribible (Program Files)

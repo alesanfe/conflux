@@ -247,7 +247,8 @@ class TestNntp(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(out[0]['name'], 'Usenet SN')
         self.assertEqual(out[0]['nzbUrl'], 'https://nz.example/get/x.nzb')
-        self.assertEqual(out[0]['servers'], ['nntps://u:p@news.ej.com:563/5'])
+        self.assertTrue(out[0]['_nntp'])                   # marcador: 'servers'
+        self.assertNotIn('servers', out[0])                # se ata por request
         self.assertIn('.mkv', out[0]['fileMustInclude'])
         self.assertNotIn('url', out[0])                    # no toca /nzb/
 
@@ -373,6 +374,20 @@ class TestSabnzbd(unittest.TestCase):
         finally:
             undo()
 
+    def test_add_nzb_linklocal_no_llama(self):
+        """El nzb_url lo DESCARGA el SABnzbd del admin: un /sab/<b64>
+        arbitrario a metadata/link-local era SSRF vía el downloader —
+        la misma política _public_url que se exige a sabnzbd_url."""
+        s, _ = fake_session({'json': {'status': True}})
+        _, undo = cfg_swap(**self.CFG)
+        try:
+            with patch.object(nz, '_session', return_value=s) as m:
+                self.assertIsNone(
+                    nz._sab_add('http://169.254.169.254/latest/x.nzb'))
+            m.assert_not_called()
+        finally:
+            undo()
+
     def test_add_caido_health_fail(self):
         """Excepción de red -> _health(False) registrado (mutante False->True)."""
         import conflux.core.state as st
@@ -403,3 +418,89 @@ class TestSabnzbd(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestNntpPerfil(unittest.TestCase):
+    """nntp_* está whitelisteado para /cfg/ — el servidor debe ser el
+    EFECTIVO (perfil>global); bajo link compartido no hereda el del admin."""
+
+    def tearDown(self):
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg, _PROF.shared = None, None, False
+
+    def test_perfil_nntp_propio(self):
+        """nntp_* del perfil construyen la URL aunque el global esté vacío."""
+        _, undo = cfg_swap(nntp_host='', nntp_user='', nntp_pass='')
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg = 'kids', {'nntp_host': 'srv.ej.com',
+                                        'nntp_user': 'u', 'nntp_pass': 'p'}
+        try:
+            self.assertEqual(nz._nntp_server(), 'nntps://u:p@srv.ej.com:563/5')
+        finally:
+            undo()
+
+    def test_shared_sin_nntp_no_hereda_admin(self):
+        """Link /cfg/ ajeno sin nntp_*: las creds NNTP globales del admin no
+        pueden salir en los streams de un tercero."""
+        _, undo = cfg_swap(nntp_host='news.admin.com', nntp_user='A',
+                           nntp_pass='SECRET')
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg, _PROF.shared = 'cfg-x', {}, True
+        try:
+            self.assertIsNone(nz._nntp_server())
+        finally:
+            undo()
+
+    def test_shared_con_nntp_propio_lo_usa(self):
+        """Link /cfg/ con su nntp_*: URL con SUS creds, no las del admin."""
+        _, undo = cfg_swap(nntp_host='news.admin.com', nntp_user='A',
+                           nntp_pass='SECRET')
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg, _PROF.shared = 'cfg-x', {
+            'nntp_host': 'srv.u.com', 'nntp_user': 'u', 'nntp_pass': 'p'}, True
+        try:
+            self.assertEqual(nz._nntp_server(), 'nntps://u:p@srv.u.com:563/5')
+        finally:
+            undo()
+
+
+class TestSabShared(unittest.TestCase):
+    def tearDown(self):
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg, _PROF.shared = None, None, False
+
+    def test_sab_shared_none(self):
+        """SABnzbd no es whitelisteado: un link /cfg/ no puede invocar el
+        downloader del admin (addurl con la apikey global)."""
+        _, undo = cfg_swap(sabnzbd_url='http://sab.lan:8080', sabnzbd_key='sk')
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg, _PROF.shared = 'cfg-x', {}, True
+        try:
+            self.assertIsNone(nz._sab_cfg())
+        finally:
+            undo()
+
+
+class TestSnMarker(unittest.TestCase):
+    """La variante Usenet SN no puede hornear 'servers' (creds NNTP) en las
+    filas cacheadas: el caché se comparte entre perfiles — un link /cfg/ sin
+    nntp propio recibiría las creds del admin. Marcador + attach por request."""
+
+    def tearDown(self):
+        from conflux.core.cfg import _PROF
+        _PROF.name, _PROF.cfg, _PROF.shared = None, None, False
+
+    def test_sn_emite_marcador_sin_servers(self):
+        s, _ = fake_session({'content': _XML})
+        _, undo = cfg_swap(newznab_url='http://nz.lan/api', newznab_key='k',
+                           nntp_host='news.ej.com', nntp_user='u', nntp_pass='p',
+                           debrid_provider='', debrid_key='', debrid_providers={})
+        try:
+            with patch.object(nz, '_session', return_value=s):
+                out = nz._newznab('movie', 'tt0137523')
+        finally:
+            undo()
+        sn = [x for x in out if x.get('name') == 'Usenet SN']
+        self.assertEqual(len(sn), 1)
+        self.assertTrue(sn[0].get('_nntp'))                 # marcador
+        self.assertNotIn('servers', sn[0])                  # creds NO horneadas

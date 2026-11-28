@@ -286,9 +286,26 @@ class TestOsLogin(unittest.TestCase):
         finally:
             undo()
 
+    def test_cambio_credenciales_relogea(self):
+        """Un JWT es de la cuenta que lo emitió: tras cambiar
+        opensubtitles_user/pass el token cacheado NO puede seguir
+        sirviéndose (autenticaría como la cuenta VIEJA)."""
+        self._tok_con_edad(100)                        # fresca, de creds viejas
+        _, undo = cfg_swap(opensubtitles_key='K',
+                           opensubtitles_user='u2', opensubtitles_pass='p2')
+        try:
+            with patch.object(sub, '_os_login_now', return_value='NEW') as ln:
+                self.assertEqual(sub._os_login(), 'NEW')
+            ln.assert_called_once()
+        finally:
+            undo()
+
     def _tok_con_edad(self, age_s):
         import time
-        sub._OS_TOK.update(token='OLD', ts=time.time() - age_s)
+        c = self.CREDS                                   # token emitido POR estas creds
+        sub._OS_TOK.update(token='OLD', ts=time.time() - age_s,
+                           cred=(c['opensubtitles_key'], c['opensubtitles_user'],
+                                 c['opensubtitles_pass']))
 
     def test_ttl_fresco_usa_cache(self):
         """edad 100s < 23*3600 -> cache, sin relogin (mutante Mult@73: 23/3600)."""
@@ -349,7 +366,8 @@ class TestSubDownloadBearer(unittest.TestCase):
         _, undo = cfg_swap(opensubtitles_key='K', opensubtitles_user='u',
                            opensubtitles_pass='p')
         try:
-            sub._OS_TOK.update(token='T', ts=__import__('time').time())
+            sub._OS_TOK.update(token='T', ts=__import__('time').time(),
+                               cred=('K', 'u', 'p'))
             with patch.object(sub, '_session', return_value=s):
                 link = sub._sub_download('5')
         finally:

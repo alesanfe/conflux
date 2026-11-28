@@ -9,7 +9,8 @@ from contextlib import suppress
 
 import requests
 
-from conflux.core.state import CFG, PORT
+from conflux.core.cfg import _cfgget, _pcfg, _shared_profile
+from conflux.core.state import PORT
 from conflux.infra.net import _public_url_cached, _session
 
 # ---- debrid (Real-Debrid / TorBox) — activo solo con key en config.json/env ----
@@ -25,14 +26,22 @@ def _db_cfgs():
 
     Multi-debrid: `debrid_providers` (dict provider->key) añade providers;
     `debrid_provider`+`debrid_key` (legacy singular) van primero si existen.
+
+    Claves EFECTIVAS (perfil>global — las del link /cfg/ se whitelistean para
+    esto). Bajo link compartido: SOLO las del link — ni las globales del
+    admin ni el env (su cuota no se regala a terceros).
     """
+    if _shared_profile():
+        get, env = (_pcfg() or {}).get, ''
+    else:
+        get, env = _cfgget, os.environ.get('DEBRID_KEY', '')
     out, seen = [], set()
-    p = CFG.get('debrid_provider')
-    k = CFG.get('debrid_key') or os.environ.get('DEBRID_KEY', '')
+    p = get('debrid_provider')
+    k = get('debrid_key') or env
     if p and k:
         out.append((p, k))
         seen.add(p)
-    extra = CFG.get('debrid_providers') or {}
+    extra = get('debrid_providers') or {}
     if isinstance(extra, dict):
         for pp, kk in extra.items():
             if pp in _DB_CHECK and kk and pp not in seen:
@@ -172,7 +181,8 @@ def _db_avail_map(hashes):
             fn = _DB_CHECK.get(p)
             scratch: dict = {}
             if fn:
-                with suppress(requests.RequestException, TypeError, ValueError, KeyError):
+                with suppress(requests.RequestException, TypeError, ValueError,
+                              KeyError, AttributeError):  # JSON no-dict: .get -> Attr
                     fn(k, miss, scratch)
             results[p] = scratch
 
@@ -182,8 +192,10 @@ def _db_avail_map(hashes):
             for h in miss:
                 if (results.get(p) or {}).get(h):
                     _DB_OK.setdefault(h, p)
+        evald = set().union(*(d.keys() for d in results.values())) if results else set()
         for h in miss:
-            _DB_OK.setdefault(h, False)
+            if h in evald:                                # solo veredictos consultados:
+                _DB_OK.setdefault(h, False)               # nunca-evaluado != no-cacheado
     first = cfgs[0][0] if cfgs else None
     return {h: (_DB_OK[h] if isinstance(_DB_OK.get(h), str) else first)
             for h in hashes if _DB_OK.get(h)}
@@ -204,7 +216,7 @@ def _debrid_mark(streams):
         return
     ok = _db_avail_map(hashes)
     multi = len(cfgs) > 1                       # hoisted: _db_cfgs por stream no
-    route = 'dp' if CFG.get('debrid_proxy') else 'r'
+    route = 'dp' if _cfgget('debrid_proxy') else 'r'
     for i, s in enumerate(streams):
         p = ok.get(s.get('infoHash'))
         if p:
@@ -220,7 +232,9 @@ def _db_mark_one(p, s, multi=None, route=None):
     if multi is None:
         multi = len(_db_cfgs()) > 1
     if route is None:
-        route = 'dp' if CFG.get('debrid_proxy') else 'r'
+        # put.io resuelve a .../download?oauth_token=K: marcado como /r/ el
+        # token del admin viajaría en el Location del cliente — SIEMPRE proxy.
+        route = 'dp' if (_cfgget('debrid_proxy') or p == 'putio') else 'r'
     h = s['infoHash']
     s['cached'] = True
     tag = f'[{_DB_SHORT.get(p, str(p).upper()[:4])}] ' if multi else ''
@@ -252,7 +266,9 @@ def _db_rd(k, h, fi):
     s.post(f'https://api.real-debrid.com/rest/1.0/torrents/selectFiles/{tid}',
            data={'files': fsel['id']}, headers=h_, timeout=8)
     inf = s.get(f'https://api.real-debrid.com/rest/1.0/torrents/info/{tid}', headers=h_, timeout=8).json()
-    link = (inf.get('links') or [None])[fs.index(fsel) if fsel in fs else 0]
+    link = (inf.get('links') or [None])[0]            # links = SOLO ficheros
+    # seleccionados (selectFiles con un id -> 1 entrada). fs.index indexaba la
+    # lista filtrada de vídeos: IndexError cuando fsel no era el primero.
     d = s.post('https://api.real-debrid.com/rest/1.0/unrestrict/link',
                data={'link': link}, headers=h_, timeout=8).json()
     return d.get('download')
@@ -394,9 +410,12 @@ def _db_resolve(p, h, fi):
     except (TypeError, ValueError):
         fi = 0
     try:
-        return fn(k, h, fi)
+        u = fn(k, h, fi)
     except Exception:                                            # noqa: BLE001 — boundary: debrid devuelve None, nunca crash
         return None
+    # la URL va a Location (/r/) o al socket (/dp/): validar que sea pública —
+    # un provider malicioso no puede convertirnos en redirect a link-local.
+    return u if u and _public_url_cached(u) else None
 
 
 def _db_usenet(nzb_url):
@@ -404,8 +423,8 @@ def _db_usenet(nzb_url):
     Solo torbox sirve NZB — la key se busca entre TODOS los providers
     configurados (multi-debrid: torbox puede ser el segundo provider)."""
     k = _db_key('torbox')
-    if not k:
-        return None
+    if not k or not _public_url_cached(nzb_url):  # TorBox descarga la URL:
+        return None                               # link-local b64 = SSRF/quota abuse
     s = _session('api.torbox.app')
     h_ = {'Authorization': f'Bearer {k}'}
     try:
@@ -427,7 +446,8 @@ def _db_usenet(nzb_url):
         lnk = s.get('https://api.torbox.app/v1/api/usenet/requestusenetdownload',
                     params=q, headers=h_, timeout=10).json()
         d = lnk.get('data')
-        return d.get('link') if isinstance(d, dict) else d
+        u = d.get('link') if isinstance(d, dict) else d
+        return u if u and _public_url_cached(u) else None  # -> Location (/nzb/)
     except Exception:                                            # noqa: BLE001 — boundary: None, nunca crash
         return None
 

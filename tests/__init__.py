@@ -223,7 +223,8 @@ _STATE_ATTRS = {
                            '_DEAD_OPT', 'manifests', 'SOURCES', 'CFG',
                            '_DISABLED', '_SESS', '_LOGIN_TRIES',
                            'addon_state'],
-    'conflux.app.stream': ['_URL_BAD', '_URL_OK', '_URL_PEND', '_REX_C'],
+    'conflux.app.stream': ['_URL_BAD', '_URL_OK', '_URL_PEND', '_REX_C',
+                           '_OUT_C'],
     'conflux.app.subs': ['_OS_TOK', '_SUBS_C'],
     'conflux.domain.lists': ['_M3U', '_M3U_METAS', '_M3U_BYID', '_M3U_TXT'],
     'conflux.domain.text': ['_NORM_C'],
@@ -234,18 +235,31 @@ _STATE_ATTRS = {
     'conflux.infra.epg': ['_STATE'],
     'conflux.infra.torrent_health': ['_SEED', '_DHT_NODES'],
     'conflux.web.server': ['_LOGIN_TRIES'],
+    'conflux.core.cfg': ['_MIGRATIONS'],
+}
+
+
+# Atributos re-bindeados (asignación, no mutación in situ): load_config()
+# re-asigna RE_ES/RE_EX vía `global` — un load de prueba dejaba el patrón
+# derivado de OTRO config mientras CFG sí se restauraba (dict) -> tests
+# posteriores veían CFG y RE_ES desincronizados (flake orden-dependiente
+# bajo seed barajada). Se guarda el objeto y se re-asigna con setattr.
+_STATE_REBIND = {
+    'conflux.core.cfg': ['RE_ES', 'RE_EX', '_CONFIG_VERSION'],
 }
 
 
 def _snapshot_state():
     import conflux.core.state as _st
     snap = {'env': dict(os.environ), 'clock': _st.CLOCK._d,
-            'prof': None, 'objs': {}}
+            'prof': None, 'objs': {}, 'rebind': {}}
     cfg_mod = sys.modules.get('conflux.core.cfg')
     if cfg_mod is not None and hasattr(cfg_mod, '_PROF'):
+        _pc = getattr(cfg_mod._PROF, 'cfg', None)
         snap['prof'] = (cfg_mod._PROF,
                         getattr(cfg_mod._PROF, 'name', None),
-                        dict(getattr(cfg_mod._PROF, 'cfg', None) or {}))
+                        dict(_pc) if _pc is not None else None,
+                        getattr(cfg_mod._PROF, 'shared', False))
     for mod_name, attrs in _STATE_ATTRS.items():
         mod = sys.modules.get(mod_name)
         if mod is None:
@@ -258,6 +272,12 @@ def _snapshot_state():
                 snap['objs'][(mod_name, a)] = ('l', obj, list(obj))
             elif isinstance(obj, set):
                 snap['objs'][(mod_name, a)] = ('s', obj, set(obj))
+    for mod_name, attrs in _STATE_REBIND.items():
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            continue
+        for a in attrs:
+            snap['rebind'][(mod_name, a)] = getattr(mod, a, None)
     return snap
 
 
@@ -272,8 +292,8 @@ def _restore_state(snap):
         except Exception:
             pass
     if snap['prof']:
-        prof, name, cfg_ = snap['prof']
-        prof.name, prof.cfg = name, cfg_
+        prof, name, cfg_, shared = snap['prof']
+        prof.name, prof.cfg, prof.shared = name, cfg_, shared
     for (mod_name, a), (kind, obj, val) in snap['objs'].items():
         mod = sys.modules.get(mod_name)
         if mod is None:
@@ -290,6 +310,10 @@ def _restore_state(snap):
                 cur.update(val)
         except (AttributeError, TypeError):
             setattr(mod, a, val if kind == 'l' else type(obj)(val))
+    for (mod_name, a), val in snap['rebind'].items():
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            setattr(mod, a, val)
 
 
 import unittest as _ut

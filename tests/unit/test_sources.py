@@ -50,6 +50,14 @@ class TestResolveSid(unittest.TestCase):
     def test_tt_no_se_traduce(self):
         self.assertEqual(px._resolve_sid('series', 'tt0944947:1:1'), 'tt0944947:1:1')
 
+    def test_prefijo_bare_sin_resto_no_crashea(self):
+        """sid 'kitsu'/'tmdb' bare (sin ':') — meta upstream malformado o URL
+        manual: prefijo conocido pero sin base_id que resolver -> sid intacto,
+        nunca IndexError propagado al handler (R1: parseo semántico)."""
+        self.assertEqual(px._resolve_sid('series', 'kitsu'), 'kitsu')
+        self.assertEqual(px._resolve_sid('movie', 'tmdb'), 'tmdb')
+        self.assertEqual(px._resolve_sid('movie', 'mal'), 'mal')
+
     def test_cache_idmap_no_repite_fetch(self):
         meta = {'meta': {'imdb_id': 'tt1', 'videos': []}}
         calls = []

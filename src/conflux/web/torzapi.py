@@ -16,7 +16,7 @@ from xml.sax.saxutils import escape
 
 from conflux.app.stream import _ensure_collect
 from conflux.core.cfg import _eff_disabled_for
-from conflux.core.state import CFG, STREAM_BUDGET, log_ev
+from conflux.core.state import CFG, STREAM_BUDGET, _cache, _cget, log_ev
 
 _CAP = ('<?xml version="1.0" encoding="UTF-8"?>'
         '<caps><server version="0.1" title="conflux"/>'
@@ -125,9 +125,16 @@ def handle_torzapi(q):
         if se.lstrip('0').isdigit() and ep.lstrip('0').isdigit():
             sid = f'{imdb}:{int(se)}:{int(ep)}'
     key = (stype, sid, tuple(sorted(_eff_disabled_for(stype))))
-    state = _ensure_collect(key)
-    state['done'].wait(STREAM_BUDGET)
-    with state['lock']:
-        rows = sorted(state['rows'], key=lambda r: -(r[2] if len(r) > 2 else 0))[:200]
+    hit = _cget(_cache, key)
+    if hit is not None:
+        rows = sorted(hit, key=lambda r: -(r[2] if len(r) > 2 else 0))[:200]
+    else:
+        # sin esto cada poll del *arr re-coleccionaba aunque la entrada
+        # estuviera fresca en _cache (TTL) — hammering de upstreams.
+        state = _ensure_collect(key)
+        state['done'].wait(STREAM_BUDGET)
+        with state['lock']:
+            rows = sorted(state['rows'],
+                          key=lambda r: -(r[2] if len(r) > 2 else 0))[:200]
     log_ev('torzapi', t=t, sid=sid, n=len(rows))
     return 200, _rss((_row_items(r, cat) for r in rows), cat)

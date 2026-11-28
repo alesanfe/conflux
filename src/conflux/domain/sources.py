@@ -136,8 +136,8 @@ def _resolve_sid(stype, sid):
     """kitsu:7442:1:1 -> tt2560140:1:1 — las fuentes entienden imdb, no kitsu/mal.
     Formato episodio-absoluto (kitsu:49847:2) -> mapeado a :S:E vía videos del meta."""
     pref = sid.split(':', 1)[0]
-    if pref not in _PREFIX_SRC:
-        return sid
+    if pref not in _PREFIX_SRC or ':' not in sid:
+        return sid                                    # bare 'kitsu': sin base_id
     rest = sid.split(':', 1)[1]
     base_id = rest.split(':', 1)[0]
     ep = rest[len(base_id):]

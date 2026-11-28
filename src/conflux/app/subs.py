@@ -79,9 +79,10 @@ def _os_login():
     if not (key and user and pw):
         return None
     with _OS_LOCK:                                       # dos /s/ concurrentes:
-        if _OS_TOK.get('token') and CLOCK.time() - _OS_TOK.get('ts', 0) < 23 * 3600:
-            return _OS_TOK['token']                      # un login basta
-        return _os_login_now(key, user, pw)
+        if _OS_TOK.get('token') and _OS_TOK.get('cred') == (key, user, pw) \
+                and CLOCK.time() - _OS_TOK.get('ts', 0) < 23 * 3600:
+            return _OS_TOK['token']                      # un login basta; el JWT
+        return _os_login_now(key, user, pw)              # es de ESAS credenciales
 
 
 def _os_login_now(key, user, pw):
@@ -93,7 +94,7 @@ def _os_login_now(key, user, pw):
             headers={'Api-Key': key, 'User-Agent': 'conflux 1.0'}, timeout=8).json()
         tok = d.get('token') if isinstance(d, dict) else None   # []/str de error upstream
         if tok:
-            _OS_TOK['token'], _OS_TOK['ts'] = tok, CLOCK.time()
+            _OS_TOK.update(token=tok, ts=CLOCK.time(), cred=(key, user, pw))
         return tok
     except (requests.RequestException, ValueError):
         return None

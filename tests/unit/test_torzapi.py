@@ -68,6 +68,9 @@ class TestCaps(unittest.TestCase):
 
 class TestSearch(unittest.TestCase):
     def _run(self, q, rows=()):
+        # _cache compartida puede tener filas reales de tests e2e (setUpClass
+        # queda fuera del snapshot por-test): vaciar para forzar el path collect.
+        T._cache.clear()
         state = {'done': _Evt(), 'lock': __import__('threading').Lock(),
                  'rows': list(rows)}
         with mock.patch.object(T, '_ensure_collect', return_value=state) as ec:
@@ -313,3 +316,30 @@ class _Evt:
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestCacheReuse(unittest.TestCase):
+    """handle_torzapi ignoraba _cache: cada poll del *arr disparaba un collect
+    completo aunque la entrada estuviera fresca dentro del CACHE_TTL (Sonarr/
+    Radarr sincronizan cada 15-60min — hammering de upstreams). Debe servir
+    las rows cacheadas igual que handle_stream."""
+
+    def test_cache_hit_no_collect(self):
+        import conflux.core.state as st
+        import conflux.app.stream as S
+        _, undo = cfg_swap(torzapi_key='k', sources_disabled=[],
+                           source_groups={})
+        key = ('movie', 'tt0137523',
+               tuple(sorted(S._eff_disabled_for('movie'))))
+        rows = [_row()]
+        st._cset(S._cache, key, rows)
+        try:
+            with mock.patch.object(T, '_ensure_collect') as ec:
+                code, body = T.handle_torzapi(
+                    {'t': ['movie'], 'apikey': ['k'], 'imdbid': ['tt0137523']})
+        finally:
+            undo()
+            S._cache.pop(key, None)
+        self.assertEqual(code, 200)
+        ec.assert_not_called()                        # hit de cache: 0 collects
+        self.assertIn('magnet:?xt=urn:btih:' + 'a' * 40, body)

@@ -10,6 +10,7 @@ from contextlib import suppress
 import requests
 
 from conflux.core import state as _st
+from conflux.core.cfg import _cfgget
 from conflux.core.state import (
     _POOL_BG,
     CFG,
@@ -45,7 +46,7 @@ def _list_imdb(url):
 def _list_mdblist(url):
     m = re.search(r'mdblist\.com/lists/(\d+)|^mdblist:(\d+)$', url)
     lid = (m.group(1) or m.group(2)) if m else None
-    key = CFG.get('mdblist_key', '')
+    key = _cfgget('mdblist_key', '')
     if not lid or not key:
         raise ValueError('mdblist sin id o key')
     d = _session('api.mdblist.com').get(
@@ -233,7 +234,7 @@ def _iptv_sweep():
 def _m3u_adult(m):
     """Canal con etiqueta adulta y parental activo -> oculto (misma regla en
     catálogo y /meta: un canal X no se sirve por ninguna vía)."""
-    if not CFG.get('parental'):
+    if not _cfgget('parental'):
         return False
     from conflux.core.cfg import RE_ADULT           # local: cfg importa lists (circular)
     return bool(RE_ADULT.search(f"{m.get('name', '')} {m.get('description', '')}"))
@@ -243,7 +244,7 @@ def _m3u_out(metas):
     """parental: fuera canales con etiquetas adultas; cuarentena IPTV: fuera
     los confirmados muertos — reaparecen solos si el barrido los revive."""
     out = [m for m in metas if not _iptv_dead(_M3U.get(m['id'], ''))]
-    if not CFG.get('parental'):
+    if not _cfgget('parental'):
         return out
     return [m for m in out if not _m3u_adult(m)]
 

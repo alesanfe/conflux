@@ -363,22 +363,31 @@ _NORM_C: dict = {}        # (short, repr(raw), sig) -> nr — un re-collect del
                           # ~160us×2000 streams de regexes idénticos
 
 
+def _disp_sig():
+    """Knobs de build_display ajenos al stream crudo (perfil-sensibles):
+    sin ellos en la fila, el caché compartido serviría el formato del
+    perfil/global que horneó la fila a links con otro formato."""
+    from conflux.core.cfg import _cfgget
+    return (_cfgget('stream_format', ''), _cfgget('stream_max_chars', 200))
+
+
 def _norm_sig():
     """Knobs de norm_stream que NO vienen del stream crudo: patrón ES
-    (identidad por objeto — el memo _ES_PAT_C lo hace estable) + formato."""
-    from conflux.core.cfg import _es_pat, _cfgget
-    return (id(_es_pat()), _cfgget('stream_format', ''),
-            _cfgget('stream_max_chars', 200))
+    (identidad por objeto — el memo _ES_PAT_C lo hace estable) + display."""
+    from conflux.core.cfg import _es_pat
+    return (id(_es_pat()), *_disp_sig())
 
 
 def norm_stream(s, short):
     """Pipeline: parsea → sanitiza → formatea. Devuelve
     (stream, res, seeds_crudos, size, cached, campos, short) — campos+short
     permiten re-etiquetar por perfil sin re-parsear el caché compartido."""
-    k = (short, repr(s), _norm_sig())
+    sig = _norm_sig()
+    k = (short, repr(s), sig)
     nr = _NORM_C.get(k)
     if nr is None:
         f = extract_fields(s)
+        f['_dsig'] = sig[1:]                   # firma de display del horneado
         out = sanitize_stream(s)
         out['name'], out['title'] = build_display(f, short)
         nr = out, f['res'], f['seeds'] or 0, f['size'] or 0, f['cached'], f, short

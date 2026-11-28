@@ -8,7 +8,7 @@ import urllib.parse
 from concurrent.futures import as_completed
 
 from conflux.core import cfg, state as _st
-from conflux.core.cfg import _eff_disabled_for, _es_pat, _pcfg, _strs
+from conflux.core.cfg import _eff_disabled_for, _es_pat, _pcfg, _strs, _PROF
 from conflux.core.state import (
     _POOL,
     _POOL_BG,
@@ -30,11 +30,11 @@ from conflux.core.state import (
 )
 from conflux.domain.lists import _M3U, _m3u_metas
 from conflux.domain.sources import _resolve_sid
-from conflux.domain.text import RANK, _ad_link, _playable, _qscore, _skip_manifest, _spam, build_display, norm_stream
+from conflux.domain.text import RANK, _ad_link, _disp_sig, _playable, _qscore, _skip_manifest, _spam, build_display, norm_stream
 from conflux.infra.debrid import _debrid_mark
 from conflux.infra.net import _session, fetch
 from conflux.infra.easynews import _easynews
-from conflux.infra.newznab import _newznab
+from conflux.infra.newznab import _newznab, _nntp_server
 from conflux.infra.scrape import _scraper, _scraper_names
 from conflux.infra.torrent_health import _hash_health
 from conflux.infra.torznab import _torznab
@@ -160,15 +160,27 @@ def _collect_zl(stype, sid):
     return 'Zilean', ss, len(ss)
 
 
-def _collect_nz(stype, sid):
-    """Worker Newznab (usenet via TorBox): mismo contrato que _collect_one."""
+def _collect_nz(stype, sid, prof=None):
+    """Worker Newznab (usenet via TorBox): mismo contrato que _collect_one.
+    prof=(name,cfg,shared) capturado en el request: _PROF es thread-local —
+    sin propagarlo, las claves debrid/nntp del link no aplicarían aquí y los
+    secretos globales del admin sí llegarían a los streams de terceros."""
+    prev = None
+    if prof is not None:
+        prev = (getattr(_PROF, 'name', None), getattr(_PROF, 'cfg', None),
+                getattr(_PROF, 'shared', False))
+        _PROF.name, _PROF.cfg, _PROF.shared = prof
     try:
-        ss = _newznab(stype, sid)
-    except Exception as e:                              # noqa: BLE001 — indexer nunca tumba el collect
-        log_ev('src_worker', err=repr(e)[:100])
-        return 'Newznab', [], 0
-    ss = [s for s in ss if not _skip_stream(s)]
-    return 'Newznab', ss, len(ss)
+        try:
+            ss = _newznab(stype, sid)
+        except Exception as e:                          # noqa: BLE001 — indexer nunca tumba el collect
+            log_ev('src_worker', err=repr(e)[:100])
+            return 'Newznab', [], 0
+        ss = [s for s in ss if not _skip_stream(s)]
+        return 'Newznab', ss, len(ss)
+    finally:
+        if prev is not None:
+            _PROF.name, _PROF.cfg, _PROF.shared = prev
 
 
 def _collect_en(stype, sid):
@@ -196,12 +208,15 @@ def _collect_sc(name, stype, sid):
 def _collect(key, state):
     stype, sid, dis = key                     # dis: sources_disabled efectivo (perfil)
     sid = _resolve_sid(stype, sid)            # kitsu/mal -> imdb para las fuentes
-    t = None
+    prof = state.get('prof')                  # este hilo no hereda _PROF: sin
+    if prof is not None:                      # propagarlo los _cfgget/_pcfg del
+        _PROF.name, _PROF.cfg, _PROF.shared = prof     # collect (norm_sig, es_pat,
+    t = None                                           # pref_pat) leen el global
     try:
         futs = [_POOL.submit(_collect_one, i, stype, sid, dis) for i in range(len(SOURCES))]
         futs.append(_POOL.submit(_collect_tz, stype, sid))     # indexer en paralelo: no como straggler en finally
         futs.append(_POOL.submit(_collect_zl, stype, sid))     # zilean (DMM cacheados): idem
-        futs.append(_POOL.submit(_collect_nz, stype, sid))     # newznab (usenet/torbox): idem
+        futs.append(_POOL.submit(_collect_nz, stype, sid, state.get('prof')))  # perfil propagado: claves del link aplican
         futs.append(_POOL.submit(_collect_en, stype, sid))     # easynews (usenet directo): idem
         futs += [_POOL.submit(_collect_sc, nm, stype, sid)     # scrapers integrados (yts/eztv/nyaa)
                  for nm in _scraper_names()]
@@ -226,10 +241,15 @@ def _collect(key, state):
     finally:
         if t:                                                   # collect rápido: suelta el timer
             t.cancel()
-        with state['lock']:
-            pat = _pref_pat()                             # resuelto 1 vez: no por fila
-            final = sorted(state['rows'],
-                           key=lambda r: _rowkey(r, pat))  # filas completas: re-score por perfil
+        try:
+            with state['lock']:
+                pat = _pref_pat()                         # resuelto 1 vez: no por fila
+                final = sorted(state['rows'],
+                               key=lambda r: _rowkey(r, pat))  # filas: re-score por perfil
+        except Exception as e:                             # noqa: BLE001 — un sort
+            log_ev('collect_sort', err=repr(e)[:100])      # roto no envenena la
+            with state['lock']:                            # key: degrada a rows sin
+                final = list(state['rows'])                # ordenar, no muere
         with _slock:
             _cset(_cache, key, final)
             _inflight.pop(key, None)
@@ -241,7 +261,9 @@ def _ensure_collect(key):
     with _slock:
         state = _inflight.get(key)
         if state is None:
-            state = {'rows': [], 'seen': set(), 'contrib': {}, 'done': threading.Event(), 'lock': threading.Lock()}
+            state = {'rows': [], 'seen': set(), 'contrib': {}, 'done': threading.Event(), 'lock': threading.Lock(),
+                     'prof': (getattr(_PROF, 'name', None), getattr(_PROF, 'cfg', None),
+                              getattr(_PROF, 'shared', False))}
             _inflight[key] = state
             threading.Thread(target=_collect, args=(key, state), daemon=True).start()
         return state
@@ -455,20 +477,20 @@ def _lang_rows(rows):
     re-etiqueta la entrada cacheada (el flag/seeds horneados son del global)."""
     pc = _pcfg()
     ovr = _strs(pc.get('stream_langs')) if isinstance(pc, dict) else None
-    if not ovr:
-        return [(r[0], r[1], r[2] + (500 if r[5]['es'] else 0), r[3], r[4], _qscore(r[5]))
-                if isinstance(r, tuple) else (r, 'SD', 0, 0, 0, 0) for r in rows]
     pat = _es_pat()
-    rr = []
-    for r in rows:
-        if isinstance(r, dict):                        # entrada legacy: dict ya formateado
-            rr.append((r, 'SD', 0, 0, 0, 0))
+    dsig = _disp_sig()      # knobs de display efectivos: las filas comparten el
+    rr = []                  # caché global — una firma distinta (horneada por
+    for r in rows:           # otro perfil/hilo) exige re-etiquetar aquí
+        if not isinstance(r, tuple):                     # entrada legacy: dict
+            rr.append((r, 'SD', 0, 0, 0, 0))             # ya formateado
             continue
         out, res, seeds, size, cached, f, short = r
-        es = bool(pat.search(f.get('text', '')))
-        if es != f['es']:
+        es = bool(pat.search(f.get('text', ''))) if ovr else f['es']
+        ds = f.get('_dsig')                  # sin sello = fila legacy: conservar
+        if es != f['es'] or (ds is not None and ds != dsig):
             f = dict(f)
             f['es'] = es
+            f['_dsig'] = dsig
             out = dict(out)
             out['name'], out['title'] = build_display(f, short)
         rr.append((out, res, seeds + (500 if es else 0), size, cached, _qscore(f)))
@@ -535,7 +557,8 @@ def _pipe_sig():
         bool((_pcfg() or {}).get('parental', cfg.CFG.get('parental'))),
         cfg._cfgget('stream_max_gb', 0) or 0,
         bool(cfg._cfgget('stream_light', True)),
-    )
+        *_disp_sig(),                  # formato+chars: el out memo lleva display
+    )                                   # horneado — sin ellos se servía el de otro perfil
 
 
 def _rows_pipe(rows, key):
@@ -558,6 +581,26 @@ def _rows_pipe(rows, key):
     return list(out)
 
 
+def _nntp_mark(out):
+    """Streams usenet-SN llevan el marcador '_nntp' en fila cacheada —
+    'servers' se ata por request sobre COPIA con el servidor efectivo
+    (perfil>global): hornear los creds en el caché compartido se los
+    serviría a cualquier link /cfg/ que pida el mismo título."""
+    marks = [i for i, s in enumerate(out) if '_nntp' in s]
+    if not marks:
+        return
+    srv = _nntp_server()                              # efectivo; shared: solo link
+    for i in marks:
+        if srv is None:
+            out[i] = None                             # sin nntp propio: fuera —
+            continue                                  # no se le prestan los del admin
+        s2 = dict(out[i])
+        s2.pop('_nntp')
+        s2['servers'] = [srv]
+        out[i] = s2
+    out[:] = [s for s in out if s is not None]
+
+
 def handle_stream(stype, sid):
     """GET /stream — agrega fuentes (pool), dedup, ordena, marca debrid y filtra urls muertas."""
     if sid.startswith('m3u:'):                              # canales M3U propios
@@ -570,6 +613,7 @@ def handle_stream(stype, sid):
     if hit is not None:
         out = _rows_pipe(hit, key)
         _debrid_mark(out)                          # debrid marca copias: fuera del caché
+        _nntp_mark(out)                            # 'servers' efectivo por request
         _url_health(out)                           # veredicto muerto filtra también el caché
         _hash_health(out)                          # veredictos scrape: filtran también el caché
         return {'streams': out}
@@ -586,6 +630,7 @@ def handle_stream(stype, sid):
             # llegando stragglers; el collect las ordenará al finalizar).
             out = _user_filters(_rows_out(state['rows']))            # filtros usuario tras dedup/rank
     _debrid_mark(out)                                        # si hay key: cache + resolve /r/
+    _nntp_mark(out)                                          # 'servers' efectivo por request
     _url_health(out)                                         # HEAD async a streams http
     _hash_health(out)                                        # infoHash sin swarm ni hints fuera
     return {'streams': out}

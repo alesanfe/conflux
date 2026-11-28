@@ -102,7 +102,7 @@ def _search_merge(d, utype, seen, out):
     ]
     if any(not m.get('imdb_id') and _id_prefix(m['id']) in _PREFIX_SRC
            for m in metas):
-        keys = _POOL.map(lambda m: _search_key(utype, m), metas)
+        keys = list(_POOL.map(lambda m: _search_key(utype, m), metas))
     else:                                            # todo tt/imdb_id: sync gratis
         keys = [_search_key(utype, m) for m in metas]
     for m, k in zip(metas, keys):

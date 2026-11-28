@@ -250,8 +250,8 @@ def epg_meta(m):
     if not m:
         return {}
     m = dict(m)
-    today = time.strftime('%Y-%m-%d', time.gmtime())
-    nxt = time.strftime('%Y-%m-%d', time.gmtime(time.time() + 86400))
+    today = time.strftime('%Y-%m-%d', time.gmtime(CLOCK.time()))
+    nxt = time.strftime('%Y-%m-%d', time.gmtime(CLOCK.time() + 86400))
     vids = list(_videos(m['id'], today))             # copia: += no muta el caché
     n_today = len(vids)
     vids += [dict(v) for v in _videos(m['id'], nxt)[:6]]   # id mutado abajo: copiar
